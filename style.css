@@ -1,0 +1,646 @@
+/*
+ * Stork. Colors come from the active SillyTavern theme; the cycle uses a soft pink accent.
+ */
+
+/* The tracker tag is for Stork only: never shown in the chat */
+stork {
+    display: none !important;
+}
+
+.stk,
+#stork_bar {
+    --stk-text: var(--SmartThemeBodyColor, #ddd);
+    --stk-accent: var(--SmartThemeQuoteColor, #8ab4f8);
+    --stk-pink: color-mix(in srgb, #e46a9a 80%, var(--stk-text));
+    --stk-period: color-mix(in srgb, #d9555f 80%, var(--stk-text));
+    --stk-warm: color-mix(in srgb, #d9a23f 80%, var(--stk-text));
+    --stk-calm: color-mix(in srgb, var(--stk-text) 22%, transparent);
+    --stk-preg: color-mix(in srgb, #9b7be0 80%, var(--stk-text));
+    --stk-muted: color-mix(in srgb, var(--stk-text) 60%, transparent);
+    --stk-line: color-mix(in srgb, var(--stk-text) 12%, transparent);
+    --stk-line-strong: color-mix(in srgb, var(--stk-text) 22%, transparent);
+    --stk-glass: color-mix(in srgb, var(--stk-text) 5%, transparent);
+    --stk-glass-hover: color-mix(in srgb, var(--stk-text) 9%, transparent);
+    --stk-radius: 12px;
+}
+
+/* Status line above the input */
+#stork_bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 6px 4px;
+    padding: 4px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--stk-line);
+    background: color-mix(in srgb, var(--SmartThemeBlurTintColor, #1a1a1a) 70%, transparent);
+    backdrop-filter: blur(10px);
+    color: var(--stk-text);
+    font-size: 0.82em;
+    cursor: pointer;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+#stork_bar span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+#stork_bar .stk-ic {
+    color: var(--stk-pink);
+}
+
+#stork_bar:hover {
+    border-color: var(--stk-line-strong);
+}
+
+.stk-dot-sep {
+    margin: 0 6px;
+    opacity: 0.4;
+}
+
+/* Popup glass */
+.popup:has(.stk) {
+    background: color-mix(in srgb, var(--SmartThemeBlurTintColor, #1a1a1a) 72%, transparent);
+    backdrop-filter: blur(calc(var(--SmartThemeBlurStrength, 10px) + 14px)) saturate(150%);
+    border: 1px solid color-mix(in srgb, var(--SmartThemeBodyColor, #ddd) 14%, transparent);
+    border-radius: 18px;
+}
+
+.stk {
+    container-type: inline-size;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    text-align: left;
+    color: var(--stk-text);
+    font-size: 0.93em;
+    line-height: 1.45;
+}
+
+.stk-ic {
+    width: 1.15em;
+    text-align: center;
+    flex-shrink: 0;
+}
+
+.stk-ic-xl {
+    font-size: 2.4em;
+    width: auto;
+    opacity: 0.35;
+}
+
+.stk-muted {
+    color: var(--stk-muted);
+    font-size: 0.9em;
+    font-weight: normal;
+}
+
+.stk-brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 1.1em;
+    font-weight: 600;
+}
+
+.stk-brand .stk-ic {
+    color: var(--stk-pink);
+}
+
+/* Tabs */
+.stk-tabs {
+    display: flex;
+    gap: 2px;
+    padding: 3px;
+    border-radius: 999px;
+    background: var(--stk-glass);
+    border: 1px solid var(--stk-line);
+}
+
+.stk-tab {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 6px 8px;
+    border: none;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--stk-muted);
+    font: inherit;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.stk-tab.is-on {
+    background: var(--stk-glass-hover);
+    color: var(--stk-text);
+    box-shadow: inset 0 0 0 1px var(--stk-line-strong);
+}
+
+.stk-tab.is-on .stk-ic {
+    color: var(--stk-pink);
+}
+
+@container (max-width: 560px) {
+    .stk-tab span {
+        display: none;
+    }
+}
+
+.stk-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-height: 240px;
+}
+
+/* Cards */
+.stk-card {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    padding: 12px 14px;
+    border-radius: var(--stk-radius);
+    background: var(--stk-glass);
+    border: 1px solid var(--stk-line);
+}
+
+.stk-card.is-alert {
+    border-color: color-mix(in srgb, var(--stk-pink) 50%, transparent);
+}
+
+.stk-card-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+}
+
+.stk-card-title .stk-ic {
+    color: var(--stk-pink);
+}
+
+.stk-big {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+    font-size: 1.35em;
+    font-weight: 600;
+}
+
+.stk-row {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+}
+
+.stk-row .stk-ic {
+    color: var(--stk-muted);
+}
+
+.stk-row.is-warn,
+.stk-row.is-warn .stk-ic {
+    color: var(--stk-warm);
+}
+
+.stk-fertile {
+    color: var(--stk-pink);
+}
+
+.stk-hint {
+    display: flex;
+    gap: 6px;
+    color: var(--stk-muted);
+    font-size: 0.85em;
+}
+
+.stk-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    padding: 40px 10px;
+    text-align: center;
+    color: var(--stk-muted);
+}
+
+/* Cycle strip */
+.stk-cycle {
+    display: flex;
+    gap: 2px;
+    height: 10px;
+}
+
+.stk-cycle span {
+    flex: 1;
+    border-radius: 3px;
+    background: var(--stk-calm);
+}
+
+.stk-cycle .is-period { background: var(--stk-period); }
+.stk-cycle .is-warm { background: color-mix(in srgb, var(--stk-warm) 55%, transparent); }
+.stk-cycle .is-fertile,
+.stk-cycle .is-window { background: color-mix(in srgb, var(--stk-pink) 55%, transparent); }
+.stk-cycle .is-ovulation { background: var(--stk-pink); }
+
+.stk-cycle .is-today {
+    box-shadow: 0 0 0 2px var(--stk-text);
+}
+
+/* Meters and progress */
+.stk-meter {
+    display: grid;
+    grid-template-columns: 90px 1fr;
+    align-items: center;
+    gap: 10px;
+    font-size: 0.85em;
+    color: var(--stk-muted);
+}
+
+.stk-meter div,
+.stk-progress {
+    height: 6px;
+    border-radius: 4px;
+    background: var(--stk-line);
+    overflow: hidden;
+}
+
+.stk-meter i,
+.stk-progress i {
+    display: block;
+    height: 100%;
+    border-radius: 4px;
+    background: var(--stk-accent);
+}
+
+.stk-meter.is-pink i,
+.stk-progress i {
+    background: var(--stk-pink);
+}
+
+.stk-stats {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.stk-stats div {
+    display: flex;
+    flex-direction: column;
+    padding: 8px 10px;
+    border-radius: 10px;
+    background: var(--stk-glass);
+}
+
+.stk-stats span {
+    color: var(--stk-muted);
+    font-size: 0.8em;
+}
+
+/* Buttons and form */
+.stk-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+}
+
+.stk-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--stk-line-strong);
+    background: var(--stk-glass);
+    color: var(--stk-text);
+    font: inherit;
+    font-size: 0.92em;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.stk-btn:hover {
+    background: var(--stk-glass-hover);
+}
+
+.stk-btn.is-primary {
+    border-color: color-mix(in srgb, var(--stk-pink) 60%, transparent);
+    background: color-mix(in srgb, var(--stk-pink) 18%, transparent);
+}
+
+.stk-btn.is-ghost {
+    border-color: transparent;
+    color: var(--stk-muted);
+}
+
+.stk-btn.is-ghost:hover {
+    color: var(--stk-text);
+}
+
+.stk-menu {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px;
+    border-radius: var(--stk-radius);
+    border: 1px dashed var(--stk-line-strong);
+}
+
+.stk-clock {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.stk-clock > div:first-child {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+}
+
+.stk-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 8px;
+}
+
+.stk-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.stk-field > span {
+    color: var(--stk-muted);
+    font-size: 0.82em;
+}
+
+.stk .text_pole {
+    margin: 0;
+    border-radius: 8px;
+}
+
+.stk-check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+}
+
+.stk-seg {
+    display: inline-flex;
+    gap: 2px;
+    width: fit-content;
+    padding: 3px;
+    border-radius: 999px;
+    background: var(--stk-glass);
+    border: 1px solid var(--stk-line);
+}
+
+.stk-seg button {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 12px;
+    border: none;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--stk-muted);
+    font: inherit;
+    cursor: pointer;
+}
+
+.stk-seg button.is-on {
+    background: var(--stk-glass-hover);
+    color: var(--stk-text);
+    box-shadow: inset 0 0 0 1px var(--stk-line-strong);
+}
+
+.stk-setting {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    cursor: pointer;
+}
+
+.stk-setting > div {
+    display: flex;
+    flex-direction: column;
+}
+
+/* Calendar */
+.stk-cal-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.stk-cal {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 4px;
+}
+
+.stk-cal span {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 38px;
+    border-radius: 8px;
+    background: var(--stk-glass);
+    font-size: 0.9em;
+}
+
+.stk-cal em {
+    font-style: normal;
+}
+
+.stk-cal .is-head {
+    min-height: auto;
+    background: transparent;
+    color: var(--stk-muted);
+    font-size: 0.78em;
+}
+
+.stk-cal .is-empty {
+    background: transparent;
+}
+
+.stk-cal .is-period { background: color-mix(in srgb, var(--stk-period) 35%, transparent); }
+.stk-cal .is-window { background: color-mix(in srgb, var(--stk-pink) 22%, transparent); }
+.stk-cal .is-ovulation { background: color-mix(in srgb, var(--stk-pink) 50%, transparent); }
+.stk-cal .is-preg { background: color-mix(in srgb, var(--stk-preg) 25%, transparent); }
+.stk-cal .is-future { opacity: 0.65; }
+
+.stk-cal .is-today {
+    box-shadow: inset 0 0 0 2px var(--stk-text);
+}
+
+.stk-cal .stk-mark {
+    font-size: 0.6em;
+    width: auto;
+    color: var(--stk-pink);
+}
+
+.stk-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+    color: var(--stk-muted);
+    font-size: 0.82em;
+}
+
+.stk-legend span {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.stk-legend i:not(.stk-ic) {
+    width: 10px;
+    height: 10px;
+    border-radius: 3px;
+}
+
+.stk-legend .is-period { background: var(--stk-period); }
+.stk-legend .is-window { background: color-mix(in srgb, var(--stk-pink) 45%, transparent); }
+.stk-legend .is-ovulation { background: var(--stk-pink); }
+.stk-legend .is-preg { background: var(--stk-preg); }
+
+/* Journal */
+.stk-log {
+    display: grid;
+    grid-template-columns: 70px 1fr;
+    gap: 10px;
+    padding: 4px 0;
+    border-bottom: 1px solid var(--stk-line);
+    font-size: 0.9em;
+}
+
+.stk-log:last-child {
+    border-bottom: none;
+}
+
+.stk-log span {
+    color: var(--stk-muted);
+}
+
+.stk-log.is-roll {
+    color: var(--stk-pink);
+}
+
+/* Card analysis in setup */
+.stk-analysis {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+}
+
+.stk-analysis select {
+    flex: 1;
+    min-width: 200px;
+}
+
+.stk-card-title .stk-muted {
+    margin-left: auto;
+}
+
+.stk-inline-age {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
+    font-weight: normal;
+}
+
+.stk-inline-age input {
+    width: 70px;
+}
+
+/* Sub headings inside a card, meters with a word */
+.stk-sub {
+    margin-top: 4px;
+    color: var(--stk-muted);
+    font-size: 0.78em;
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+}
+
+.stk-meter {
+    grid-template-columns: 100px 1fr 120px;
+}
+
+.stk-meter em {
+    font-style: normal;
+    text-align: right;
+    color: var(--stk-muted);
+    font-size: 0.95em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+@container (max-width: 480px) {
+    .stk-meter {
+        grid-template-columns: 90px 1fr;
+        row-gap: 0;
+    }
+
+    .stk-meter em {
+        grid-column: 2;
+        text-align: left;
+        font-size: 0.85em;
+    }
+}
+
+.stk-clock {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+}
+
+/* Folded manual fixes */
+.stk-fold > summary {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+    cursor: pointer;
+    list-style: none;
+}
+
+.stk-fold > summary::-webkit-details-marker {
+    display: none;
+}
+
+.stk-fold > summary .stk-ic {
+    color: var(--stk-muted);
+}
+
+/* The status line while Stork reads the scene */
+#stork_bar.is-reading .stk-ic {
+    animation: stk-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes stk-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    #stork_bar.is-reading .stk-ic {
+        animation: none;
+    }
+}

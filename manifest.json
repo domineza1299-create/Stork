@@ -1,0 +1,11 @@
+{
+    "display_name": "Stork",
+    "loading_order": 101,
+    "requires": [],
+    "optional": [],
+    "js": "index.js",
+    "css": "style.css",
+    "author": "Даша",
+    "version": "0.6.2",
+    "homePage": ""
+}
