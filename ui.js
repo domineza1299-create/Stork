@@ -7,7 +7,8 @@ import {
 import { analyzeCards, getProfiles, guessAge, readCards } from './cards.js';
 import { getContext } from '../../../extensions.js';
 import { absMinute, advanceTime, applyEvent, dateLabel, liveNow, maleSnapshot, MINUTES_PER_DAY, parseClock, recoveryLeft, storyDate, timeLabel, withLive } from './engine.js';
-import { activeIn, currentState, onStateChange, readStatus, refreshStatus, retryRead, settings, updateCurrentState } from './store.js';
+import { activeIn, changed, currentState, onStateChange, readStatus, refreshStatus, retryRead, settings, updateCurrentState } from './store.js';
+import { applyPersonEdit, setPeriodStart } from './setup.js';
 
 // Persona avatar lives in personas.js; loaded lazily so a missing module never breaks Stork
 let personas = null;
@@ -53,7 +54,12 @@ function knowsPregnancy(person) {
 
 /** One short line above the input: date, and the most important about each person. */
 function statusLineText(state) {
-    const parts = [`${dateLabel(state, state.clock.day, { day: 'numeric', month: 'long' })}, ${timeLabel(state.clock.minutes)}`];
+    return [`${dateLabel(state, state.clock.day, { day: 'numeric', month: 'long' })}, ${timeLabel(state.clock.minutes)}`, ...peopleParts(state)].join('<span class="stk-dot-sep">·</span>');
+}
+
+/** Each of them in a few words, as HTML parts. */
+function peopleParts(state) {
+    const parts = [];
     for (const person of [state.people.user, state.people.char]) {
         let text;
         if (person.sex === 'female') {
@@ -73,9 +79,36 @@ function statusLineText(state) {
             const left = recoveryLeft(state, person);
             text = left > 0 ? `восстанавливается ~${left} мин` : vigor > 0.85 ? 'бодр' : vigor > 0.65 ? 'в форме' : 'устал';
         }
-        parts.push(`<b>${esc(nameOf(person))}:</b> ${esc(text)}`);
+        parts.push(`<b class="stk-nw">${esc(nameOf(person))}:</b> ${esc(text)}`);
     }
-    return parts.join('<span class="stk-dot-sep">·</span>');
+    return parts;
+}
+
+/** Folded infoblock in the chat: both faces with a ring, date and time, each in a word. */
+export function blockHeadHtml(state, open, reading) {
+    const f = state.people.user.female;
+    const day = state.clock.day;
+    const userRing = f.pregnancy && knowsPregnancy(state.people.user)
+        ? { value: pregnancyInfo(f.pregnancy, day).week / 40, tone: 'preg' }
+        : f.postpartum ? { value: 1, tone: 'preg' } : (() => {
+            const info = cycleInfo(f, day);
+            return { value: info.cycleDay / info.length, tone: info.phase === 'menstruation' ? 'period' : info.phase === 'pms' ? 'warm' : info.fertile ? 'pink' : 'preg' };
+        })();
+    const ms = maleSnapshot(state, state.people.char);
+    const charRing = { value: withLive(ms.testosterone, liveNow(state, 'char').energy), tone: 'accent' };
+    const hh = String(Math.floor(state.clock.minutes / 60)).padStart(2, '0'), mm = String(state.clock.minutes % 60).padStart(2, '0');
+    const failed = readStatus().failed;
+    const mark = reading ? `<span class="stk-ib-mark is-reading" title="Читаю последний ответ">${icon('fa-feather-pointed')}</span>`
+        : failed ? `<button type="button" class="stk-ib-mark is-failed" data-stk-act="retry" title="Анализ не прошёл: ${esc(failed.error)}. Повторить">${icon('fa-rotate-right')}</button>` : '';
+    return `<div class="stk-ib-head" data-stk-act="block-toggle" role="button" tabindex="0" aria-expanded="${open}">
+        <span class="stk-ib-faces">${ringsHtml([userRing], 'user', nameOf(state.people.user), 'xs')}${ringsHtml([charRing], 'char', nameOf(state.people.char), 'xs')}</span>
+        <span class="stk-ib-text">
+            <b>${icon('fa-dove')}${esc(capitalize(dateLabel(state, day, { day: 'numeric', month: 'long', weekday: 'short' })))}, ${hh}:${mm}</b>
+            <span>${peopleParts(state).join('<span class="stk-dot-sep">·</span>')}</span>
+        </span>
+        ${mark}
+        <i class="fa-solid fa-chevron-down stk-ib-chev"></i>
+    </div>`;
 }
 
 /**
@@ -340,11 +373,17 @@ function applySetup($root, state, view) {
 
 // #endregion
 
+/** On/off switch for the whole extension: in the window header and the infoblock. */
+export function switchHtml() {
+    const on = settings().enabled;
+    return `<button type="button" class="stk-switch${on ? ' is-on' : ''}" data-stk-act="toggle-ext" role="switch" aria-checked="${on}" title="${on ? 'Stork включён — нажми, чтобы выключить везде' : 'Stork выключен — нажми, чтобы включить'}"><i></i><span>${on ? 'вкл' : 'выкл'}</span></button>`;
+}
+
 // #region Not on in this chat
 
 function renderWaiting(state) {
     if (!settings().enabled) {
-        return `<div class="stk-empty">${icon('fa-power-off', 'stk-ic-xl')}<div>Stork выключен везде. Включить можно в меню палочки: «Stork: выключен».</div></div>`;
+        return `<div class="stk-empty">${icon('fa-power-off', 'stk-ic-xl')}<div>Stork выключен везде. Включить — переключателем вверху справа.</div></div>`;
     }
     if (state.minorBlocked) {
         return `<div class="stk-empty">${icon('fa-ban', 'stk-ic-xl')}<div>По карточке персонаж младше 18 лет. Stork не ведёт репродуктивные механики для несовершеннолетних.</div></div>`;
@@ -405,7 +444,7 @@ const initials = name => String(name || '?').trim().split(/\s+/).slice(0, 2).map
  * One SVG, stroke-dasharray only: cheap to draw and to animate.
  */
 function ringsHtml(rings, key, name, size = 'lg') {
-    const stroke = size === 'lg' ? 7 : 6;
+    const stroke = size === 'lg' ? 7 : size === 'xs' ? 9 : 6;
     const gap = 3;
     const outer = 60 - stroke / 2 - 1;
     const circles = rings.map((r, n) => {
@@ -450,11 +489,15 @@ function storyNote(state, key) {
 
 // #endregion
 
-function femaleCard(state, person) {
+/** Pencil in the card title: quick edit of this person. */
+const pencil = key => `<button type="button" class="stk-pen" data-stk-act="edit-person" data-key="${key}" title="Изменить" aria-label="Изменить">${icon('fa-pen')}</button>`;
+
+export function femaleCard(state, person, view = {}) {
+    if (view.editPerson === person.key) return personEditor(state, person.key);
     const f = person.female;
     const day = state.clock.day;
     const live = liveNow(state, person.key);
-    const head = `<div class="stk-card-title">${icon('fa-venus')}${esc(nameOf(person))}<span class="stk-muted">${years(person.age)}</span></div>`;
+    const head = `<div class="stk-card-title">${icon('fa-venus')}${esc(nameOf(person))}<span class="stk-muted">${years(person.age)}</span>${pencil(person.key)}</div>`;
     if (f.pregnancy?.labor && knowsPregnancy(person)) {
         const progress = laborProgress(f.pregnancy.labor, absMinute(state.clock));
         return `<div class="stk-card is-alert">${head}
@@ -496,7 +539,7 @@ function femaleCard(state, person) {
         <div class="stk-person">
             ${ringsHtml([{ value: s.cycleDay / s.length, tone }, { value: libido, tone: 'pink' }, { value: energy, tone: 'accent' }], person.key, nameOf(person))}
             <div class="stk-legend-col">
-                ${legendRow(tone, 'Цикл', `день ${s.cycleDay} из ${s.length}`, `${phaseText} · ${nextInCycle(s, pill.suppressed)}`)}
+                ${legendRow(tone, 'Цикл', phaseText, `день ${s.cycleDay} из ${s.length} · ${nextInCycle(s, pill.suppressed)}`)}
                 ${legendRow('pink', 'Влечение', levelWord(libido), joinWhy(`${s.phaseLabel}: ${s.libido > 0.8 ? 'на пике' : s.libido > 0.5 ? 'обычное для этих дней' : 'обычно ниже'}`, storyWhy(live.libido)))}
                 ${legendRow('accent', 'Энергия', levelWord(energy), joinWhy(s.energy > 0.7 ? 'фаза даёт силы' : s.energy > 0.45 ? 'ровная' : 'фаза забирает силы', storyWhy(live.energy)))}
             </div>
@@ -504,14 +547,61 @@ function femaleCard(state, person) {
         ${s.fertile && !pill.suppressed ? `<div class="stk-row stk-fertile">${icon('fa-heart')}фертильные дни · шанс зачатия сегодня ${Math.round(s.chanceToday * 100)}%</div>` : ''}
         <div class="stk-row">${icon('fa-heart-pulse')}${esc(s.symptoms.join(', '))}</div>
         ${storyNote(state, person.key)}
-        <div class="stk-row stk-muted">${icon('fa-shield-halved')}${esc(FEMALE_CONTRACEPTION[pill.effective]?.label ?? 'нет')}${conditions.length ? ` · ${esc(conditions.join(', '))}` : ''}${f.perimenopause ? ' · перименопауза' : ''}</div>
+        <div class="stk-row stk-muted">${icon('fa-shield-halved')}контрацепция: ${esc(FEMALE_CONTRACEPTION[pill.effective]?.label ?? 'нет')}${conditions.length ? ` · ${esc(conditions.join(', '))}` : ''}${f.perimenopause ? ' · перименопауза' : ''}</div>
+    </div>`;
+}
+
+/** Quick edit of one person: what Stork knows about them. */
+function personEditor(state, key) {
+    const p = state.people[key];
+    const check = (k, on, label) => `<label class="stk-check"><input type="checkbox" data-f="${k}" ${on ? 'checked' : ''}>${label}</label>`;
+    if (key === 'user') {
+        const f = p.female;
+        const cycleEditable = !f.pregnancy && !f.postpartum;
+        const info = cycleEditable ? cycleInfo(f, state.clock.day) : null;
+        return `<div class="stk-card stk-edit is-editing" data-key="user">
+            <div class="stk-card-title">${icon('fa-venus')}${esc(nameOf(p))}<span class="stk-muted">правка</span></div>
+            <div class="stk-grid">
+                <label class="stk-field"><span>Возраст</span><input class="text_pole" data-f="age" type="number" min="18" max="90" value="${p.age}"></label>
+                ${cycleEditable ? `
+                <label class="stk-field"><span>День цикла сейчас</span><input class="text_pole" data-f="cycleDay" type="number" min="1" max="35" value="${Math.min(f.cycleLength, Math.max(1, info.cycleDay))}"></label>
+                <label class="stk-field"><span>Длина цикла</span><input class="text_pole" data-f="cycleLength" type="number" min="21" max="35" value="${f.cycleLength}"></label>
+                <label class="stk-field"><span>Месячные, дней</span><input class="text_pole" data-f="periodLength" type="number" min="3" max="7" value="${f.periodLength}"></label>` : ''}
+                <label class="stk-field"><span>Контрацепция</span><select class="text_pole" data-f="contraception">
+                    ${Object.keys(FEMALE_CONTRACEPTION).filter(k => k !== 'pill_missed').map(k => `<option value="${k}" ${f.contraception === k ? 'selected' : ''}>${FEMALE_CONTRACEPTION[k].label}</option>`).join('')}
+                </select></label>
+            </div>
+            ${check('pmsSevere', f.pmsSevere, 'сильный ПМС')}${check('painfulPeriods', f.painfulPeriods, 'болезненные месячные')}
+            ${check('pcos', f.pcos, `${FEMALE_CONDITIONS.pcos.label}: ${FEMALE_CONDITIONS.pcos.note}`)}${check('endometriosis', f.endometriosis, `${FEMALE_CONDITIONS.endometriosis.label}: ${FEMALE_CONDITIONS.endometriosis.note}`)}
+            <div class="stk-actions">
+                <button type="button" class="stk-btn is-primary" data-stk-act="save-person" data-key="user">${icon('fa-check')}Сохранить</button>
+                <button type="button" class="stk-btn is-ghost" data-stk-act="cancel-edit">Отмена</button>
+            </div>
+        </div>`;
+    }
+    const m = p.male;
+    return `<div class="stk-card stk-edit is-editing" data-key="char">
+        <div class="stk-card-title">${icon('fa-mars')}${esc(nameOf(p))}<span class="stk-muted">правка</span></div>
+        <div class="stk-grid">
+            <label class="stk-field"><span>Возраст</span><input class="text_pole" data-f="age" type="number" min="18" max="90" value="${p.age}"></label>
+            <label class="stk-field"><span>Фертильность</span><select class="text_pole" data-f="fertility">
+                ${Object.entries(MALE_FERTILITY).map(([k, v]) => `<option value="${k}" ${m.fertility === k ? 'selected' : ''}>${v.label}</option>`).join('')}
+            </select></label>
+        </div>
+        ${check('smoker', m.smoker, 'курит')}${check('drinker', m.drinker, 'часто выпивает')}${check('overweight', m.overweight, 'лишний вес')}
+        ${check('varicocele', m.varicocele, 'варикоцеле (снижает фертильность)')}${check('vasectomy', m.vasectomyDay !== null, 'вазэктомия')}
+        <div class="stk-actions">
+            <button type="button" class="stk-btn is-primary" data-stk-act="save-person" data-key="char">${icon('fa-check')}Сохранить</button>
+            <button type="button" class="stk-btn is-ghost" data-stk-act="cancel-edit">Отмена</button>
+        </div>
     </div>`;
 }
 
 /** Hours in words: «~5 ч», «~2 дн.» */
 const hoursWord = h => (h >= 36 ? `~${Math.round(h / 24)} дн.` : `~${Math.max(1, Math.round(h))} ч`);
 
-function maleCard(state, person) {
+export function maleCard(state, person, view = {}) {
+    if (view.editPerson === person.key) return personEditor(state, person.key);
     const m = person.male;
     const s = maleSnapshot(state, person);
     const live = liveNow(state, person.key);
@@ -534,7 +624,7 @@ function maleCard(state, person) {
     const motilityWhy = joinWhy(delayed.length ? 'тот же сдвиг, что и у количества: сперма созревает около 74 дней' : 'в норме', traits.length ? `влияет: ${traits.join(', ')}` : '');
     const reserveWhy = s.reserve >= 0.99 ? 'полный' : s.reserveFullInHours ? `восстановится полностью через ${hoursWord(s.reserveFullInHours)} по времени истории` : 'восстанавливается';
     return `<div class="stk-card">
-        <div class="stk-card-title">${icon('fa-mars')}${esc(nameOf(person))}<span class="stk-muted">${years(person.age)}</span></div>
+        <div class="stk-card-title">${icon('fa-mars')}${esc(nameOf(person))}<span class="stk-muted">${years(person.age)}</span>${pencil(person.key)}</div>
         <div class="stk-person">
             ${ringsHtml([{ value: vigor, tone: 'accent' }, { value: libido, tone: 'pink' }, { value: s.erection, tone: 'warm' }], person.key, nameOf(person))}
             <div class="stk-legend-col">
@@ -561,18 +651,106 @@ function maleCard(state, person) {
 function readingLine() {
     const rs = readStatus();
     if (rs.index !== null) return `<div class="stk-reading">${icon('fa-feather-pointed')}<span>читаю последний ответ — показатели обновятся</span></div>`;
-    if (rs.failed) return `<div class="stk-reading is-failed">${icon('fa-triangle-exclamation')}<span>анализ не прошёл${rs.failed.error ? `: ${esc(rs.failed.error)}` : ''}</span><button type="button" class="stk-btn is-ghost stk-retry-btn">${icon('fa-rotate-right')}Повторить</button></div>`;
+    if (rs.failed) return `<div class="stk-reading is-failed">${icon('fa-triangle-exclamation')}<span>анализ не прошёл${rs.failed.error ? `: ${esc(rs.failed.error)}` : ''}</span><button type="button" class="stk-btn is-ghost" data-stk-act="retry">${icon('fa-rotate-right')}Повторить</button></div>`;
     return '';
 }
 
-function renderToday(state) {
+/** What is shared between them: closeness, the chance today, what comes next, what happened lately. */
+export function sharedCard(state) {
+    const woman = state.people.user;
+    const f = woman.female;
+    const day = state.clock.day;
+    const rows = [];
+    const lastAct = state.acts.at(-1);
+    if (lastAct) {
+        const ago = day - lastAct.day;
+        rows.push(`<div class="stk-row">${icon('fa-heart')}последняя близость: ${ago === 0 ? 'сегодня' : ago === 1 ? 'вчера' : `${ago} дн. назад`} · ${esc(ACT_LABEL[lastAct.protection] ?? lastAct.protection)}${lastAct.condomBroke ? ', презерватив порвался' : ''}</div>`);
+    }
+    if (!f.pregnancy && !f.postpartum) {
+        const s = cycleInfo(f, day);
+        const pill = pillState(f, day);
+        // the chance itself sits on her card; here only what it means for the two of them
+        if (s.fertile && !pill.suppressed && lastAct?.protection === 'none' && day - lastAct.day <= 5) rows.push(`<div class="stk-row stk-fertile">${icon('fa-seedling')}была близость без защиты в фертильные дни — беременность возможна</div>`);
+    }
+    const next = upcoming(state, woman);
+    const recent = [...state.log].reverse().filter(e => !['roll', 'intimacy'].includes(e.kind)).slice(0, 3);
+    return `<div class="stk-card stk-shared">
+        <div class="stk-card-title">${icon('fa-people-arrows')}Вместе</div>
+        ${rows.join('') || `<div class="stk-row stk-muted">${icon('fa-heart')}близости пока не было</div>`}
+        ${next ? `<div class="stk-sub">Ближайшее</div>${next}` : ''}
+        ${recent.length ? `<div class="stk-sub">Недавно</div>${recent.map(e => `<div class="stk-row">${icon(KIND_ICON[e.kind] ?? 'fa-circle-dot')}<span class="stk-muted">${esc(dateLabel(state, e.day, { day: 'numeric', month: 'short' }))}</span>${esc(e.text)}</div>`).join('')}` : ''}
+    </div>`;
+}
+const ACT_LABEL = { none: 'без защиты', condom: 'презерватив', withdrawal: 'прерванный акт' };
+const KIND_ICON = { doctor: 'fa-user-doctor', labor: 'fa-baby', injury: 'fa-bandage', recovered: 'fa-battery-full', event: 'fa-circle-dot' };
+
+/** Both of them side by side (one under the other on a phone), then what they share. */
+export function renderNow(state, view = {}) {
     const hh = String(Math.floor(state.clock.minutes / 60)).padStart(2, '0'), mm = String(state.clock.minutes % 60).padStart(2, '0');
     return `
         <div class="stk-clock"><b>${esc(capitalize(dateLabel(state)))}</b><span class="stk-muted">${hh}:${mm} · ${esc(timeLabel(state.clock.minutes))}${state.dateSure ? '' : ' · дата пока примерная'}</span></div>
         ${readingLine()}
-        ${femaleCard(state, state.people.user)}
-        ${maleCard(state, state.people.char)}
-        <div class="stk-hint">${icon('fa-circle-info')}Stork сам следит за РП: время, близость, привычки, тесты. Поправить вручную можно в «Настройках».</div>`;
+        <div class="stk-duo">
+            ${femaleCard(state, state.people.user, view)}
+            ${maleCard(state, state.people.char, view)}
+        </div>
+        ${sharedCard(state)}`;
+}
+
+function renderToday(state, view) {
+    return `${renderNow(state, view)}
+        <div class="stk-hint">${icon('fa-circle-info')}Stork сам следит за РП: время, близость, привычки, тесты. Карандаш у имени — поправить данные.</div>`;
+}
+
+/**
+ * Buttons that work the same in the window and in the chat infoblock.
+ * @returns {boolean} the click was ours
+ */
+export function handleAction(target, view, rerender) {
+    const act = target?.dataset?.stkAct;
+    if (!act) return false;
+    const form = target.closest('.stk-edit');
+    const values = () => {
+        const v = {};
+        form?.querySelectorAll('[data-f]').forEach(el => { v[el.dataset.f] = el.type === 'checkbox' ? el.checked : el.value; });
+        return v;
+    };
+    switch (act) {
+        case 'edit-person': view.editPerson = target.dataset.key; break;
+        case 'cancel-edit': view.editPerson = null; break;
+        case 'save-person':
+            updateCurrentState(state => applyPersonEdit(state, target.dataset.key, values()));
+            view.editPerson = null;
+            toastr.success('Сохранено', 'Stork', { timeOut: 1500 });
+            break;
+        case 'cal-month': view.monthOffset = (view.monthOffset ?? 0) + Number(target.dataset.d); break;
+        case 'cal-day': {
+            const day = Number(target.dataset.day);
+            view.pickDay = view.pickDay === day ? null : day;
+            break;
+        }
+        case 'cal-unpick': view.pickDay = null; break;
+        case 'cal-period': {
+            const day = view.pickDay;
+            let done = false;
+            updateCurrentState(state => { done = setPeriodStart(state, day); });
+            view.pickDay = null;
+            toastr[done ? 'success' : 'warning'](done ? 'Начало месячных отмечено, цикл пересчитан' : 'Этот день отметить нельзя', 'Stork', { timeOut: 2000 });
+            break;
+        }
+        case 'retry': retryRead(); break;
+        case 'tab': view.tab = target.dataset.tab; view.editPerson = null; break;
+        case 'toggle-ext':
+            settings().enabled = !settings().enabled;
+            saveSettingsDebounced();
+            refreshStatus();
+            changed();
+            toastr.info(settings().enabled ? 'Stork включён' : 'Stork выключен: модель его не видит, анализа нет', 'Stork', { timeOut: 2000 });
+            break;
+        default: return false;
+    }
+    rerender();
+    return true;
 }
 
 // #endregion
@@ -616,10 +794,10 @@ function upcoming(state, woman) {
         rows.push([start + s.length, 'fa-droplet', pillState(f, day).suppressed ? 'кровотечение отмены' : 'следующие месячные']);
     }
     return rows.filter(([d]) => d >= day).sort((a, b) => a[0] - b[0]).slice(0, 4)
-        .map(([d, ic, text]) => `<div class="stk-row">${icon(ic)}<b>${esc(when(d))}</b><span class="stk-muted">${esc(text)}</span></div>`).join('');
+        .map(([d, ic, text]) => `<div class="stk-row">${icon(ic)}<span class="stk-up"><b>${esc(when(d))}</b><span class="stk-muted">${esc(text)}</span></span></div>`).join('');
 }
 
-function renderCalendar(state, view) {
+export function renderCalendar(state, view) {
     const woman = state.people.user;
     const f = woman.female;
     const today = storyDate(state) ?? new Date();
@@ -629,6 +807,7 @@ function renderCalendar(state, view) {
     const testDays = new Set(state.rolls.filter(r => r.kind === 'test').map(r => r.day));
     const firstWeekday = (month.getDay() + 6) % 7;
     const daysInMonth = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
+    const editable = !f.pregnancy && !f.postpartum;
     const cells = Array.from({ length: firstWeekday }, () => '<span class="is-empty"></span>');
 
     for (let d = 1; d <= daysInMonth; d++) {
@@ -646,8 +825,13 @@ function renderCalendar(state, view) {
         }
         if (storyDay === state.clock.day) classes.push('is-today');
         if (storyDay > state.clock.day) classes.push('is-future');
+        if (view.pickDay === storyDay) classes.push('is-picked');
         const marks = `${actDays.has(storyDay) ? icon('fa-heart', 'stk-mark') : ''}${testDays.has(storyDay) ? icon('fa-vial', 'stk-mark') : ''}`;
-        cells.push(`<span class="${classes.join(' ')}"><em>${d}</em>${marks}</span>`);
+        // прошедшие дни (и сегодня) можно отметить: «здесь начались месячные»
+        const pickable = editable && storyDay <= state.clock.day && state.clock.day - storyDay <= 60;
+        cells.push(pickable
+            ? `<button type="button" class="${classes.join(' ')}" data-stk-act="cal-day" data-day="${storyDay}"><em>${d}</em>${marks}</button>`
+            : `<span class="${classes.join(' ')}"><em>${d}</em>${marks}</span>`);
     }
 
     const showStrip = !f.pregnancy && !f.postpartum;
@@ -661,9 +845,9 @@ function renderCalendar(state, view) {
             ${upcoming(state, woman) || '<div class="stk-muted">пока ничего</div>'}
         </div>
         <div class="stk-cal-head">
-            <button type="button" class="stk-btn is-ghost stk-month" data-d="-1">${icon('fa-chevron-left')}</button>
+            <button type="button" class="stk-btn is-ghost" data-stk-act="cal-month" data-d="-1" aria-label="Предыдущий месяц">${icon('fa-chevron-left')}</button>
             <b>${esc(capitalize(month.toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' })))}</b>
-            <button type="button" class="stk-btn is-ghost stk-month" data-d="1">${icon('fa-chevron-right')}</button>
+            <button type="button" class="stk-btn is-ghost" data-stk-act="cal-month" data-d="1" aria-label="Следующий месяц">${icon('fa-chevron-right')}</button>
         </div>
         <div class="stk-cal">
             ${['пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'вс'].map(w => `<span class="is-head">${w}</span>`).join('')}
@@ -677,14 +861,35 @@ function renderCalendar(state, view) {
             <span>${icon('fa-heart')}близость</span>
             <span>${icon('fa-vial')}тест</span>
         </div>
-        <div class="stk-hint">${icon('fa-circle-info')}Будущие дни и прошлые циклы показаны как прогноз.</div>`;
+        ${view.pickDay !== null && view.pickDay !== undefined && editable ? `<div class="stk-pick">
+            <span>${icon('fa-droplet')}${esc(capitalize(dateLabel(state, view.pickDay, { day: 'numeric', month: 'long' })))}</span>
+            <button type="button" class="stk-btn is-primary" data-stk-act="cal-period">Здесь начались месячные</button>
+            <button type="button" class="stk-btn is-ghost" data-stk-act="cal-unpick">Отмена</button>
+        </div>` : ''}
+        ${editable ? cycleEditor(f) : ''}
+        <div class="stk-hint">${icon('fa-circle-info')}${editable ? 'Нажми на прошедший день, чтобы отметить начало месячных. ' : ''}Будущие дни и прошлые циклы показаны как прогноз.</div>`;
+}
+
+/** Her cycle, set by hand right in the calendar: saved in this chat. */
+function cycleEditor(f) {
+    return `<div class="stk-card stk-edit" data-key="user">
+        <div class="stk-card-title">${icon('fa-sliders')}Мой цикл</div>
+        <div class="stk-grid">
+            <label class="stk-field"><span>Длина цикла, дней</span><input class="text_pole" data-f="cycleLength" type="number" min="21" max="35" value="${f.cycleLength}"></label>
+            <label class="stk-field"><span>Месячные, дней</span><input class="text_pole" data-f="periodLength" type="number" min="3" max="7" value="${f.periodLength}"></label>
+            <label class="stk-field"><span>Цикл</span><select class="text_pole" data-f="irregularity">
+                ${[[0, 'регулярный'], [2, 'слегка гуляет'], [5, 'нерегулярный']].map(([v, l]) => `<option value="${v}" ${Number(f.irregularity) === v ? 'selected' : ''}>${l}</option>`).join('')}
+            </select></label>
+        </div>
+        <div class="stk-actions"><button type="button" class="stk-btn is-primary" data-stk-act="save-person" data-key="user">${icon('fa-check')}Сохранить цикл</button></div>
+    </div>`;
 }
 
 // #endregion
 
 // #region Pregnancy
 
-function renderPregnancy(state) {
+export function renderPregnancy(state) {
     const woman = [state.people.user, state.people.char].find(p => p.sex === 'female' && p.female.pregnancy && knowsPregnancy(p));
     if (!woman) {
         return `<div class="stk-empty">${icon('fa-baby', 'stk-ic-xl')}<div>Беременности пока нет. Или о ней ещё никто не знает: сделай тест.</div></div>`;
@@ -808,6 +1013,11 @@ function renderSettings(state, view) {
         </div>
         <div class="stk-card">
             <div class="stk-card-title">${icon('fa-eye')}Показывать</div>
+            <label class="stk-field"><span>Инфоблок в чате</span>
+                <select class="text_pole stk-set" data-k="blockPosition">
+                    ${[['bottom', 'под ответом бота'], ['top', 'над ответом'], ['middle', 'посередине ответа'], ['off', 'не показывать']].map(([v, l]) => `<option value="${v}" ${(s.blockPosition ?? 'bottom') === v ? 'selected' : ''}>${l}</option>`).join('')}
+                </select>
+            </label>
             ${toggle('statusBar', 'Строка над полем ввода', 'дата и коротко о каждом')}
             ${toggle('toasts', 'Уведомления о событиях', 'начались месячные, задержка, схватки')}
         </div>
@@ -829,16 +1039,18 @@ function renderSettings(state, view) {
  * @param {string} [options.tab]
  */
 export async function openStork({ tab } = {}) {
-    const view = { randomDay: 1 + Math.floor(Math.random() * 28), tab: tab ?? 'today', monthOffset: 0, intimacyMenu: false, editing: false, analysis: null, manualAge: {} };
+    const view = { randomDay: 1 + Math.floor(Math.random() * 28), tab: tab ?? 'today', monthOffset: 0, intimacyMenu: false, editing: false, analysis: null, manualAge: {}, editPerson: null, pickDay: null };
     const $root = $(`
-        <div class="stk">
-            <div class="stk-head"><div class="stk-brand">${icon('fa-dove')}<span>Stork</span></div></div>
+        <div class="stk stk-window">
+            <div class="stk-head"><div class="stk-brand">${icon('fa-dove')}<span>Stork</span></div><span class="stk-switch-slot"></span></div>
             <nav class="stk-tabs">${TABS.map(t => `<button type="button" class="stk-tab" data-tab="${t.id}">${icon(t.icon)}<span>${t.label}</span></button>`).join('')}</nav>
             <div class="stk-panel"></div>
         </div>`);
 
     const render = () => {
         const state = currentState();
+        // включить / выключить Stork — в шапке окна
+        $root.find('.stk-switch-slot').html(switchHtml());
         const setup = view.editing;
         // not on here yet, turned off here, or off everywhere: a short explanation instead of an empty tracker
         const waiting = !setup && (!settings().enabled || !state.setupDone || state.chatOff || state.minorBlocked);
@@ -874,7 +1086,11 @@ export async function openStork({ tab } = {}) {
         render();
     };
 
-    $root.on('click', '.stk-retry-btn', () => retryRead());
+    // кнопки, общие с инфоблоком в чате: карандаши, календарь, повтор, переключатель
+    $root[0].addEventListener('click', event => {
+        const target = event.target.closest('[data-stk-act]');
+        if (target && $root[0].contains(target)) handleAction(target, view, render);
+    });
     $root.on('click', '.stk-tab, .stk-tab-go', function () {
         view.tab = this.dataset.tab;
         view.intimacyMenu = false;

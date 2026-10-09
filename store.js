@@ -21,6 +21,8 @@ const defaultSettings = {
     // 'inject': Stork places the status itself; 'macro': only through {{stork}} where the user put it
     placement: 'inject',
     statusBar: true,
+    // the infoblock inside the chat: top | middle | bottom of the latest reply, or off
+    blockPosition: 'bottom',
     toasts: true,
     showRolls: false,
     // 'analyzer': Stork reads each reply through a connection; 'tag': the story model leaves a hidden tag (free)

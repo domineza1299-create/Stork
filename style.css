@@ -62,8 +62,9 @@ stork {
 
 /* Popup glass */
 .popup:has(.stk) {
-    background: color-mix(in srgb, var(--SmartThemeBlurTintColor, #1a1a1a) 72%, transparent);
-    backdrop-filter: blur(calc(var(--SmartThemeBlurStrength, 10px) + 14px)) saturate(150%);
+    /* плотный фон: чат за окном не мешает читать */
+    background: color-mix(in srgb, var(--SmartThemeBlurTintColor, #1a1a1a) 94%, var(--SmartThemeBodyColor, #ddd) 2%);
+    backdrop-filter: blur(calc(var(--SmartThemeBlurStrength, 10px) + 18px)) saturate(140%);
     border: 1px solid color-mix(in srgb, var(--SmartThemeBodyColor, #ddd) 14%, transparent);
     border-radius: 18px;
 }
@@ -393,6 +394,24 @@ stork {
     align-items: center;
     gap: 8px;
     cursor: pointer;
+}
+
+.stk-check input {
+    flex: none;
+    margin: 0;
+}
+
+/* a date and what happens then: side by side, the note drops under the date when narrow */
+.stk-up {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    column-gap: 8px;
+    min-width: 0;
+}
+
+.stk-up b {
+    white-space: nowrap;
 }
 
 .stk-seg {
@@ -982,4 +1001,412 @@ stork {
     .stk-ring-v {
         transition: none;
     }
+}
+
+/* ═══ The infoblock inside the chat ═══ */
+.stk.stk-ib {
+    gap: 0;
+    margin: 10px 0 4px;
+    border-radius: 14px;
+    border: 1px solid var(--stk-line-strong);
+    background: color-mix(in srgb, var(--SmartThemeBlurTintColor, #1a1a1a) 90%, var(--stk-text) 3%);
+    box-shadow: 0 4px 16px color-mix(in srgb, #000 22%, transparent);
+    font-size: 0.9em;
+    line-height: 1.4;
+    overflow: hidden;
+    /* the reply's italic and colours must not leak in */
+    font-style: normal;
+    white-space: normal;
+    text-align: left;
+}
+
+.stk-ib {
+    --stk-text: var(--SmartThemeBodyColor, #ddd);
+    --stk-accent: var(--SmartThemeQuoteColor, #8ab4f8);
+    --stk-pink: color-mix(in srgb, #e46a9a 80%, var(--stk-text));
+    --stk-period: color-mix(in srgb, #d9555f 80%, var(--stk-text));
+    --stk-warm: color-mix(in srgb, #d9a23f 80%, var(--stk-text));
+    --stk-calm: color-mix(in srgb, var(--stk-text) 22%, transparent);
+    --stk-preg: color-mix(in srgb, #9b7be0 80%, var(--stk-text));
+    --stk-muted: color-mix(in srgb, var(--stk-text) 62%, transparent);
+    --stk-line: color-mix(in srgb, var(--stk-text) 12%, transparent);
+    --stk-line-strong: color-mix(in srgb, var(--stk-text) 22%, transparent);
+    --stk-glass: color-mix(in srgb, var(--stk-text) 5%, transparent);
+    --stk-glass-hover: color-mix(in srgb, var(--stk-text) 9%, transparent);
+    --stk-radius: 12px;
+    color: var(--stk-text);
+}
+
+.stk-ib :is(i, em, q, b, span, small) {
+    font-style: normal;
+}
+
+.stk-ib p {
+    margin: 0;
+}
+
+.stk-ib-head {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    cursor: pointer;
+    user-select: none;
+}
+
+.stk-ib-head:hover {
+    background: var(--stk-glass);
+}
+
+.stk-ib-faces {
+    display: flex;
+    flex: none;
+}
+
+.stk-ib-faces .stk-rings.is-xs {
+    width: 38px;
+}
+
+.stk-ib-faces .stk-rings + .stk-rings {
+    margin-left: -8px;
+}
+
+.stk-rings.is-xs .stk-face b {
+    font-size: 0.7em;
+}
+
+.stk-ib-text {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+}
+
+.stk-ib-text > b {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 600;
+}
+
+.stk-ib-text > b .stk-ic {
+    color: var(--stk-pink);
+}
+
+.stk-ib-text > span {
+    color: var(--stk-muted);
+    font-size: 0.88em;
+    overflow-wrap: anywhere;
+}
+
+.stk-ib-text > span b {
+    color: var(--stk-text);
+    font-weight: 600;
+}
+
+.stk-ib-mark {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    border-radius: 50%;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--stk-pink);
+}
+
+.stk-ib-mark.is-reading .stk-ic {
+    animation: stk-pulse 1.2s ease-in-out infinite;
+}
+
+.stk-ib-mark.is-failed {
+    border-color: color-mix(in srgb, var(--stk-warm) 55%, transparent);
+    color: var(--stk-warm);
+    cursor: pointer;
+}
+
+.stk-ib-chev {
+    flex: none;
+    color: var(--stk-muted);
+    transition: transform 0.25s ease;
+}
+
+.stk-ib.is-open .stk-ib-chev {
+    transform: rotate(180deg);
+}
+
+/* reading: a light sweep over the head only */
+.stk-ib.is-reading .stk-ib-head::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--stk-pink) 16%, transparent), transparent);
+    transform: translateX(-100%);
+    animation: stk-sweep 1.4s ease-in-out infinite;
+    pointer-events: none;
+}
+
+.stk-ib-body {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 4px 12px 12px;
+    animation: stk-open 0.22s ease-out;
+}
+
+@keyframes stk-open {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: none; }
+}
+
+.stk-ib .stk-panel {
+    min-height: 0;
+}
+
+.stk-ib .stk-tab {
+    padding: 5px 8px;
+}
+
+/* three tabs fit with words even on a phone */
+@container (min-width: 300px) {
+    .stk-ib .stk-tab span {
+        display: inline;
+    }
+}
+
+.stk-ib .stk-tab {
+    min-width: 0;
+}
+
+.stk-ib .stk-tab span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* on a phone the words matter more than the icons */
+@container (max-width: 420px) {
+    .stk-ib .stk-tab .stk-ic {
+        display: none;
+    }
+}
+
+/* ═══ Both of them side by side; one under the other when narrow ═══ */
+.stk-duo {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    align-items: start;
+}
+
+.stk-duo > .stk-card {
+    container-type: inline-size;
+}
+
+@container (max-width: 560px) {
+    .stk-duo {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+/* in a half-width card: rings over the legend, sperm one per row */
+@container (max-width: 380px) {
+    .stk-person {
+        grid-template-columns: minmax(0, 1fr);
+        justify-items: center;
+    }
+
+    .stk-legend-col {
+        width: 100%;
+    }
+
+    .stk-sperm {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .stk-sperm > div {
+        flex-direction: row;
+        text-align: left;
+    }
+
+    .stk-mini-ring {
+        width: 44px;
+        flex: none;
+    }
+}
+
+/* ═══ Pencil, editor, switch ═══ */
+.stk-pen {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    margin-left: 6px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--stk-muted);
+    cursor: pointer;
+}
+
+.stk-card-title .stk-pen .stk-ic {
+    color: inherit;
+    font-size: 0.85em;
+}
+
+.stk-pen:hover {
+    background: var(--stk-glass-hover);
+    color: var(--stk-text);
+}
+
+.stk-card-title .stk-muted {
+    margin-left: auto;
+}
+
+.stk-edit.is-editing {
+    border-color: color-mix(in srgb, var(--stk-pink) 45%, transparent);
+    animation: stk-open 0.2s ease-out;
+}
+
+.stk-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.stk-switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 3px 10px 3px 4px;
+    border-radius: 999px;
+    border: 1px solid var(--stk-line-strong);
+    background: var(--stk-glass);
+    color: var(--stk-muted);
+    font: inherit;
+    font-size: 0.85em;
+    cursor: pointer;
+}
+
+.stk-switch > i {
+    position: relative;
+    width: 30px;
+    height: 16px;
+    border-radius: 999px;
+    background: var(--stk-line-strong);
+    transition: background 0.2s ease;
+}
+
+.stk-switch > i::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--stk-text);
+    transition: transform 0.2s ease;
+}
+
+.stk-switch.is-on {
+    color: var(--stk-text);
+    border-color: color-mix(in srgb, var(--stk-pink) 55%, transparent);
+}
+
+.stk-switch.is-on > i {
+    background: color-mix(in srgb, var(--stk-pink) 70%, transparent);
+}
+
+.stk-switch.is-on > i::after {
+    transform: translateX(14px);
+}
+
+/* ═══ Calendar: days to tap, the picked day, her own cycle ═══ */
+.stk-cal button {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 38px;
+    padding: 0;
+    border: none;
+    border-radius: 8px;
+    background: var(--stk-glass);
+    color: inherit;
+    font: inherit;
+    font-size: 0.9em;
+    cursor: pointer;
+}
+
+.stk-cal button:hover {
+    box-shadow: inset 0 0 0 1px var(--stk-line-strong);
+}
+
+.stk-cal button.is-period { background: color-mix(in srgb, var(--stk-period) 35%, transparent); }
+.stk-cal button.is-window { background: color-mix(in srgb, var(--stk-pink) 22%, transparent); }
+.stk-cal button.is-ovulation { background: color-mix(in srgb, var(--stk-pink) 50%, transparent); }
+.stk-cal button.is-today { box-shadow: inset 0 0 0 2px var(--stk-text); }
+.stk-cal button em { font-style: normal; }
+
+.stk-cal .is-picked {
+    box-shadow: inset 0 0 0 2px var(--stk-pink) !important;
+}
+
+.stk-pick {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--stk-period) 12%, transparent);
+    animation: stk-open 0.2s ease-out;
+}
+
+.stk-pick > span {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 600;
+}
+
+.stk-shared .stk-row .stk-muted {
+    flex: none;
+    margin-right: 4px;
+}
+
+@container (max-width: 520px) {
+    .stk-cal button {
+        min-height: 32px;
+        font-size: 0.82em;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .stk-ib-body,
+    .stk-edit.is-editing,
+    .stk-pick {
+        animation: none;
+    }
+
+    .stk-ib.is-reading .stk-ib-head::after {
+        display: none;
+    }
+
+    .stk-ib-mark.is-reading .stk-ic {
+        animation: none;
+    }
+}
+
+/* a name never breaks in the middle */
+.stk-nw {
+    white-space: nowrap;
 }

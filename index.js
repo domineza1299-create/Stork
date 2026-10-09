@@ -9,8 +9,8 @@ import {
 import { buildStatus } from './engine.js';
 import { analyzeCards, readCards } from './cards.js';
 import { hasMinor, setupFromAnalysis } from './setup.js';
-import { saveSettingsDebounced } from '../../../../script.js';
 import { announce, openStork, renderStatusBar } from './ui.js';
+import { renderBlocks, resetBlock, scheduleBlocks, watchChat } from './block.js';
 
 // #region Generation
 
@@ -237,27 +237,8 @@ function renderWandButton() {
                 <div class="fa-solid fa-dove extensionsMenuExtensionButton"></div>
                 <span>Stork</span>
             </div>
-            <div id="stork_toggle" class="list-group-item flex-container flexGap5 interactable" tabindex="0" role="listitem"></div>
         </div>`);
     $('#stork_wand').on('click', () => openStork());
-    $('#stork_toggle').on('click', () => toggleStork());
-    renderToggle();
-}
-
-/** On/off for the whole extension, from the wand menu. Each chat remembers its own state either way. */
-function renderToggle() {
-    const on = settings().enabled;
-    $('#stork_toggle').attr('title', on ? 'Выключить Stork везде' : 'Включить Stork').html(`
-        <div class="fa-solid ${on ? 'fa-toggle-on' : 'fa-toggle-off'} extensionsMenuExtensionButton"></div>
-        <span>Stork: ${on ? 'включён' : 'выключен'}</span>`);
-}
-function toggleStork() {
-    settings().enabled = !settings().enabled;
-    saveSettingsDebounced();
-    renderToggle();
-    refreshStatus();
-    changed();
-    toastr.info(settings().enabled ? 'Stork включён' : 'Stork выключен: модель его не видит, анализа нет', 'Stork', { timeOut: 2500 });
 }
 
 function renderSettingsDrawer() {
@@ -286,7 +267,9 @@ jQuery(() => {
     renderWandButton();
     renderSettingsDrawer();
     onStateChange(renderStatusBar);
+    onStateChange(scheduleBlocks);
     onRetry(retry);
+    watchChat();
 
     eventSource.on(event_types.GENERATION_AFTER_COMMANDS, onGenerationAfterCommands);
     eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, stripTagsFromPrompt);
@@ -301,15 +284,22 @@ jQuery(() => {
     for (const name of ['CHAT_CHANGED', 'MESSAGE_DELETED']) {
         if (event_types[name]) {
             eventSource.on(event_types[name], () => {
+                if (name === 'CHAT_CHANGED') resetBlock();
                 refreshStatus();
                 changed();
                 setTimeout(hideAllTags, 50);
+                for (const ms of [150, 600]) setTimeout(() => renderBlocks(), ms);
             });
         }
+    }
+    // the infoblock follows the latest reply: new, swiped, edited, re-rendered
+    for (const name of ['CHARACTER_MESSAGE_RENDERED', 'USER_MESSAGE_RENDERED', 'MESSAGE_SWIPED', 'MESSAGE_UPDATED', 'MESSAGE_EDITED', 'MORE_MESSAGES_LOADED', 'GENERATION_ENDED']) {
+        if (event_types[name]) eventSource.on(event_types[name], () => scheduleBlocks());
     }
     for (const name of ['CHARACTER_MESSAGE_RENDERED', 'MORE_MESSAGES_LOADED']) {
         if (event_types[name]) eventSource.on(event_types[name], () => setTimeout(hideAllTags, 0));
     }
     refreshStatus();
     renderStatusBar();
+    setTimeout(() => renderBlocks(), 300);
 });

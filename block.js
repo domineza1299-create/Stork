@@ -1,0 +1,207 @@
+/*
+ * The infoblock inside the chat: under (or above, or in the middle of) the latest reply.
+ * Folded — one line: date, time and both of them in a word; open — tabs «Сейчас», «Календарь», «Беременность».
+ * Other extensions re-render the reply text and wipe foreign nodes: the block comes back in the same tick.
+ */
+import { getContext } from '../../../extensions.js';
+import { activeIn, currentState, readStatus, settings } from './store.js';
+import { blockHeadHtml, handleAction, renderCalendar, renderNow, renderPregnancy } from './ui.js';
+
+const OPEN_KEY = 'stork_block_open';
+/** The one infoblock and its view: tab, editing, picked day — survive re-renders. */
+let node = null;
+let nodeId = null;
+let lastHtml = '';
+const view = { tab: 'now', monthOffset: 0, editPerson: null, pickDay: null };
+
+const position = () => settings().blockPosition ?? 'bottom';
+const isOpen = () => {
+    try { return localStorage.getItem(OPEN_KEY) === '1'; } catch { return false; }
+};
+const setOpen = on => {
+    try { localStorage.setItem(OPEN_KEY, on ? '1' : '0'); } catch { /* private mode: only for this session */ }
+};
+const getMesEl = id => document.querySelector(`#chat .mes[mesid="${id}"]`);
+
+/** The latest reply of the bot after the user's first message: the block lives there. */
+function targetIndex() {
+    const chat = getContext().chat ?? [];
+    for (let i = chat.length - 1; i >= 0; i--) {
+        const m = chat[i];
+        if (!m || m.is_system) continue;
+        if (m.is_user) return null;          // the user wrote last: the block waits for the reply
+        return chat.slice(0, i).some(x => x?.is_user) ? i : null;
+    }
+    return null;
+}
+
+// #region Where the reply text ends (from Hearthtide)
+
+const TAIL_TAGS = /^(IMG|VIDEO|AUDIO|IFRAME|PICTURE|FIGURE|CANVAS|SVG|OBJECT|EMBED|BR|HR|STYLE|SCRIPT|TEMPLATE|LINK|META|BUTTON|INPUT|TEXTAREA|SELECT)$/;
+const BOX_TAGS = /^(DIV|SECTION|ASIDE|DETAILS|FORM|NAV)$/;
+const isOurs = n => n.nodeType === 1 && n.classList.contains('stk-ib');
+function hasText(n) {
+    if (n.nodeType === 3) return !!n.textContent.trim();
+    if (n.nodeType !== 1 || isOurs(n) || TAIL_TAGS.test(String(n.tagName).toUpperCase())) return false;
+    return !!n.textContent.trim();
+}
+// someone else's block: a container with a class or an id — the reply's own markup has none
+const foreignBox = n => n.nodeType === 1 && BOX_TAGS.test(String(n.tagName).toUpperCase()) && !!(n.className || n.id);
+function textEnd(text) {
+    const nodes = [...text.childNodes];
+    for (let i = nodes.length - 1; i >= 0; i--) if (hasText(nodes[i]) && !foreignBox(nodes[i])) return nodes[i];
+    for (let i = nodes.length - 1; i >= 0; i--) if (hasText(nodes[i])) return nodes[i];
+    return null;
+}
+const putAfter = (ref, el) => { if (ref.nextSibling !== el) ref.parentNode.insertBefore(el, ref.nextSibling); };
+/** Already right after the text: do not move it, or it jumps while pictures load. */
+function settled(el) {
+    if (!el.isConnected) return false;
+    let p = el.previousSibling;
+    while (p && (p.nodeType === 8 || (p.nodeType === 3 && !p.textContent.trim()))) p = p.previousSibling;
+    return !!p && hasText(p) && !foreignBox(p) && !p.classList?.contains('mes_text');
+}
+let placedAt = null;
+function place(mesEl, el) {
+    const text = mesEl.querySelector('.mes_text');
+    if (!text) return false;
+    const pos = position();
+    // the position was changed in the settings: move it even if it sits «right» for the old one
+    if (placedAt !== pos) el.remove();
+    placedAt = pos;
+    if (pos === 'top') {
+        if (text.previousSibling !== el) text.insertAdjacentElement('beforebegin', el);
+    } else if (pos === 'middle') {
+        if (!(el.parentNode === text && settled(el))) {
+            const parts = [...text.children].filter(x => !isOurs(x) && hasText(x) && !foreignBox(x));
+            if (parts.length >= 2) putAfter(parts[Math.ceil(parts.length / 2) - 1], el);
+            else putAfter(textEnd(text) || text, el);
+        }
+    } else if (!(mesEl.contains(el) && settled(el))) {
+        putAfter(textEnd(text) || text, el);
+    }
+    return true;
+}
+
+// #endregion
+
+// #region Render
+
+function bodyHtml(state) {
+    const f = state.people.user.female;
+    const pregnant = !!f.pregnancy?.knownBy?.includes('user');
+    const tabs = [['now', 'fa-sun', 'Сейчас'], ['calendar', 'fa-calendar-days', 'Календарь'], ...(pregnant ? [['baby', 'fa-baby', 'Беременность']] : [])];
+    if (!tabs.some(([id]) => id === view.tab)) view.tab = 'now';
+    const panel = view.tab === 'calendar' ? renderCalendar(state, view) : view.tab === 'baby' ? renderPregnancy(state) : renderNow(state, view);
+    return `<nav class="stk-tabs">${tabs.map(([id, ic, label]) => `<button type="button" class="stk-tab${view.tab === id ? ' is-on' : ''}" data-stk-act="tab" data-tab="${id}"><i class="fa-solid ${ic} stk-ic"></i><span>${label}</span></button>`).join('')}</nav>
+        <div class="stk-panel">${panel}</div>`;
+}
+
+let renderTimer = null;
+export function scheduleBlocks() {
+    clearTimeout(renderTimer);
+    renderTimer = setTimeout(() => renderBlocks(), 40);
+}
+
+/** Draws (or removes) the infoblock. force: even while she is typing in its form. */
+export function renderBlocks(force = false) {
+    const state = currentState();
+    const id = position() === 'off' || !activeIn(state) ? null : targetIndex();
+    const mesEl = id === null ? null : getMesEl(id);
+    if (!mesEl) {
+        node?.remove();
+        node = null;
+        nodeId = null;
+        lastHtml = '';
+        return;
+    }
+    // she is typing in the block's form: a background update must not wipe it
+    if (!force && node?.isConnected && nodeId === id && node.contains(document.activeElement) && document.activeElement.closest?.('.stk-edit')) return;
+    if (nodeId !== id) {
+        node?.remove();
+        node = null;
+        view.editPerson = null;
+        view.pickDay = null;
+    }
+    if (!node) {
+        node = document.createElement('div');
+        node.className = 'stk stk-ib';
+        bind(node);
+        lastHtml = '';
+    }
+    nodeId = id;
+    if (!place(mesEl, node)) return;
+    const open = isOpen();
+    const reading = readStatus().index !== null;
+    node.classList.toggle('is-open', open);
+    node.classList.toggle('is-reading', reading);
+    node.classList.toggle('is-failed', !!readStatus().failed);
+    // the same markup is not set again: running animations are not restarted
+    const html = blockHeadHtml(state, open, reading) + (open ? `<div class="stk-ib-body">${bodyHtml(state)}</div>` : '');
+    if (html !== lastHtml) {
+        node.innerHTML = html;
+        lastHtml = html;
+    }
+}
+
+function bind(el) {
+    el.addEventListener('click', event => {
+        const target = event.target.closest('[data-stk-act]');
+        if (!target || !el.contains(target)) return;
+        // the chat's own handlers (swipes, editing the message) must not see clicks inside the block
+        event.stopPropagation();
+        if (target.dataset.stkAct === 'block-toggle') {
+            setOpen(!isOpen());
+            renderBlocks(true);
+            return;
+        }
+        handleAction(target, view, () => renderBlocks(true));
+    });
+}
+
+// #endregion
+
+// #region Coming back when someone wipes it
+
+let observer = null;
+/** SillyTavern and other extensions re-render the reply text: put the block back in the same tick, before paint. */
+export function watchChat(tries = 0) {
+    const chatEl = document.getElementById('chat');
+    if (!chatEl) {
+        if (tries < 60) setTimeout(() => watchChat(tries + 1), 500);
+        return;
+    }
+    if (observer) return;
+    observer = new MutationObserver(mutations => {
+        if (!node) return;
+        let foreign = false;
+        for (const m of mutations) {
+            if (m.target.nodeType === 1 && m.target.closest?.('.stk-ib')) continue;      // our own changes
+            const nodes = [...m.addedNodes, ...m.removedNodes];
+            if (nodes.length && nodes.every(n => isOurs(n))) continue;
+            foreign = true;
+            break;
+        }
+        if (!foreign) return;
+        const mesEl = nodeId === null ? null : getMesEl(nodeId);
+        if (!mesEl) {
+            scheduleBlocks();
+            return;
+        }
+        const other = mesEl.querySelector('.stk-ib');
+        if (other && other !== node) other.remove();
+        if (!node.isConnected || (position() === 'bottom' && !settled(node))) place(mesEl, node);
+    });
+    observer.observe(chatEl, { childList: true, subtree: true });
+}
+
+/** A new chat: the block starts on the tab «Сейчас», nothing half-edited. */
+export function resetBlock() {
+    node?.remove();
+    node = null;
+    nodeId = null;
+    lastHtml = '';
+    Object.assign(view, { tab: 'now', monthOffset: 0, editPerson: null, pickDay: null });
+}
+
+// #endregion

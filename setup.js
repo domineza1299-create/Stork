@@ -95,3 +95,57 @@ export function setupFromAnalysis(state, analysis, cards, rng = Math.random) {
     state.autoSetup = true;
     return state;
 }
+
+// #region Quick edits from the pencil and the calendar
+
+const CYCLE_EDITABLE = f => !f.pregnancy && !f.postpartum;
+
+/**
+ * Applies the person editor. Only the fields present are changed.
+ * @param {'user'|'char'} key
+ * @param {object} v Values from the form (strings or booleans)
+ */
+export function applyPersonEdit(state, key, v) {
+    const person = state.people[key];
+    if (!person) return state;
+    const day = state.clock.day;
+    if (v.age !== undefined && v.age !== '') person.age = clampInt(v.age, ADULT_AGE, 90, person.age);
+    if (key === 'user') {
+        const f = person.female;
+        if (v.cycleLength !== undefined) f.cycleLength = clampInt(v.cycleLength, 21, 35, f.cycleLength);
+        if (v.periodLength !== undefined) f.periodLength = clampInt(v.periodLength, 3, 7, f.periodLength);
+        if (v.irregularity !== undefined) f.irregularity = clampInt(v.irregularity, 0, 7, f.irregularity);
+        if (v.cycleDay !== undefined && v.cycleDay !== '' && CYCLE_EDITABLE(f)) {
+            const cycleDay = clampInt(v.cycleDay, 1, f.cycleLength, 1);
+            f.cycleStart = day - (cycleDay - 1);
+            f.cycleShift = 0;
+            f.rolledCycle = null;
+            f.lateNoticed = [];
+        }
+        if (v.contraception !== undefined && CONTRACEPTIONS.includes(v.contraception)) {
+            if (f.contraception === 'pill' && v.contraception !== 'pill') f.pillStoppedDay = day;
+            f.contraception = v.contraception;
+        }
+        for (const k of ['pmsSevere', 'painfulPeriods', 'pcos', 'endometriosis']) if (v[k] !== undefined) f[k] = !!v[k];
+        f.perimenopause = perimenopause(person.age);
+    } else {
+        const m = person.male;
+        if (v.fertility !== undefined && ['normal', 'low', 'sterile'].includes(v.fertility)) m.fertility = v.fertility;
+        for (const k of ['smoker', 'drinker', 'overweight', 'varicocele']) if (v[k] !== undefined) m[k] = !!v[k];
+        if (v.vasectomy !== undefined) m.vasectomyDay = v.vasectomy ? (m.vasectomyDay ?? day - 365) : null;
+    }
+    return state;
+}
+
+/** «Here her period started» from the calendar: the cycle restarts that day (today or earlier, not while pregnant). */
+export function setPeriodStart(state, storyDay) {
+    const f = state.people.user?.female;
+    if (!f || !CYCLE_EDITABLE(f) || storyDay > state.clock.day || state.clock.day - storyDay > 60) return false;
+    f.cycleStart = storyDay;
+    f.cycleShift = 0;
+    f.rolledCycle = null;
+    f.lateNoticed = [];
+    return true;
+}
+
+// #endregion

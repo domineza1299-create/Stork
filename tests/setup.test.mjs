@@ -44,3 +44,36 @@ describe('setting a chat up by itself', () => {
         assert.equal(hasMinor(null, cards), false);
     });
 });
+
+describe('quick edits', async () => {
+    const { applyPersonEdit, setPeriodStart } = await import('../setup.js');
+    const { cycleInfo } = await import('../biology.js');
+    it('changes only what the form sends', () => {
+        const state = setupFromAnalysis(createState(), null, cards, () => 0);
+        state.clock.day = 40;
+        applyPersonEdit(state, 'user', { age: '27', cycleDay: '12', cycleLength: '30', contraception: 'ring', pcos: true });
+        const f = state.people.user.female;
+        assert.equal(state.people.user.age, 27);
+        assert.equal(cycleInfo(f, 40).cycleDay, 12);
+        assert.equal(f.cycleLength, 30);
+        assert.equal(f.contraception, 'ring');
+        assert.equal(f.pcos, true);
+        assert.equal(f.periodLength, 5, 'untouched');
+        applyPersonEdit(state, 'char', { age: '35', fertility: 'low', smoker: true, vasectomy: false });
+        assert.equal(state.people.char.age, 35);
+        assert.equal(state.people.char.male.fertility, 'low');
+        assert.equal(state.people.char.male.vasectomyDay, null);
+        applyPersonEdit(state, 'user', { age: '15' });
+        assert.equal(state.people.user.age, 18, 'never under 18');
+    });
+
+    it('marks the start of her period from the calendar, only in the past and not while pregnant', () => {
+        const state = setupFromAnalysis(createState(), null, cards, () => 0);
+        state.clock.day = 50;
+        assert.equal(setPeriodStart(state, 47), true);
+        assert.equal(cycleInfo(state.people.user.female, 50).cycleDay, 4);
+        assert.equal(setPeriodStart(state, 52), false, 'not in the future');
+        const pregnant = setupFromAnalysis(createState(), { user: { pregnant: true, pregnancy_weeks: 10 } }, cards);
+        assert.equal(setPeriodStart(pregnant, 0), false);
+    });
+});
