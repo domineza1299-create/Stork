@@ -644,3 +644,342 @@ stork {
         animation: none;
     }
 }
+
+/* ═══ Person: rings around the avatar, legend beside ═══ */
+.stk-person {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 14px;
+}
+
+.stk-rings {
+    position: relative;
+    width: 124px;
+    aspect-ratio: 1;
+    flex-shrink: 0;
+}
+
+.stk-rings svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+.stk-ring-bg {
+    fill: none;
+    stroke: var(--stk-line);
+}
+
+.stk-ring-v {
+    fill: none;
+    stroke: var(--stk-accent);
+    stroke-linecap: round;
+    transition: stroke-dasharray 0.6s ease;
+}
+
+.stk-ring-v.is-pink { stroke: var(--stk-pink); }
+.stk-ring-v.is-period { stroke: var(--stk-period); }
+.stk-ring-v.is-warm { stroke: var(--stk-warm); }
+.stk-ring-v.is-preg { stroke: var(--stk-preg); }
+.stk-ring-v.is-accent { stroke: var(--stk-accent); }
+
+.stk-face {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    overflow: hidden;
+    background: var(--stk-glass-hover);
+    box-shadow: 0 0 0 1px var(--stk-line-strong);
+}
+
+.stk-face img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.stk-face b {
+    font-size: 1.1em;
+    color: var(--stk-muted);
+}
+
+.stk-legend-col {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+}
+
+.stk-leg {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    min-width: 0;
+}
+
+.stk-leg > i {
+    flex: none;
+    width: 9px;
+    height: 9px;
+    margin-top: 0.45em;
+    border-radius: 50%;
+    background: var(--stk-accent);
+}
+
+.stk-leg > i.is-pink { background: var(--stk-pink); }
+.stk-leg > i.is-period { background: var(--stk-period); }
+.stk-leg > i.is-warm { background: var(--stk-warm); }
+.stk-leg > i.is-preg { background: var(--stk-preg); }
+
+.stk-leg > div {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.stk-leg span {
+    overflow-wrap: anywhere;
+}
+
+.stk-leg small,
+.stk-sperm small {
+    color: var(--stk-muted);
+    font-size: 0.82em;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+}
+
+/* Sperm: three small rings with a word each */
+.stk-sperm {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.stk-sperm > div {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 8px 6px;
+    border-radius: 10px;
+    background: var(--stk-glass);
+    text-align: center;
+    min-width: 0;
+}
+
+.stk-sperm > div > div {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.stk-mini-ring {
+    position: relative;
+    width: 52px;
+    aspect-ratio: 1;
+}
+
+.stk-mini-ring svg {
+    width: 100%;
+    height: 100%;
+}
+
+.stk-mini-ring b {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.78em;
+}
+
+/* What the story shows about the person right now */
+.stk-story-note {
+    display: flex;
+    gap: 8px;
+    padding: 7px 10px;
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--stk-pink) 8%, transparent);
+    border-left: 2px solid color-mix(in srgb, var(--stk-pink) 55%, transparent);
+    font-size: 0.92em;
+}
+
+.stk-story-note .stk-ic {
+    color: var(--stk-pink);
+    margin-top: 0.2em;
+}
+
+.stk-recover {
+    color: var(--stk-warm);
+}
+
+/* Reading the latest reply / it failed */
+.stk-reading {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-radius: 10px;
+    overflow: hidden;
+    background: var(--stk-glass);
+    color: var(--stk-muted);
+    font-size: 0.88em;
+}
+
+.stk-reading::after,
+#stork_bar.is-reading::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--stk-pink) 22%, transparent), transparent);
+    transform: translateX(-100%);
+    animation: stk-sweep 1.4s ease-in-out infinite;
+    pointer-events: none;
+}
+
+.stk-reading.is-failed {
+    color: var(--stk-warm);
+}
+
+.stk-reading.is-failed::after {
+    display: none;
+}
+
+.stk-reading .stk-btn {
+    margin-left: auto;
+}
+
+@keyframes stk-sweep {
+    to { transform: translateX(100%); }
+}
+
+/* Status line: wraps instead of cutting off; a retry button when the analysis failed */
+#stork_bar {
+    position: relative;
+    white-space: normal;
+    line-height: 1.35;
+}
+
+#stork_bar .stk-bar-text {
+    flex: 1;
+    min-width: 0;
+    overflow: visible;
+    text-overflow: clip;
+}
+
+#stork_bar.is-failed {
+    border-color: color-mix(in srgb, var(--stk-warm) 55%, transparent);
+}
+
+#stork_bar .stk-retry {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    border-radius: 50%;
+    border: 1px solid color-mix(in srgb, var(--stk-warm) 55%, transparent);
+    background: transparent;
+    color: var(--stk-warm);
+    cursor: pointer;
+}
+
+#stork_bar .stk-retry .stk-ic {
+    color: inherit;
+}
+
+#stork_bar.is-reading .stk-ic {
+    animation: none;
+}
+
+/* ═══ Phones: nothing sticks out of the window ═══ */
+.stk,
+.stk * {
+    min-width: 0;
+}
+
+.stk {
+    max-width: 100%;
+    overflow-wrap: anywhere;
+}
+
+@container (max-width: 520px) {
+    .stk-person {
+        grid-template-columns: minmax(0, 1fr);
+        justify-items: center;
+    }
+
+    .stk-legend-col {
+        width: 100%;
+    }
+
+    .stk-rings.is-lg {
+        width: 112px;
+    }
+
+    .stk-sperm {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .stk-sperm > div {
+        flex-direction: row;
+        text-align: left;
+    }
+
+    .stk-mini-ring {
+        width: 44px;
+        flex: none;
+    }
+
+    .stk-stats {
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    }
+
+    .stk-cal span {
+        min-height: 32px;
+        font-size: 0.82em;
+    }
+
+    .stk-log {
+        grid-template-columns: 56px minmax(0, 1fr);
+    }
+
+    .stk-meter {
+        grid-template-columns: 80px minmax(0, 1fr);
+    }
+}
+
+@media (max-width: 600px) {
+    #stork_bar {
+        padding: 4px 10px;
+        font-size: 0.78em;
+    }
+
+    .popup:has(.stk) {
+        max-width: 100vw;
+    }
+
+    .popup:has(.stk) .popup-body,
+    .popup:has(.stk) .popup-content {
+        overflow-x: hidden;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .stk-reading::after,
+    #stork_bar.is-reading::after {
+        animation: none;
+        display: none;
+    }
+
+    .stk-ring-v {
+        transition: none;
+    }
+}

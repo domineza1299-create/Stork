@@ -52,6 +52,8 @@ export function createPerson(key, { name = '', sex = 'female', age = 25 } = {}) 
             vasectomyDay: null,
             lifestyle: [],
             ejaculations: [],
+            // absolute story minutes of his orgasms: the reserve recovers by hours, not by days
+            orgasms: [],
             lastOrgasmMinute: null,
         },
     };
@@ -76,7 +78,22 @@ export function createState({ userName = '', charName = '', startDate = null, st
         rolls: [],
         log: [],
         pending: [],
+        // how each person is right now by the story (from the scene analysis), fading over half a day
+        live: {},
+        // true once the story itself named a date: before that the calendar date is only a guess
+        dateSure: false,
     };
+}
+
+/** Older saved states: fill in what newer versions expect. */
+export function upgradeState(state) {
+    state.live ??= {};
+    state.dateSure ??= false;
+    for (const person of Object.values(state.people ?? {})) {
+        const m = person.male;
+        if (m && !Array.isArray(m.orgasms)) m.orgasms = m.lastOrgasmMinute !== null && m.lastOrgasmMinute !== undefined ? [m.lastOrgasmMinute] : [];
+    }
+    return state;
 }
 
 export const cloneState = state => JSON.parse(JSON.stringify(state));
@@ -245,6 +262,16 @@ export function advanceTime(state, minutes, rng = Math.random) {
 
 // #region Events from the story
 
+/** One orgasm of his, once per moment (intimacy and orgasm:char in the same reply are the same one). */
+function markOrgasm(m, day, minute) {
+    m.orgasms ??= [];
+    if (m.lastOrgasmMinute === minute && m.orgasms.includes(minute)) return;
+    m.ejaculations.push(day);
+    m.orgasms.push(minute);
+    if (m.orgasms.length > 30) m.orgasms.splice(0, m.orgasms.length - 30);
+    m.lastOrgasmMinute = minute;
+}
+
 /**
  * Applies one event from the model's tag or a button.
  * @param {{type: string, who?: string, protection?: string, force?: string}} event
@@ -264,10 +291,7 @@ export function applyEvent(state, event, rng = Math.random) {
                 note(state, man ?? woman, 'презерватив порвался');
             }
             if (woman && man) state.acts.push(act);
-            if (man) {
-                man.male.ejaculations.push(day);
-                man.male.lastOrgasmMinute = absMinute(state.clock);
-            }
+            if (man) markOrgasm(man.male, day, absMinute(state.clock));
             note(state, null, `близость (${ACT_PROTECTION[protection].label})`, { model: false, kind: 'intimacy' });
             break;
         }
@@ -287,10 +311,7 @@ export function applyEvent(state, event, rng = Math.random) {
             break;
         }
         case 'orgasm':
-            if (who?.sex === 'male') {
-                who.male.ejaculations.push(day);
-                who.male.lastOrgasmMinute = absMinute(state.clock);
-            }
+            if (who?.sex === 'male') markOrgasm(who.male, day, absMinute(state.clock));
             break;
         case 'emergency_pill': {
             const woman = who ?? Object.values(state.people).find(p => p.sex === 'female');
@@ -344,12 +365,12 @@ export function applyEvent(state, event, rng = Math.random) {
 // #region Model tag
 
 /** The instruction appended to the status: how to report what happened. */
-export const TAG_INSTRUCTION = 'В самом конце ответа добавь одну строку-метку для трекера (она скрыта от читателя): '
-    + '<stork t="сколько прошло времени в этом ответе: +15m, +2h, +1d или 0" ev="события через запятую или пусто"/>. '
-    + 'События: intimacy:none|condom|withdrawal (близость и защита), orgasm:user|char, test:user|char (тест на беременность), '
-    + 'condom_broke, doctor, ultrasound, stress:user|char, illness:user|char, alcohol:user|char, smoking:user|char, '
-    + 'cannabis:user|char, sauna:user|char, no_sleep:user|char, pill_missed:user|char, emergency_pill:user|char. '
-    + 'Если закончил не внутри, пиши intimacy:withdrawal. Пиши только то, что действительно произошло в этом ответе.';
+export const TAG_INSTRUCTION = 'At the very end of the reply add one hidden tracker line (the reader never sees it): '
+    + '<stork t="story time that passed in this reply: +15m, +2h, +1d or 0" ev="events, comma-separated, or empty"/>. '
+    + 'Events: intimacy:none|condom|withdrawal (intercourse and protection), orgasm:user|char, test:user|char (pregnancy test), '
+    + 'condom_broke, doctor, ultrasound, stress:user|char, illness:user|char (only a sickness with fever — never an injury or a bruise), '
+    + 'alcohol:user|char, smoking:user|char, cannabis:user|char, sauna:user|char, no_sleep:user|char, pill_missed:user|char, emergency_pill:user|char. '
+    + 'If he did not finish inside, write intimacy:withdrawal. Only what actually happened in this reply. Never mention or explain the line.';
 
 const TAG_RE = /<stork\b([^>]*?)\/?>(?:\s*<\/stork>)?/gi;
 
@@ -418,6 +439,8 @@ export function sceneToTag(scene) {
     }
     for (const who of scene?.orgasm ?? []) if (who === 'user' || who === 'char') events.push(`orgasm:${who}`);
     for (const item of scene?.lifestyle ?? []) {
+        // a bruise, a cut or a hangover is not an illness: only a sickness with fever counts as one
+        if (item?.type === 'illness' && item.fever !== true) continue;
         if (LIFESTYLE_TYPES.includes(item?.type) && (item.who === 'user' || item.who === 'char')) events.push(`${item.type}:${item.who}`);
     }
     if (scene?.pregnancy_test) events.push('test:user');
@@ -480,16 +503,36 @@ export function guessAge(text) {
 
 // #region Status for the model
 
-const NEUTRAL = [[/секс\w*/gi, 'близость'], [/возбужд\w*/gi, 'влечение'], [/оргазм\w*/gi, 'кульминация']];
+// Softer words for strict providers (the status is in English; values from the story may be Russian)
+const NEUTRAL = [[/\bsex(ual)?\b/gi, 'intimacy'], [/arous\w*/gi, 'desire'], [/orgasm\w*/gi, 'climax'], [/секс\w*/gi, 'близость'], [/оргазм\w*/gi, 'кульминация']];
+
+const PHASE_EN = { menstruation: 'her period', follicular: 'follicular phase', ovulation: 'ovulation', luteal: 'luteal phase', pms: 'PMS' };
+const BELLY_EN = { 'не видно': 'not showing yet', 'слегка округлился': 'slightly rounded', 'заметен': 'showing', 'большой': 'big', 'очень большой': 'very big' };
+const CONTRACEPTION_EN = {
+    none: 'none', pill: 'the pill', pill_missed: 'the pill, a missed dose this week', ring: 'vaginal ring', patch: 'patch', injection: 'injection',
+    implant: 'implant', iud: 'hormonal IUD', copper_iud: 'copper IUD',
+};
+const level = v => (v > 0.8 ? 'high' : v > 0.55 ? 'normal' : 'low');
+const days = n => `${n} day${n === 1 ? '' : 's'}`;
+
+/** What the scene analysis saw in the story about this person (in the story's language): the story keeps it. */
+function storyLine(state, person) {
+    const live = liveNow(state, person.key);
+    return live.note || live.mood ? ` As the story shows now: ${[live.mood, live.note].filter(Boolean).join(' — ')}` : '';
+}
 
 function femaleLine(state, person, detailed) {
+    return `${femaleLineRaw(state, person, detailed)}${storyLine(state, person)}`;
+}
+
+function femaleLineRaw(state, person, detailed) {
     const f = person.female;
     const day = state.clock.day;
-    const name = person.name || 'Она';
+    const name = person.name || 'She';
     const age = person.age ? ` (${person.age})` : '';
     if (f.postpartum) {
         const since = day - f.postpartum.birthDay;
-        return `${name}${age}: ${since} дн. после родов${since < POSTPARTUM_RECOVERY_DAYS ? ', восстанавливается, нужен покой' : ''}${f.postpartum.breastfeeding ? ', кормит грудью' : ''}.`;
+        return `${name}${age}: ${days(since)} after giving birth${since < POSTPARTUM_RECOVERY_DAYS ? ', still recovering, needs rest' : ''}${f.postpartum.breastfeeding ? ', breastfeeding' : ''}.`;
     }
     if (f.pregnancy) {
         const p = f.pregnancy;
@@ -497,37 +540,37 @@ function femaleLine(state, person, detailed) {
         const knows = p.knownBy.includes(person.key);
         if (p.labor) {
             const progress = laborProgress(p.labor, absMinute(state.clock));
-            return `${name}${age}: РОДЫ. ${progress.label}, схватки каждые ${progress.intervalMinutes} мин${progress.waterBroken ? ', воды отошли' : ''}.`;
+            return `${name}${age}: IN LABOR — ${progress.stage === 'pushing' ? 'pushing' : progress.stage === 'active' ? 'active contractions' : 'early contractions'}, every ${progress.intervalMinutes} min${progress.waterBroken ? ', her water has broken' : ''}. This comes first in the scene.`;
         }
         if (!knows) {
-            const hints = info.week >= 5 ? info.symptoms.slice(0, 2).join(', ') : 'никаких признаков';
-            return `${name}${age}: беременна (${info.week} нед.), но ещё НЕ знает об этом. Показывай только намёки: ${hints}. Не называй причину.`;
+            const hints = info.week >= 5 ? info.symptoms.slice(0, 2).join(', ') : 'no signs yet';
+            return `${name}${age}: pregnant (${info.week} weeks) but does NOT know it yet. Only hints may show: ${hints}. Never name the cause.`;
         }
-        const parts = [`${name}${age}: беременна, ${info.week} нед. (${info.trimester}-й триместр), до родов ${Math.max(0, info.daysToDue)} дн.`];
-        parts.push(`Живот: ${info.belly}.`);
+        const parts = [`${name}${age}: pregnant, ${info.week} weeks (trimester ${info.trimester}), ${days(Math.max(0, info.daysToDue))} to the due date. Belly: ${BELLY_EN[info.belly] ?? info.belly}.`];
         if (detailed) {
-            if (info.symptoms.length) parts.push(`Самочувствие: ${info.symptoms.join(', ')}.`);
-            parts.push(`Малыш размером с ${info.baby.compare}${info.kicksFelt ? ', толкается' : ''}.`);
-            parts.push(`Тянет на ${p.cravings.join(' и ')}, не выносит ${p.aversions.join(', ')}.`);
-            if (p.babies > 1) parts.push('Двойня.');
-            if (p.sexKnown) parts.push(`Пол: ${p.sexes.join(' и ')}.`);
+            if (info.symptoms.length) parts.push(`Feels: ${info.symptoms.join(', ')}.`);
+            parts.push(`The baby is the size of ${info.baby.compare}${info.kicksFelt ? ', kicks' : ''}.`);
+            parts.push(`Craves ${p.cravings.join(' and ')}; can't stand ${p.aversions.join(', ')}.`);
+            if (p.babies > 1) parts.push('Twins.');
+            if (p.sexKnown) parts.push(`Sex: ${p.sexes.join(' and ')}.`);
         }
         return parts.join(' ');
     }
-    const state0 = femaleState(f, day);
+    const st = femaleState(f, day);
     const pill = pillState(f, day);
-    const phase = pill.suppressed && ['ovulation', 'follicular'].includes(state0.phase) ? 'гормональная контрацепция, овуляции нет' : state0.phaseLabel;
-    const parts = [`${name}${age}: день цикла ${state0.cycleDay} из ${state0.length}, ${phase}.`];
-    if (state0.late) parts.push(`Месячные запаздывают на ${state0.cycleDay - state0.length} дн.`);
+    const phase = pill.suppressed && ['ovulation', 'follicular'].includes(st.phase) ? 'hormonal contraception, no ovulation' : PHASE_EN[st.phase];
+    const parts = [`${name}${age}: cycle day ${st.cycleDay} of ${st.length}, ${phase}.`];
+    if (st.late) parts.push(`Her period is ${days(st.cycleDay - st.length)} late.`);
     if (detailed) {
-        parts.push(`Самочувствие: ${state0.symptoms.join(', ')}.`);
-        const desire = state0.libido > 0.8 ? 'сильное' : state0.libido > 0.5 ? 'обычное' : 'сниженное';
-        parts.push(`Влечение ${desire}, энергия ${state0.energy > 0.7 ? 'высокая' : state0.energy > 0.45 ? 'средняя' : 'низкая'}.`);
-        if (state0.fertile && !pill.suppressed) parts.push('Сейчас фертильные дни.');
+        parts.push(`Feels: ${st.symptoms.join(', ')}.`);
+        const live = liveNow(state, person.key);
+        const libido = withLive(st.libido, live.libido), energy = withLive(st.energy, live.energy);
+        parts.push(`Desire ${level(libido)}, energy ${level(energy)}.`);
+        if (st.fertile && !pill.suppressed) parts.push('Fertile days now.');
         const conditions = Object.entries(FEMALE_CONDITIONS).filter(([key]) => f[key]).map(([, c]) => `${c.label} (${c.note})`);
-        if (conditions.length) parts.push(`Особенности: ${conditions.join('; ')}.`);
+        if (conditions.length) parts.push(`Conditions: ${conditions.join('; ')}.`);
     }
-    parts.push(`Контрацепция: ${FEMALE_CONTRACEPTION[pill.effective]?.label ?? 'нет'}.`);
+    parts.push(`Contraception: ${CONTRACEPTION_EN[pill.effective] ?? 'none'}.`);
     return parts.join(' ');
 }
 
@@ -538,30 +581,88 @@ function isExpectingFather(state, person) {
 }
 
 export function maleSnapshot(state, person) {
-    return maleState(person.male, person.age, state.clock.day, state.clock.minutes, { expectingFather: isExpectingFather(state, person) });
+    return maleState(person.male, person.age, state.clock.day, state.clock.minutes, { expectingFather: isExpectingFather(state, person), nowMinute: absMinute(state.clock) });
 }
 
+/** Minutes until he can go again, 0 when he is ready (or there was no orgasm). */
+export function recoveryLeft(state, person = state.people.char) {
+    const m = person?.male;
+    if (!m || person.sex !== 'male' || m.lastOrgasmMinute === null || m.lastOrgasmMinute === undefined) return 0;
+    const s = maleSnapshot(state, person);
+    return Math.max(0, s.refractoryMinutes - (absMinute(state.clock) - m.lastOrgasmMinute));
+}
+
+// #region How they are by the story
+
+/** Story-driven state fades over half a day; the note stays a day. */
+const LIVE_FADE_HOURS = 12;
+export function liveNow(state, key) {
+    const l = state.live?.[key];
+    if (!l) return { energy: 0, libido: 0, note: null, mood: null };
+    const hours = (absMinute(state.clock) - l.at) / 60;
+    const k = Math.max(0, 1 - hours / LIVE_FADE_HOURS);
+    return { energy: (l.energy ?? 0) * k || 0, libido: (l.libido ?? 0) * k || 0, note: hours < 24 ? l.note : null, mood: hours < LIVE_FADE_HOURS ? l.mood : null, hours };
+}
+/** A level 0-1 with the story's offset (-3..3) on top of the body's own level. */
+export const withLive = (base, offset) => Math.min(1, Math.max(0, base + 0.15 * (offset ?? 0)));
+
+const toOffset = v => (v === null || v === undefined || Number.isNaN(Number(v)) ? null : Math.max(-3, Math.min(3, Math.round(Number(v)))));
+/** The analysis says how each person is now: replaces the earlier reading (it describes now, not a change). */
+function applyPeople(state, people) {
+    for (const key of ['user', 'char']) {
+        const p = people?.[key];
+        if (!p || !state.people[key]) continue;
+        const prev = state.live[key] ?? {};
+        const energy = toOffset(p.energy), libido = toOffset(p.libido);
+        const note = typeof p.note === 'string' && p.note.trim() ? p.note.trim().slice(0, 300) : null;
+        const mood = typeof p.mood === 'string' && p.mood.trim() ? p.mood.trim().slice(0, 40) : null;
+        if (energy === null && libido === null && !note && !mood) continue;
+        state.live[key] = {
+            energy: energy ?? liveNow(state, key).energy,
+            libido: libido ?? liveNow(state, key).libido,
+            note: note ?? prev.note ?? null,
+            mood: mood ?? prev.mood ?? null,
+            at: absMinute(state.clock),
+        };
+    }
+}
+/** Injuries are noted, not turned into an illness: a bruise does not give a fever. */
+function applyInjuries(state, injuries) {
+    for (const item of injuries ?? []) {
+        const person = state.people[item?.who];
+        const what = typeof item?.what === 'string' ? item.what.trim().slice(0, 80) : '';
+        if (!person || !what) continue;
+        if (state.log.some(e => e.kind === 'injury' && e.who === person.key && e.text.endsWith(what) && state.clock.day - e.day < 3)) continue;
+        note(state, person, `${person.name || 'Он'}: ${what}`, { model: false, kind: 'injury' });
+    }
+}
+
+// #endregion
+
 function maleLine(state, person, detailed) {
-    const m = person.male;
-    const name = person.name || 'Он';
+    return `${maleLineRaw(state, person, detailed)}${storyLine(state, person)}`;
+}
+
+function maleLineRaw(state, person, detailed) {
+    const name = person.name || 'He';
     const age = person.age ? ` (${person.age})` : '';
     const s = maleSnapshot(state, person);
     const parts = [`${name}${age}:`];
-    const level = value => (value > 0.8 ? 'высокое' : value > 0.55 ? 'обычное' : 'сниженное');
     if (detailed) {
-        parts.push(s.testosterone > 0.85 ? 'бодр, на пике сил.' : s.testosterone > 0.65 ? 'в обычной форме.' : 'устал.');
-        parts.push(`Влечение ${level(s.libido)}.`);
-        if (s.erection < 0.75) parts.push('Эрекция может подвести (стресс, усталость или алкоголь).');
-        if (s.daysSinceLast !== null) parts.push(`Последняя близость ${s.daysSinceLast === 0 ? 'сегодня' : `${s.daysSinceLast} дн. назад`}.`);
-        if (m.lastOrgasmMinute !== null && absMinute(state.clock) - m.lastOrgasmMinute < s.refractoryMinutes) {
-            parts.push(`Ещё восстанавливается, будет готов примерно через ${s.refractoryMinutes - (absMinute(state.clock) - m.lastOrgasmMinute)} мин.`);
-        }
+        const live = liveNow(state, person.key);
+        const vigor = withLive(s.testosterone, live.energy), libido = withLive(s.libido, live.libido);
+        parts.push(vigor > 0.85 ? 'full of energy, at his peak.' : vigor > 0.65 ? 'in his usual shape.' : 'tired.');
+        parts.push(`Desire ${level(libido)}.`);
+        if (s.erection < 0.75) parts.push('His erection may let him down (stress, tiredness or drink).');
+        if (s.daysSinceLast !== null) parts.push(`Last intimacy ${s.daysSinceLast === 0 ? 'today' : `${days(s.daysSinceLast)} ago`}.`);
+        const left = recoveryLeft(state, person);
+        if (left > 0) parts.push(`Still recovering after his climax: ready again in about ${left} min of story time.`);
         const recent = s.recent.filter(e => e.daysAgo <= 3).map(e => e.label);
-        if (recent.length) parts.push(`Недавно: ${[...new Set(recent)].join(', ')}.`);
-        if (s.couvade) parts.push('Сопереживает беременности партнёрши: хуже спит, иногда подташнивает, тянет на еду.');
+        if (recent.length) parts.push(`Lately: ${[...new Set(recent)].join(', ')}.`);
+        if (s.couvade) parts.push('Shares the pregnancy in his body: sleeps worse, sometimes nauseous, odd cravings.');
     }
-    if (s.expectingFather) parts.push('Знает, что станет отцом, гормонально перестраивается: мягче, заботливее.');
-    return parts.length > 1 ? parts.join(' ') : `${name}${age}: без особенностей.`;
+    if (s.expectingFather) parts.push('Knows he is going to be a father; it softens him — gentler, more protective.');
+    return parts.length > 1 ? parts.join(' ') : `${name}${age}: nothing notable.`;
 }
 
 /** Calendar date of a story day, or null when the story has no start date. */
@@ -594,14 +695,18 @@ export function timeLabel(minutes) {
  * @param {boolean} [options.withTag] Ask for the tracker tag
  */
 export function buildStatus(state, { detailed = true, neutral = false, withTag = true } = {}) {
-    const lines = [`[Stork | ${dateLabel(state)}, ${timeLabel(state.clock.minutes)}]`];
+    const hh = String(Math.floor(state.clock.minutes / 60)).padStart(2, '0'), mm = String(state.clock.minutes % 60).padStart(2, '0');
+    const date = storyDate(state);
+    const when = date ? `${date.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })}, ${hh}:${mm}` : `story day ${state.clock.day + 1}, ${hh}:${mm}`;
+    const lines = [`[Stork — the bodies of ${state.people.char.name || '{{char}}'} and ${state.people.user.name || '{{user}}'}; background for the story, not its topic | ${when}]`];
     for (const person of [state.people.char, state.people.user]) {
         lines.push(person.sex === 'female' ? femaleLine(state, person, detailed) : maleLine(state, person, detailed));
     }
     if (state.pending.length) {
-        lines.push(`Только что произошло (обыграй в ответе один раз): ${state.pending.map(e => e.text).join('; ')}.`);
+        lines.push(`Just happened — let it show once in this reply, in a natural way: ${state.pending.map(e => e.text).join('; ')}.`);
     }
-    lines.push('Учитывай это состояние в описаниях.');
+    const user = state.people.user.name || '{{user}}';
+    lines.push(`Let these states show in the reply through bodies and behaviour — movement, reactions, appetite, tiredness or strength, desire or its absence — in small touches that fit the scene. Never state numbers, phases or this block itself. ${user}'s state shows only in what can be seen or what others notice; never write ${user}'s thoughts, feelings, words or choices. The scene always comes first.`);
     if (withTag) lines.push(TAG_INSTRUCTION);
     let text = lines.join('\n');
     if (neutral) for (const [re, word] of NEUTRAL) text = text.replace(re, word);
@@ -614,15 +719,64 @@ export function buildStatus(state, { detailed = true, neutral = false, withTag =
  * Processes one model reply: clears what the model was told, applies the tag.
  * @returns {{state: object, tag: object}}
  */
-export function processReply(previousState, replyText, rng = Math.random) {
-    const state = cloneState(previousState);
+export function processReply(previousState, replyText, rng = Math.random, scene = null) {
+    const state = upgradeState(cloneState(previousState));
     state.pending = [];
     const tag = parseTag(replyText);
+    const wasRecovering = recoveryLeft(state) > 0;
     // Events happen before the time of the reply passes (intimacy, then the night)
     for (const event of tag.events) applyEvent(state, event, rng);
     const clock = tag.clock ?? extractClock(replyText);
-    advanceTime(state, clock === null ? tag.minutes : minutesToClock(state.clock.minutes, clock, tag.minutes), rng);
+    advanceTime(state, storyMinutes(state, { clock, minutes: tag.minutes, date: scene?.date, part: scene?.part_of_day }), rng);
+    if (scene) {
+        applyPeople(state, scene.people);
+        applyInjuries(state, scene.injury);
+    }
+    // He was recovering and the story time ran out: tell once
+    const man = state.people.char;
+    if (wasRecovering && recoveryLeft(state) <= 0 && man?.sex === 'male') {
+        note(state, man, `${man.name || 'Он'}: силы восстановились`, { model: false, kind: 'recovered' });
+    }
     return { state, tag: { ...tag, clock } };
+}
+
+const PART_MINUTES = { morning: 8 * 60, day: 13 * 60, evening: 19 * 60, night: 23 * 60 };
+/** Part of the day by the clock, the same boundaries as timeLabel(). */
+export function partOf(minutes) {
+    const h = Math.floor(minutes / 60);
+    return h < 5 ? 'night' : h < 12 ? 'morning' : h < 17 ? 'day' : h < 22 ? 'evening' : 'night';
+}
+/** Story day of an ISO date, by the chat's start date. */
+function dayOfDate(state, iso) {
+    if (!state.startDate || !/^\d{4}-\d{2}-\d{2}$/.test(String(iso ?? ''))) return null;
+    return Math.round((new Date(`${iso}T12:00:00Z`) - new Date(`${state.startDate}T12:00:00Z`)) / 86400000);
+}
+/**
+ * How far the story moved, best source first: a date the story names, then a clock, then a part of the day,
+ * then the guessed duration. Time never goes back. The first date the story names anchors the calendar
+ * (before it the date was only a guess, often today's real one).
+ */
+export function storyMinutes(state, { clock = null, minutes = 0, date = null, part = null } = {}) {
+    const validDate = /^\d{4}-\d{2}-\d{2}$/.test(String(date ?? '')) ? date : null;
+    if (validDate && (!state.dateSure || !state.startDate)) {
+        // re-anchor: today is that date; the cycle and everything else stay where they are
+        const base = new Date(`${validDate}T12:00:00Z`);
+        base.setUTCDate(base.getUTCDate() - state.clock.day);
+        state.startDate = base.toISOString().slice(0, 10);
+        state.dateSure = true;
+    } else if (validDate) {
+        const target = dayOfDate(state, validDate);
+        if (target !== null && target > state.clock.day) {
+            const at = clock ?? (part && PART_MINUTES[part]) ?? state.clock.minutes;
+            return (target - state.clock.day) * MINUTES_PER_DAY + at - state.clock.minutes;
+        }
+    }
+    if (clock !== null) return minutesToClock(state.clock.minutes, clock, minutes);
+    // the story says it is evening now while the clock says morning: move to that part of the day
+    if (part && PART_MINUTES[part] !== undefined && partOf(state.clock.minutes + minutes) !== part) {
+        return minutesToClock(state.clock.minutes, PART_MINUTES[part], minutes);
+    }
+    return minutes;
 }
 
 /**

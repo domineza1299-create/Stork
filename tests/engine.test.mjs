@@ -77,7 +77,7 @@ describe('conception and pregnancy', () => {
         assert.ok(p, 'conceived');
         assert.deepEqual(p.knownBy, []);
         assert.equal(state.rolls.at(-1).kind, 'conception');
-        assert.ok(/НЕ знает/.test(buildStatus(state)));
+        assert.ok(/does NOT know/.test(buildStatus(state)));
     });
 
     it('does not roll without a male partner or without acts', () => {
@@ -95,7 +95,7 @@ describe('conception and pregnancy', () => {
         assert.ok(state.log.some(e => /задержка месячных 1 день/.test(e.text)));
         applyEvent(state, { type: 'test', who: 'user' }, seq(0.1));
         assert.deepEqual(state.people.user.female.pregnancy.knownBy, ['user']);
-        assert.ok(/беременна, 4 нед/.test(buildStatus(state)));
+        assert.ok(/pregnant, 4 weeks/.test(buildStatus(state)));
     });
 
     it('suppresses ovulation on the pill', () => {
@@ -104,7 +104,7 @@ describe('conception and pregnancy', () => {
         applyEvent(state, { type: 'intimacy', protection: 'none' });
         advanceTime(state, 2 * DAY, seq(0));
         assert.equal(state.people.user.female.pregnancy, null);
-        assert.ok(/таблетки/.test(buildStatus(state)));
+        assert.ok(/the pill/.test(buildStatus(state)));
     });
 
     it('goes through labor to birth and recovery', () => {
@@ -117,7 +117,7 @@ describe('conception and pregnancy', () => {
         // Jump to week 42 (day 294 from the last period): labor must start
         advanceTime(state, (42 * 7 - 13) * DAY, () => 0.99);
         assert.ok(f.pregnancy?.labor, 'labor started by week 42');
-        assert.ok(/РОДЫ/.test(buildStatus(state)));
+        assert.ok(/IN LABOR/.test(buildStatus(state)));
         advanceTime(state, 24 * 60, () => 0.99);
         assert.equal(f.pregnancy, null);
         assert.equal(f.births, 1);
@@ -131,7 +131,7 @@ describe('conception and pregnancy', () => {
 describe('status text', () => {
     it('describes both people and asks for the tag', () => {
         const text = buildStatus(couple());
-        assert.ok(text.includes('Анна (26): день цикла 1 из 28'));
+        assert.ok(text.includes('Анна (26): cycle day 1 of 28'));
         assert.ok(text.includes('Марк (30):'));
         assert.ok(text.includes('<stork'));
         assert.ok(!buildStatus(couple(), { withTag: false }).includes('<stork'));
@@ -147,9 +147,9 @@ describe('status text', () => {
     it('tells when he is still recovering', () => {
         const state = couple();
         applyEvent(state, { type: 'intimacy', protection: 'condom' }, seq(0.9));
-        assert.ok(/восстанавливается/.test(buildStatus(state)));
+        assert.ok(/Still recovering/.test(buildStatus(state)));
         advanceTime(state, 60);
-        assert.ok(!/восстанавливается/.test(buildStatus(state)));
+        assert.ok(!/Still recovering/.test(buildStatus(state)));
     });
 });
 

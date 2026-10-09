@@ -5,7 +5,7 @@
  */
 import { saveChatDebounced } from '../../../../script.js';
 import { extension_settings, getContext } from '../../../extensions.js';
-import { buildStatus, createState, processReply } from './engine.js';
+import { buildStatus, createState, processReply, upgradeState } from './engine.js';
 
 export const MODULE = 'stork';
 const PROMPT_KEY = 'stork_status';
@@ -56,7 +56,8 @@ function notify() {
 function baseState({ persist = false } = {}) {
     const context = getContext();
     const meta = context.chatMetadata;
-    if (meta[MODULE]) return meta[MODULE];
+    if (meta[MODULE]) return upgradeState(meta[MODULE]);
+    // the real date only until the story names its own (then the calendar re-anchors to it)
     const fresh = createState({ userName: context.name1, charName: context.name2, startDate: new Date().toISOString().slice(0, 10) });
     if (persist) {
         meta[MODULE] = fresh;
@@ -72,7 +73,7 @@ export function stateBefore(index) {
     const chat = getContext().chat ?? [];
     for (let i = Math.min(index, chat.length) - 1; i >= 0; i--) {
         const snapshot = snapshotOf(chat[i]);
-        if (snapshot) return snapshot.state;
+        if (snapshot) return upgradeState(snapshot.state);
     }
     return baseState();
 }
@@ -81,7 +82,7 @@ export function stateBefore(index) {
 export const currentState = () => stateBefore(Infinity);
 
 /** Stork works only in chats where it was set up: other chats get nothing. */
-export const activeIn = state => settings().enabled && !!state?.setupDone;
+export const activeIn = state => settings().enabled && !!state?.setupDone && !state?.chatOff;
 
 export function hashText(text) {
     let h = 0;
@@ -93,7 +94,7 @@ export function hashText(text) {
  * (Re)computes the state after one model reply. Unchanged text keeps its dice.
  * @returns {{tag: object, events: object[]}|null} The tag and the new log entries
  */
-export function processMessage(index, textOverride = null) {
+export function processMessage(index, textOverride = null, scene = null) {
     const chat = getContext().chat ?? [];
     const message = chat[index];
     if (!message || message.is_user || message.is_system) return null;
@@ -103,7 +104,7 @@ export function processMessage(index, textOverride = null) {
     const before = stateBefore(index);
     // An analysis result is read together with the reply itself, so a time header in the text still counts
     const { state, tag } = processReply(before, textOverride === null ? message.mes : `${message.mes}
-${textOverride}`);
+${textOverride}`, Math.random, scene);
     message.extra ??= {};
     message.extra.stork ??= {};
     message.extra.stork[message.swipe_id ?? 0] = { hash, state, tagFound: tag.found, fromHints: textOverride !== null };
@@ -134,6 +135,26 @@ export function updateCurrentState(mutate) {
     notify();
     return { state: target, events: target.log.slice(logLength) };
 }
+
+// #endregion
+
+// #region Reading the story: in progress, failed (with a retry)
+
+const reading = { index: null, failed: null };
+let retryHandler = null;
+export const readStatus = () => reading;
+export function setReading(index) {
+    reading.index = index;
+    if (index !== null) reading.failed = null;
+    notify();
+}
+export function setReadFailed(index, error) {
+    reading.index = null;
+    reading.failed = index === null ? null : { index, error: String(error?.message ?? error ?? '') };
+    notify();
+}
+export const onRetry = handler => { retryHandler = handler; };
+export const retryRead = () => (reading.failed && retryHandler ? retryHandler(reading.failed.index) : null);
 
 // #endregion
 

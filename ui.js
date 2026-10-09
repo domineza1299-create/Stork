@@ -5,8 +5,13 @@ import {
     MALE_FERTILITY, PERIOD_FLOW, perimenopause, pillState, pregnancyInfo, STORY_MODES,
 } from './biology.js';
 import { analyzeCards, getProfiles, guessAge, readCards } from './cards.js';
-import { absMinute, advanceTime, applyEvent, dateLabel, maleSnapshot, MINUTES_PER_DAY, parseClock, storyDate, timeLabel } from './engine.js';
-import { activeIn, currentState, onStateChange, refreshStatus, settings, updateCurrentState } from './store.js';
+import { getContext } from '../../../extensions.js';
+import { absMinute, advanceTime, applyEvent, dateLabel, liveNow, maleSnapshot, MINUTES_PER_DAY, parseClock, recoveryLeft, storyDate, timeLabel, withLive } from './engine.js';
+import { activeIn, currentState, onStateChange, readStatus, refreshStatus, retryRead, settings, updateCurrentState } from './store.js';
+
+// Persona avatar lives in personas.js; loaded lazily so a missing module never breaks Stork
+let personas = null;
+import('../../../personas.js').then(m => { personas = m; }).catch(() => { });
 
 const TABS = [
     { id: 'today', icon: 'fa-sun', label: 'Сегодня' },
@@ -63,12 +68,41 @@ function statusLineText(state) {
                 text = info.late ? `задержка ${info.cycleDay - info.length} дн.` : `день ${info.cycleDay}, ${info.fertile && !pillState(f, state.clock.day).suppressed ? 'фертильно' : info.phaseLabel}`;
             }
         } else {
-            const s = maleState(person.male, person.age, state.clock.day, state.clock.minutes);
-            text = s.testosterone > 0.85 ? 'бодр' : s.testosterone > 0.65 ? 'в форме' : 'устал';
+            const s = maleSnapshot(state, person);
+            const vigor = withLive(s.testosterone, liveNow(state, person.key).energy);
+            const left = recoveryLeft(state, person);
+            text = left > 0 ? `восстанавливается ~${left} мин` : vigor > 0.85 ? 'бодр' : vigor > 0.65 ? 'в форме' : 'устал';
         }
         parts.push(`<b>${esc(nameOf(person))}:</b> ${esc(text)}`);
     }
     return parts.join('<span class="stk-dot-sep">·</span>');
+}
+
+/**
+ * The line takes the width, side margins and rounding of the chat's input form, whatever the theme:
+ * it looks like part of the chat, and follows when the window or a side panel changes size.
+ */
+let formObserver = null;
+function syncBar(bar, form) {
+    if (!bar || !form) return;
+    const cs = getComputedStyle(form);
+    bar.style.boxSizing = 'border-box';
+    bar.style.width = `${form.getBoundingClientRect().width}px`;
+    bar.style.maxWidth = '100%';
+    bar.style.marginLeft = cs.marginLeft;
+    bar.style.marginRight = cs.marginRight;
+    bar.style.borderRadius = cs.borderRadius && cs.borderRadius !== '0px' ? cs.borderRadius : '';
+}
+function watchForm(bar, form) {
+    if (!form) return;
+    syncBar(bar, form);
+    formObserver?.disconnect();
+    if (typeof ResizeObserver === 'function') {
+        formObserver = new ResizeObserver(() => syncBar(document.getElementById('stork_bar'), form));
+        formObserver.observe(form);
+    } else {
+        window.addEventListener('resize', () => syncBar(document.getElementById('stork_bar'), form));
+    }
 }
 
 export function renderStatusBar() {
@@ -83,11 +117,23 @@ export function renderStatusBar() {
         bar = document.createElement('div');
         bar.id = 'stork_bar';
         bar.title = 'Stork: открыть подробности';
-        bar.addEventListener('click', () => openStork());
+        bar.addEventListener('click', event => {
+            if (event.target.closest('.stk-retry')) {
+                event.stopPropagation();
+                retryRead();
+                return;
+            }
+            openStork();
+        });
         const form = document.getElementById('send_form');
         form?.parentElement?.insertBefore(bar, form);
+        watchForm(bar, form);
     }
-    bar.innerHTML = `${icon('fa-moon')}<span>${statusLineText(state)}</span>`;
+    const rs = readStatus();
+    bar.classList.toggle('is-reading', rs.index !== null);
+    bar.classList.toggle('is-failed', !!rs.failed);
+    const retry = rs.failed ? `<button type="button" class="stk-retry" title="Анализ не прошёл: ${esc(rs.failed.error)}. Нажми, чтобы повторить">${icon('fa-rotate-right')}</button>` : '';
+    bar.innerHTML = `${icon(rs.index !== null ? 'fa-feather-pointed' : 'fa-moon')}<span class="stk-bar-text">${statusLineText(state)}</span>${retry}`;
 }
 
 // #endregion
@@ -289,6 +335,29 @@ function applySetup($root, state, view) {
     state.storyMode = $root.find('.stk-story[data-k="storyMode"]').val() ?? 'realistic';
     if (pre?.story?.summary) state.storySummary = pre.story.summary;
     state.setupDone = true;
+    state.chatOff = false;
+}
+
+// #endregion
+
+// #region Not on in this chat
+
+function renderWaiting(state) {
+    if (!settings().enabled) {
+        return `<div class="stk-empty">${icon('fa-power-off', 'stk-ic-xl')}<div>Stork выключен везде. Включить можно в меню палочки: «Stork: выключен».</div></div>`;
+    }
+    if (state.minorBlocked) {
+        return `<div class="stk-empty">${icon('fa-ban', 'stk-ic-xl')}<div>По карточке персонаж младше 18 лет. Stork не ведёт репродуктивные механики для несовершеннолетних.</div></div>`;
+    }
+    if (state.chatOff) {
+        return `<div class="stk-empty">${icon('fa-moon', 'stk-ic-xl')}<div>Stork выключен в этом чате. Всё, что он успел записать, сохранено.</div>
+            <button type="button" class="stk-btn is-primary stk-enable-chat">${icon('fa-power-off')}Включить снова</button></div>`;
+    }
+    return `<div class="stk-empty">${icon('fa-dove', 'stk-ic-xl')}<div>Stork включится сам, когда бот ответит на твоё первое сообщение в этом чате: прочитает карточку, персону и начало истории и запомнит всё для этого чата.</div>
+        <div class="stk-actions" style="justify-content:center">
+            <button type="button" class="stk-btn stk-setup-now">${icon('fa-sliders')}Настроить сейчас вручную</button>
+            <button type="button" class="stk-btn is-ghost stk-disable-chat">${icon('fa-power-off')}Не включать в этом чате</button>
+        </div></div>`;
 }
 
 // #endregion
@@ -312,76 +381,195 @@ function nextInCycle(s, suppressed) {
     return `до месячных ${s.daysToPeriod} дн.`;
 }
 
+// #region Rings around the avatars
+
+/** Avatar of {{char}} (card) or {{user}} (persona), or null. */
+function avatarUrl(key) {
+    try {
+        const ctx = getContext();
+        if (key === 'char') {
+            const ch = ctx.characters?.[ctx.characterId];
+            return ch?.avatar && ch.avatar !== 'none' ? `/thumbnail?type=avatar&file=${encodeURIComponent(ch.avatar)}` : null;
+        }
+        const file = personas?.user_avatar;
+        if (file) return `/thumbnail?type=persona&file=${encodeURIComponent(file)}`;
+        return document.querySelector('#chat .mes[is_user="true"] .avatar img')?.getAttribute('src') || null;
+    } catch {
+        return null;
+    }
+}
+const initials = name => String(name || '?').trim().split(/\s+/).slice(0, 2).map(w => w[0] ?? '').join('').toUpperCase() || '?';
+
+/**
+ * Concentric rings with the avatar in the middle. rings: [{ value 0-1, tone }], outer first.
+ * One SVG, stroke-dasharray only: cheap to draw and to animate.
+ */
+function ringsHtml(rings, key, name, size = 'lg') {
+    const stroke = size === 'lg' ? 7 : 6;
+    const gap = 3;
+    const outer = 60 - stroke / 2 - 1;
+    const circles = rings.map((r, n) => {
+        const radius = outer - n * (stroke + gap);
+        const v = Math.round(clamp01(r.value) * 100);
+        return `<circle class="stk-ring-bg" cx="60" cy="60" r="${radius}" stroke-width="${stroke}"/>
+            <circle class="stk-ring-v is-${r.tone}" cx="60" cy="60" r="${radius}" stroke-width="${stroke}" pathLength="100" stroke-dasharray="${v} 100" transform="rotate(-90 60 60)"/>`;
+    }).join('');
+    const inner = outer - (rings.length - 1) * (stroke + gap) - stroke / 2 - 3;
+    const inset = ((60 - inner) / 120 * 100).toFixed(1);
+    const url = key ? avatarUrl(key) : null;
+    const face = url ? `<img src="${esc(url)}" alt="" loading="lazy">` : `<b>${esc(initials(name))}</b>`;
+    return `<div class="stk-rings is-${size}"><svg viewBox="0 0 120 120" aria-hidden="true">${circles}</svg><span class="stk-face" style="inset:${inset}%">${face}</span></div>`;
+}
+
+/** One line of the legend next to the rings: colour, name, value, and why. */
+function legendRow(tone, label, value, why) {
+    return `<div class="stk-leg"><i class="is-${tone}"></i><div><span><b>${esc(label)}</b> ${esc(value)}</span>${why ? `<small>${esc(why)}</small>` : ''}</div></div>`;
+}
+/** Small ring with a value inside, for the three sperm numbers. */
+function miniRing(tone, value, text) {
+    const v = Math.round(clamp01(value) * 100);
+    return `<div class="stk-mini-ring"><svg viewBox="0 0 40 40" aria-hidden="true"><circle class="stk-ring-bg" cx="20" cy="20" r="16" stroke-width="4"/><circle class="stk-ring-v is-${tone}" cx="20" cy="20" r="16" stroke-width="4" pathLength="100" stroke-dasharray="${v} 100" transform="rotate(-90 20 20)"/></svg><b>${esc(text)}</b></div>`;
+}
+
+/** What the story did to this level: words for the offset from the analysis. */
+function storyWhy(offset) {
+    if (offset >= 1.5) return 'по сюжету заметно выше обычного';
+    if (offset >= 0.5) return 'по сюжету чуть выше';
+    if (offset <= -1.5) return 'по сюжету заметно ниже обычного';
+    if (offset <= -0.5) return 'по сюжету чуть ниже';
+    return '';
+}
+const joinWhy = (...parts) => parts.filter(Boolean).join('; ');
+
+/** How the story shows this person now: note and mood from the analysis of the latest replies. */
+function storyNote(state, key) {
+    const live = liveNow(state, key);
+    if (!live.note && !live.mood) return '';
+    return `<div class="stk-story-note">${icon('fa-feather-pointed')}<div>${live.mood ? `<b>${esc(capitalize(live.mood))}.</b> ` : ''}${esc(live.note ?? '')}</div></div>`;
+}
+
+// #endregion
+
 function femaleCard(state, person) {
     const f = person.female;
     const day = state.clock.day;
+    const live = liveNow(state, person.key);
     const head = `<div class="stk-card-title">${icon('fa-venus')}${esc(nameOf(person))}<span class="stk-muted">${years(person.age)}</span></div>`;
     if (f.pregnancy?.labor && knowsPregnancy(person)) {
         const progress = laborProgress(f.pregnancy.labor, absMinute(state.clock));
-        return `<div class="stk-card is-alert">${head}<div class="stk-big">Роды: ${esc(progress.label)}</div>
-            <div class="stk-muted">схватки каждые ${progress.intervalMinutes} мин${progress.waterBroken ? ', воды отошли' : ''}</div>
-            <div class="stk-progress"><i style="width:${Math.round(progress.progress * 100)}%"></i></div></div>`;
+        return `<div class="stk-card is-alert">${head}
+            <div class="stk-person">${ringsHtml([{ value: progress.progress, tone: 'preg' }], person.key, nameOf(person))}
+                <div class="stk-legend-col">${legendRow('preg', 'Роды', progress.label, `схватки каждые ${progress.intervalMinutes} мин${progress.waterBroken ? ', воды отошли' : ''}`)}</div></div>
+            ${storyNote(state, person.key)}</div>`;
     }
     if (f.pregnancy && knowsPregnancy(person)) {
         const info = pregnancyInfo(f.pregnancy, day);
+        const libido = withLive(info.libido, live.libido);
         return `<div class="stk-card">${head}
-            <div class="stk-big">${info.week} нед. ${info.weekDay} дн.<span class="stk-muted">${info.trimester}-й триместр · до родов ${Math.max(0, info.daysToDue)} дн.</span></div>
-            <div class="stk-progress"><i style="width:${Math.min(100, Math.round(info.week / 40 * 100))}%"></i></div>
+            <div class="stk-person">${ringsHtml([{ value: info.week / 40, tone: 'preg' }, { value: libido, tone: 'pink' }], person.key, nameOf(person))}
+                <div class="stk-legend-col">
+                    ${legendRow('preg', 'Срок', `${info.week} нед. ${info.weekDay} дн.`, `${info.trimester}-й триместр · до родов ${Math.max(0, info.daysToDue)} дн.`)}
+                    ${legendRow('pink', 'Влечение', levelWord(libido), joinWhy(info.trimester === 2 ? 'второй триместр — обычно выше' : 'в этом триместре обычно ниже', storyWhy(live.libido)))}
+                </div></div>
             <div class="stk-row">${icon('fa-seedling')}малыш размером с ${esc(info.baby.compare)}${info.kicksFelt ? ', толкается' : ''}</div>
             <div class="stk-row">${icon('fa-person-pregnant')}живот: ${esc(info.belly)}, +${info.weightGain} кг</div>
             ${info.symptoms.length ? `<div class="stk-row">${icon('fa-notes-medical')}${esc(info.symptoms.join(', '))}</div>` : ''}
-            ${meter('влечение', info.libido, 'is-pink')}
+            ${storyNote(state, person.key)}
         </div>`;
     }
     if (f.postpartum) {
         const since = day - f.postpartum.birthDay;
         return `<div class="stk-card">${head}<div class="stk-big">${since} дн. после родов</div>
             <div class="stk-row">${icon('fa-bed')}${since < 42 ? 'восстановление, нужен покой' : 'восстановилась'}</div>
-            ${f.postpartum.breastfeeding ? `<div class="stk-row">${icon('fa-baby')}кормит грудью, месячные пока не вернулись</div>` : ''}</div>`;
+            ${f.postpartum.breastfeeding ? `<div class="stk-row">${icon('fa-baby')}кормит грудью, месячные пока не вернулись</div>` : ''}
+            ${storyNote(state, person.key)}</div>`;
     }
     const s = femaleState(f, day);
     const pill = pillState(f, day);
     const conditions = Object.entries(FEMALE_CONDITIONS).filter(([key]) => f[key]).map(([, c]) => c.label);
+    const libido = withLive(s.libido, live.libido);
+    const energy = withLive(s.energy, live.energy);
+    const phaseText = pill.suppressed && ['ovulation', 'follicular'].includes(s.phase) ? 'овуляции нет' : s.phaseLabel;
+    // свой цвет у кольца цикла: не сливается с влечением (розовое) и энергией (акцент)
+    const tone = { menstruation: 'period', pms: 'warm' }[s.phase] ?? 'preg';
     return `<div class="stk-card">${head}
-        <div class="stk-big">День ${s.cycleDay}<span class="stk-muted">из ${s.length} · ${esc(pill.suppressed && ['ovulation', 'follicular'].includes(s.phase) ? 'овуляции нет' : s.phaseLabel)}</span></div>
-        <div class="stk-row ${s.late ? 'is-warn' : ''}">${icon(s.late ? 'fa-triangle-exclamation' : 'fa-calendar-day')}${esc(nextInCycle(s, pill.suppressed))}${s.fertile && !pill.suppressed ? ' · <b class="stk-fertile">шанс зачатия сегодня ' + Math.round(s.chanceToday * 100) + '%</b>' : ''}</div>
+        <div class="stk-person">
+            ${ringsHtml([{ value: s.cycleDay / s.length, tone }, { value: libido, tone: 'pink' }, { value: energy, tone: 'accent' }], person.key, nameOf(person))}
+            <div class="stk-legend-col">
+                ${legendRow(tone, 'Цикл', `день ${s.cycleDay} из ${s.length}`, `${phaseText} · ${nextInCycle(s, pill.suppressed)}`)}
+                ${legendRow('pink', 'Влечение', levelWord(libido), joinWhy(`${s.phaseLabel}: ${s.libido > 0.8 ? 'на пике' : s.libido > 0.5 ? 'обычное для этих дней' : 'обычно ниже'}`, storyWhy(live.libido)))}
+                ${legendRow('accent', 'Энергия', levelWord(energy), joinWhy(s.energy > 0.7 ? 'фаза даёт силы' : s.energy > 0.45 ? 'ровная' : 'фаза забирает силы', storyWhy(live.energy)))}
+            </div>
+        </div>
+        ${s.fertile && !pill.suppressed ? `<div class="stk-row stk-fertile">${icon('fa-heart')}фертильные дни · шанс зачатия сегодня ${Math.round(s.chanceToday * 100)}%</div>` : ''}
         <div class="stk-row">${icon('fa-heart-pulse')}${esc(s.symptoms.join(', '))}</div>
-        ${meter('влечение', s.libido, 'is-pink', levelWord(s.libido))}
-        ${meter('энергия', s.energy, '', levelWord(s.energy))}
+        ${storyNote(state, person.key)}
         <div class="stk-row stk-muted">${icon('fa-shield-halved')}${esc(FEMALE_CONTRACEPTION[pill.effective]?.label ?? 'нет')}${conditions.length ? ` · ${esc(conditions.join(', '))}` : ''}${f.perimenopause ? ' · перименопауза' : ''}</div>
     </div>`;
 }
 
+/** Hours in words: «~5 ч», «~2 дн.» */
+const hoursWord = h => (h >= 36 ? `~${Math.round(h / 24)} дн.` : `~${Math.max(1, Math.round(h))} ч`);
+
 function maleCard(state, person) {
     const m = person.male;
     const s = maleSnapshot(state, person);
-    const recovering = m.lastOrgasmMinute !== null && absMinute(state.clock) - m.lastOrgasmMinute < s.refractoryMinutes;
+    const live = liveNow(state, person.key);
+    const left = recoveryLeft(state, person);
     const traits = [m.smoker ? 'курит' : '', m.drinker ? 'выпивает' : '', m.overweight ? 'лишний вес' : '', m.varicocele ? 'варикоцеле' : ''].filter(Boolean);
     const fresh = [...new Set(s.recent.filter(e => e.daysAgo <= 1).map(e => `${e.daysAgo ? 'вчера' : 'сегодня'}: ${e.label}`))];
-    const reasons = s.reasons.map(r => `${r.label} ${r.daysAgo ? `${r.daysAgo} дн. назад` : 'сегодня'}, пройдёт через ~${Math.ceil(r.recoversInDays / 7)} нед.`);
+    const vigor = withLive(s.testosterone, live.energy);
+    const libido = withLive(s.libido, live.libido);
+    const hour = Math.floor(state.clock.minutes / 60);
+    const dayWhy = hour >= 5 && hour < 12 ? 'утром тестостерон на пике' : hour >= 18 || hour < 5 ? 'к вечеру гормоны ниже' : 'днём ровно';
+    const freshWhy = s.recent.filter(e => e.daysAgo <= 1).map(e => e.label);
+    // why the sperm numbers are what they are — in words, with when it passes
+    const delayed = s.reasons.map(r => `${r.label} ${r.daysAgo ? `${r.daysAgo} дн. назад` : 'сегодня'} — пройдёт через ${Math.ceil(r.recoversInDays / 7)} нед.`);
+    const countWhy = joinWhy(
+        s.reserve < 0.95 ? 'после недавней близости меньше, чем обычно' : '',
+        delayed.join('; '),
+        !delayed.length && s.spermCount >= 90 ? 'в норме' : '',
+        MALE_FERTILITY[m.fertility]?.factor < 1 ? `фертильность: ${MALE_FERTILITY[m.fertility].label}` : '',
+        traits.length && s.spermCount < 90 ? `влияет: ${traits.join(', ')}` : '');
+    const motilityWhy = joinWhy(delayed.length ? 'тот же сдвиг, что и у количества: сперма созревает около 74 дней' : 'в норме', traits.length ? `влияет: ${traits.join(', ')}` : '');
+    const reserveWhy = s.reserve >= 0.99 ? 'полный' : s.reserveFullInHours ? `восстановится полностью через ${hoursWord(s.reserveFullInHours)} по времени истории` : 'восстанавливается';
     return `<div class="stk-card">
         <div class="stk-card-title">${icon('fa-mars')}${esc(nameOf(person))}<span class="stk-muted">${years(person.age)}</span></div>
-        <div class="stk-big">${s.testosterone > 0.85 ? 'Бодр' : s.testosterone > 0.65 ? 'В форме' : 'Устал'}<span class="stk-muted">${s.daysSinceLast === null ? 'близости ещё не было' : `последняя близость ${s.daysSinceLast ? `${s.daysSinceLast} дн. назад` : 'сегодня'}`}</span></div>
+        <div class="stk-person">
+            ${ringsHtml([{ value: vigor, tone: 'accent' }, { value: libido, tone: 'pink' }, { value: s.erection, tone: 'warm' }], person.key, nameOf(person))}
+            <div class="stk-legend-col">
+                ${legendRow('accent', 'Бодрость', vigor > 0.85 ? 'на пике' : vigor > 0.65 ? 'в форме' : 'устал', joinWhy(dayWhy, s.expectingFather ? 'будущий отец: гормоны ниже' : '', storyWhy(live.energy)))}
+                ${legendRow('pink', 'Влечение', levelWord(libido), joinWhy(s.daysSinceLast === 0 ? 'после сегодняшней близости ниже' : s.daysSinceLast !== null && s.daysSinceLast >= 4 ? `${s.daysSinceLast} дн. без близости — выше` : '', freshWhy.length ? `сегодня: ${freshWhy.join(', ')}` : '', storyWhy(live.libido)))}
+                ${legendRow('warm', 'Эрекция', s.erection < 0.75 ? 'может подвести' : 'в порядке', s.erection < 0.75 ? (freshWhy.length ? freshWhy.join(', ') : 'усталость или возраст') : '')}
+            </div>
+        </div>
+        ${left > 0 ? `<div class="stk-row stk-recover">${icon('fa-hourglass-half')}восстанавливается после оргазма: ещё ~${left} мин по времени истории</div>` : ''}
+        ${storyNote(state, person.key)}
         <div class="stk-sub">Сперма</div>
-        ${meter('количество', s.spermCount / 100, 'is-pink', `${s.spermCount}% нормы`)}
-        ${meter('подвижность', s.motility / 100, 'is-pink', `${s.motility}% нормы`)}
-        ${meter('запас', s.reserve, '', s.reserve >= 1 ? 'полный' : 'восстанавливается')}
-        ${reasons.length ? `<div class="stk-row stk-muted">${icon('fa-clock-rotate-left')}${esc(reasons.join('; '))}</div>` : ''}
+        <div class="stk-sperm">
+            <div>${miniRing('pink', s.countNow / 100, `${s.countNow}%`)}<div><b>Количество</b><small>${esc(countWhy || 'в норме')}</small></div></div>
+            <div>${miniRing('pink', s.motility / 100, `${s.motility}%`)}<div><b>Подвижность</b><small>${esc(motilityWhy)}</small></div></div>
+            <div>${miniRing('accent', s.reserve, `${Math.round(s.reserve * 100)}%`)}<div><b>Запас</b><small>${esc(reserveWhy)}</small></div></div>
+        </div>
         ${fresh.length ? `<div class="stk-row">${icon('fa-wine-glass')}${esc(fresh.join(', '))}</div>` : ''}
         ${s.vasectomy ? `<div class="stk-row">${icon('fa-scissors')}вазэктомия: ${esc(s.vasectomy)}</div>` : ''}
-        <div class="stk-sub">Сейчас</div>
-        ${meter('тестостерон', s.testosterone, '', s.expectingFather ? 'снижен: будущий отец' : levelWord(s.testosterone))}
-        ${meter('влечение', s.libido, 'is-pink', levelWord(s.libido))}
-        ${meter('эрекция', s.erection, '', s.erection < 0.75 ? 'может подвести' : 'в порядке')}
-        ${recovering ? `<div class="stk-row">${icon('fa-hourglass-half')}восстанавливается после оргазма ещё ~${s.refractoryMinutes - (absMinute(state.clock) - m.lastOrgasmMinute)} мин</div>` : `<div class="stk-row stk-muted">${icon('fa-hourglass-half')}восстановление после оргазма ~${s.refractoryMinutes} мин</div>`}
         ${s.couvade ? `<div class="stk-row">${icon('fa-face-tired')}сопереживает беременности: хуже спит, подташнивает</div>` : ''}
         <div class="stk-row stk-muted">${icon('fa-dna')}фертильность: ${esc(MALE_FERTILITY[m.fertility]?.label ?? 'норма')}${traits.length ? ` · ${esc(traits.join(', '))}` : ''}</div>
     </div>`;
 }
 
+function readingLine() {
+    const rs = readStatus();
+    if (rs.index !== null) return `<div class="stk-reading">${icon('fa-feather-pointed')}<span>читаю последний ответ — показатели обновятся</span></div>`;
+    if (rs.failed) return `<div class="stk-reading is-failed">${icon('fa-triangle-exclamation')}<span>анализ не прошёл${rs.failed.error ? `: ${esc(rs.failed.error)}` : ''}</span><button type="button" class="stk-btn is-ghost stk-retry-btn">${icon('fa-rotate-right')}Повторить</button></div>`;
+    return '';
+}
+
 function renderToday(state) {
+    const hh = String(Math.floor(state.clock.minutes / 60)).padStart(2, '0'), mm = String(state.clock.minutes % 60).padStart(2, '0');
     return `
-        <div class="stk-clock"><b>${esc(capitalize(dateLabel(state)))}</b><span class="stk-muted">${esc(timeLabel(state.clock.minutes))}</span></div>
+        <div class="stk-clock"><b>${esc(capitalize(dateLabel(state)))}</b><span class="stk-muted">${hh}:${mm} · ${esc(timeLabel(state.clock.minutes))}${state.dateSure ? '' : ' · дата пока примерная'}</span></div>
+        ${readingLine()}
         ${femaleCard(state, state.people.user)}
         ${maleCard(state, state.people.char)}
         <div class="stk-hint">${icon('fa-circle-info')}Stork сам следит за РП: время, близость, привычки, тесты. Поправить вручную можно в «Настройках».</div>`;
@@ -651,10 +839,12 @@ export async function openStork({ tab } = {}) {
 
     const render = () => {
         const state = currentState();
-        const setup = !state.setupDone || view.editing;
-        $root.find('.stk-tabs').toggle(!setup);
+        const setup = view.editing;
+        // not on here yet, turned off here, or off everywhere: a short explanation instead of an empty tracker
+        const waiting = !setup && (!settings().enabled || !state.setupDone || state.chatOff || state.minorBlocked);
+        $root.find('.stk-tabs').toggle(!setup && !waiting);
         $root.find('.stk-tab').each((_, el) => $(el).toggleClass('is-on', el.dataset.tab === view.tab));
-        const html = setup ? renderSetup(state, view) : {
+        const html = waiting ? renderWaiting(state) : setup ? renderSetup(state, view) : {
             today: renderToday,
             calendar: renderCalendar,
             pregnancy: renderPregnancy,
@@ -684,6 +874,7 @@ export async function openStork({ tab } = {}) {
         render();
     };
 
+    $root.on('click', '.stk-retry-btn', () => retryRead());
     $root.on('click', '.stk-tab, .stk-tab-go', function () {
         view.tab = this.dataset.tab;
         view.intimacyMenu = false;
@@ -746,9 +937,19 @@ export async function openStork({ tab } = {}) {
         runAnalysis();
     });
     $root.on('click', '.stk-disable-chat', () => {
-        updateCurrentState(state => { state.setupDone = false; });
+        updateCurrentState(state => { state.chatOff = true; });
         render();
-        toastr.info('Stork выключен в этом чате. Данные сохранены, включить можно снова.', 'Stork');
+        toastr.info('Stork выключен в этом чате и сам больше не включится. Данные сохранены.', 'Stork');
+    });
+    $root.on('click', '.stk-enable-chat', () => {
+        updateCurrentState(state => { state.chatOff = false; });
+        render();
+        toastr.info(currentState().setupDone ? 'Stork снова работает в этом чате' : 'Stork включится с ближайшим ответом бота', 'Stork', { timeOut: 2500 });
+    });
+    $root.on('click', '.stk-setup-now', () => {
+        view.editing = true;
+        view.touched = false;
+        runAnalysis();
     });
 
     // <details> toggle does not bubble: listen in the capture phase to remember the fold
@@ -758,7 +959,6 @@ export async function openStork({ tab } = {}) {
 
     const unsubscribe = onStateChange(() => render());
     render();
-    if (!currentState().setupDone) runAnalysis();
     await callGenericPopup($root, POPUP_TYPE.TEXT, '', { wide: true, large: true, allowVerticalScrolling: true, okButton: 'Закрыть' });
     unsubscribe?.();
 }

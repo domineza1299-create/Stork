@@ -3,9 +3,13 @@ import { getContext } from '../../../extensions.js';
 import { dateLabel, detectHints, stripTag, timeLabel } from './engine.js';
 import { analyzeScene, sceneToTag } from './scene.js';
 import {
-    activeIn, changed, currentState, getGenerationState, hashText, initSettings, MODULE, onStateChange, processMessage,
-    refreshStatus, setGenerationState, setStatus, settings, stateBefore, statusText,
+    activeIn, changed, currentState, getGenerationState, hashText, initSettings, MODULE, onRetry, onStateChange, processMessage,
+    readStatus, refreshStatus, setGenerationState, setReadFailed, setReading, setStatus, settings, stateBefore, statusText, updateCurrentState,
 } from './store.js';
+import { buildStatus } from './engine.js';
+import { analyzeCards, readCards } from './cards.js';
+import { hasMinor, setupFromAnalysis } from './setup.js';
+import { saveSettingsDebounced } from '../../../../script.js';
 import { announce, openStork, renderStatusBar } from './ui.js';
 
 // #region Generation
@@ -90,12 +94,12 @@ const READ_WAIT_MS = 30000;
  * Reads one reply: through a connection (analyzer) or from the hidden tag.
  * Unchanged text is skipped, so swiping back and forth costs nothing.
  */
-async function readReply(index) {
+async function readReply(index, force = false) {
     const chat = getContext().chat ?? [];
     const message = chat[index];
     if (!message || message.is_user || message.is_system) return;
     const snapshot = message.extra?.stork?.[message.swipe_id ?? 0];
-    if (snapshot && snapshot.hash === hashText(message.mes)) return;
+    if (!force && snapshot && snapshot.hash === hashText(message.mes)) return;
 
     if (settings().readMode !== 'analyzer') {
         const result = processMessage(index);
@@ -107,45 +111,101 @@ async function readReply(index) {
     }
 
     const before = stateBefore(index);
-    setReading(true);
+    const hash = hashText(message.mes);
+    // the reply before the user's message — context, so the analysis follows the scene, not one line of it
+    const userAt = chat[index - 1]?.is_user ? index - 1 : null;
+    const earlier = userAt !== null && chat[userAt - 1] && !chat[userAt - 1].is_user && !chat[userAt - 1].is_system ? chat[userAt - 1].mes : '';
+    setReading(index);
     try {
         const scene = await analyzeScene({
             profileId: settings().readProfile ?? '',
             userName: before.people.user.name,
             charName: before.people.char.name,
-            dateText: `${dateLabel(before)}, ${timeLabel(before.clock.minutes)}`,
-            userMessage: chat[index - 1]?.is_user ? chat[index - 1].mes : '',
+            dateText: `${dateLabel(before)}, ${String(Math.floor(before.clock.minutes / 60)).padStart(2, '0')}:${String(before.clock.minutes % 60).padStart(2, '0')} (${timeLabel(before.clock.minutes)})`,
+            status: buildStatus(before, { detailed: true, withTag: false }),
+            earlier,
+            userMessage: userAt !== null ? chat[userAt].mes : '',
             reply: message.mes,
         });
-        const result = processMessage(index, sceneToTag(scene));
+        // the text changed while we read (swipe, edit): this answer is about the old one
+        if (hashText(getContext().chat?.[index]?.mes) !== hash) return;
+        console.info('[Stork] сцена:', scene);
+        const result = processMessage(index, sceneToTag(scene), scene);
+        setReading(null);
         refreshStatus();
         announce(result?.events);
     } catch (error) {
         console.warn('[Stork] Scene analysis failed', error);
-        toastr.warning(`Не получилось прочитать сцену: ${error?.message ?? error}. Можно отметить вручную.`, 'Stork');
-        offerHints(index);
+        setReadFailed(index, error);
+        toastr.warning(`Не получилось прочитать сцену: ${error?.message ?? error}. Нажми, чтобы повторить.`, 'Stork', {
+            timeOut: 12000,
+            onclick: () => retry(index),
+        });
     } finally {
-        setReading(false);
+        if (readStatus().index === index) setReading(null);
     }
 }
 
-function setReading(on) {
-    document.getElementById('stork_bar')?.classList.toggle('is-reading', on);
+/** Repeat the analysis of a reply that failed: the same text, read again. */
+function retry(index) {
+    const chat = getContext().chat ?? [];
+    if (!chat[index]) return;
+    pendingReading = readReply(index, true).finally(() => { pendingReading = null; });
 }
 
-function onMessageReceived(messageId) {
+// #region Each chat on its own: Stork turns itself on with the first real reply
+
+/** The greeting (before the user's first message) is not read: everything starts with the first reply to her. */
+const isOpening = index => !(getContext().chat ?? []).slice(0, index).some(m => m?.is_user);
+
+let enabling = null;
+/**
+ * A chat where Stork was never set up: read the cards and the story opening once, set up from them and remember it
+ * in this chat. Never in a chat where she turned it off, never before the first real reply, never with a minor.
+ * @returns {Promise<boolean>} Stork is on in this chat now
+ */
+async function autoEnable(index) {
+    const before = stateBefore(index);
+    if (!settings().enabled || before.setupDone || before.chatOff || before.minorBlocked || isOpening(index)) return false;
+    if (enabling) return enabling;
+    enabling = (async () => {
+        setReading(index);
+        const cards = readCards();
+        let analysis = null;
+        try {
+            analysis = await analyzeCards(settings().readProfile ?? '');
+            console.info('[Stork] карточки и начало истории:', analysis);
+        } catch (error) {
+            console.warn('[Stork] Card analysis failed — setting up with defaults', error);
+        }
+        if (hasMinor(analysis, cards)) {
+            updateCurrentState(state => { state.minorBlocked = true; });
+            toastr.warning('По карточке персонаж младше 18 лет: Stork в этом чате не работает.', 'Stork');
+            setReading(null);
+            return false;
+        }
+        updateCurrentState(state => setupFromAnalysis(state, analysis, cards));
+        toastr.success('Stork включился в этом чате: цикл и состояние ведутся по сюжету. Поправить — в окне Stork.', 'Stork', { timeOut: 5000 });
+        return true;
+    })().finally(() => { enabling = null; });
+    return enabling;
+}
+
+async function onMessageReceived(messageId) {
     const index = Number(messageId);
     hideTagIn(messageId);
-    if (!activeIn(stateBefore(index))) return;
+    if (!activeIn(stateBefore(index)) && !(await autoEnable(index))) return;
     pendingReading = readReply(index).finally(() => { pendingReading = null; });
 }
 
-function onMessageChanged(messageId) {
+async function onMessageChanged(messageId) {
     const index = Number(messageId);
     setTimeout(() => hideTagIn(messageId), 0);
-    if (!activeIn(stateBefore(index))) return;
+    if (!activeIn(stateBefore(index)) && !(await autoEnable(index))) return;
     pendingReading = readReply(index).finally(() => { pendingReading = null; });
 }
+
+// #endregion
 
 // #endregion
 
@@ -177,8 +237,27 @@ function renderWandButton() {
                 <div class="fa-solid fa-dove extensionsMenuExtensionButton"></div>
                 <span>Stork</span>
             </div>
+            <div id="stork_toggle" class="list-group-item flex-container flexGap5 interactable" tabindex="0" role="listitem"></div>
         </div>`);
     $('#stork_wand').on('click', () => openStork());
+    $('#stork_toggle').on('click', () => toggleStork());
+    renderToggle();
+}
+
+/** On/off for the whole extension, from the wand menu. Each chat remembers its own state either way. */
+function renderToggle() {
+    const on = settings().enabled;
+    $('#stork_toggle').attr('title', on ? 'Выключить Stork везде' : 'Включить Stork').html(`
+        <div class="fa-solid ${on ? 'fa-toggle-on' : 'fa-toggle-off'} extensionsMenuExtensionButton"></div>
+        <span>Stork: ${on ? 'включён' : 'выключен'}</span>`);
+}
+function toggleStork() {
+    settings().enabled = !settings().enabled;
+    saveSettingsDebounced();
+    renderToggle();
+    refreshStatus();
+    changed();
+    toastr.info(settings().enabled ? 'Stork включён' : 'Stork выключен: модель его не видит, анализа нет', 'Stork', { timeOut: 2500 });
 }
 
 function renderSettingsDrawer() {
@@ -207,6 +286,7 @@ jQuery(() => {
     renderWandButton();
     renderSettingsDrawer();
     onStateChange(renderStatusBar);
+    onRetry(retry);
 
     eventSource.on(event_types.GENERATION_AFTER_COMMANDS, onGenerationAfterCommands);
     eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, stripTagsFromPrompt);

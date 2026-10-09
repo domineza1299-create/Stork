@@ -303,12 +303,31 @@ export function semenReserve(daysSinceLast) {
     return [0.35, 0.7, 0.9][daysSinceLast] ?? 1;
 }
 
+/** Hours until the reserve is full again after one orgasm. */
+export const RESERVE_FULL_HOURS = 72;
+/**
+ * The same by story hours, not whole days: each orgasm of the last three days takes its share,
+ * and several in a row take more. Returns { reserve, fullInHours }.
+ * @param {number[]} orgasmMinutes absolute story minutes of his orgasms
+ */
+export function reserveByHours(orgasmMinutes, nowMinute) {
+    let used = 0;
+    let fullIn = 0;
+    for (const at of orgasmMinutes ?? []) {
+        const hours = (nowMinute - at) / 60;
+        if (hours < 0 || hours >= RESERVE_FULL_HOURS) continue;
+        used += 0.65 * (1 - hours / RESERVE_FULL_HOURS);
+        fullIn = Math.max(fullIn, RESERVE_FULL_HOURS - hours);
+    }
+    return { reserve: clamp(1 - used, 0.08, 1), fullInHours: Math.ceil(fullIn) };
+}
+
 /**
  * Everything about him today.
  * @param {object} [options]
  * @param {boolean} [options.expectingFather] His partner is pregnant and he knows: testosterone drops, couvade may show
  */
-export function maleState(m, age, day, minutes, { expectingFather = false } = {}) {
+export function maleState(m, age, day, minutes, { expectingFather = false, nowMinute = null } = {}) {
     const previous = (m.ejaculations ?? []).filter(d => d <= day);
     const last = previous.length ? Math.max(...previous) : null;
     const daysSinceLast = last === null ? null : day - last;
@@ -336,13 +355,19 @@ export function maleState(m, age, day, minutes, { expectingFather = false } = {}
         libido *= 1 - (effect.libido ?? 0);
     }
     if (daysSinceLast === 0) libido *= 0.8;
+    // Story hours when known: the reserve and the count right now move with each orgasm, not once a day
+    const byHours = nowMinute !== null && (m.orgasms ?? []).length ? reserveByHours(m.orgasms, nowMinute) : null;
+    const reserve = byHours ? byHours.reserve : semenReserve(daysSinceLast);
 
     return {
         testosterone: clamp(t, 0, 1),
         libido: clamp(libido, 0, 1),
         erection: clamp(erection, 0, 1),
         daysSinceLast,
-        reserve: semenReserve(daysSinceLast),
+        reserve,
+        reserveFullInHours: byHours?.fullInHours ?? null,
+        // what an act right now would carry: base quality, less right after an orgasm
+        countNow: Math.round(quality * (0.4 + 0.6 * reserve) * 100),
         refractoryMinutes: refractoryMinutes(age),
         spermCount: count,
         motility,
