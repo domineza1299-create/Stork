@@ -40,9 +40,17 @@ function targetIndex() {
 const TAIL_TAGS = /^(IMG|VIDEO|AUDIO|IFRAME|PICTURE|FIGURE|CANVAS|SVG|OBJECT|EMBED|BR|HR|STYLE|SCRIPT|TEMPLATE|LINK|META|BUTTON|INPUT|TEXTAREA|SELECT)$/;
 const BOX_TAGS = /^(DIV|SECTION|ASIDE|DETAILS|FORM|NAV)$/;
 const isOurs = n => n.nodeType === 1 && n.classList.contains('stk-ib');
+/**
+ * Infoblocks of sister extensions (Hearthtide) want the same spot right after the text.
+ * Stork lines up after them instead of fighting: two blocks each pushing in front of the other
+ * would move each other forever and freeze the page.
+ */
+const SISTER = '.ht-ib, .ht-cards';
+const isSister = n => n.nodeType === 1 && !!n.matches?.(SISTER);
+const isBlank = n => n.nodeType === 8 || (n.nodeType === 3 && !n.textContent.trim());
 function hasText(n) {
     if (n.nodeType === 3) return !!n.textContent.trim();
-    if (n.nodeType !== 1 || isOurs(n) || TAIL_TAGS.test(String(n.tagName).toUpperCase())) return false;
+    if (n.nodeType !== 1 || isOurs(n) || isSister(n) || TAIL_TAGS.test(String(n.tagName).toUpperCase())) return false;
     return !!n.textContent.trim();
 }
 // someone else's block: a container with a class or an id — the reply's own markup has none
@@ -53,13 +61,29 @@ function textEnd(text) {
     for (let i = nodes.length - 1; i >= 0; i--) if (hasText(nodes[i])) return nodes[i];
     return null;
 }
-const putAfter = (ref, el) => { if (ref.nextSibling !== el) ref.parentNode.insertBefore(el, ref.nextSibling); };
-/** Already right after the text: do not move it, or it jumps while pictures load. */
+/** The sister blocks right after ref: Stork goes behind them. */
+function pastSisters(ref) {
+    let last = ref;
+    for (let n = ref.nextSibling; n && (isBlank(n) || isSister(n)); n = n.nextSibling) if (isSister(n)) last = n;
+    return last;
+}
+const putAfter = (ref, el) => {
+    const at = pastSisters(ref);
+    if (at.nextSibling !== el && at !== el) at.parentNode.insertBefore(el, at.nextSibling);
+};
+/** Already right after the text (sister blocks between are fine): do not move it, or it jumps while pictures load. */
 function settled(el) {
     if (!el.isConnected) return false;
     let p = el.previousSibling;
-    while (p && (p.nodeType === 8 || (p.nodeType === 3 && !p.textContent.trim()))) p = p.previousSibling;
+    while (p && (isBlank(p) || isSister(p))) p = p.previousSibling;
     return !!p && hasText(p) && !foreignBox(p) && !p.classList?.contains('mes_text');
+}
+/** On top: right before the text, with only sister blocks between. */
+function settledTop(el, text) {
+    if (el.parentNode !== text.parentNode) return false;
+    let n = el.nextSibling;
+    while (n && (isBlank(n) || isSister(n))) n = n.nextSibling;
+    return n === text;
 }
 let placedAt = null;
 function place(mesEl, el) {
@@ -70,7 +94,7 @@ function place(mesEl, el) {
     if (placedAt !== pos) el.remove();
     placedAt = pos;
     if (pos === 'top') {
-        if (text.previousSibling !== el) text.insertAdjacentElement('beforebegin', el);
+        if (!settledTop(el, text)) text.insertAdjacentElement('beforebegin', el);
     } else if (pos === 'middle') {
         if (!(el.parentNode === text && settled(el))) {
             const parts = [...text.children].filter(x => !isOurs(x) && hasText(x) && !foreignBox(x));
@@ -164,6 +188,10 @@ function bind(el) {
 // #region Coming back when someone wipes it
 
 let observer = null;
+const MAX_MOVES = 150;         // reactions per second: a re-render or streaming needs a few dozen, a fight needs thousands
+let moves = 0;
+let movesTimer = null;
+let cooling = false;
 /** SillyTavern and other extensions re-render the reply text: put the block back in the same tick, before paint. */
 export function watchChat(tries = 0) {
     const chatEl = document.getElementById('chat');
@@ -183,6 +211,17 @@ export function watchChat(tries = 0) {
             break;
         }
         if (!foreign) return;
+        // a safety net: if some other extension keeps moving blocks around, stop answering for a while
+        // instead of chasing it forever (an endless chase freezes the page, worst of all on phones)
+        if (++moves > MAX_MOVES) {
+            if (!cooling) {
+                cooling = true;
+                console.warn('[Stork] инфоблок: другое расширение постоянно двигает разметку — пауза');
+                setTimeout(() => { cooling = false; moves = 0; }, 2000);
+            }
+            return;
+        }
+        if (!movesTimer) movesTimer = setTimeout(() => { moves = 0; movesTimer = null; }, 1000);
         const mesEl = nodeId === null ? null : getMesEl(nodeId);
         if (!mesEl) {
             scheduleBlocks();
@@ -191,6 +230,7 @@ export function watchChat(tries = 0) {
         const other = mesEl.querySelector('.stk-ib');
         if (other && other !== node) other.remove();
         if (!node.isConnected || (position() === 'bottom' && !settled(node))) place(mesEl, node);
+        else if (position() === 'top' && !settledTop(node, mesEl.querySelector('.mes_text') ?? node)) place(mesEl, node);
     });
     observer.observe(chatEl, { childList: true, subtree: true });
 }
