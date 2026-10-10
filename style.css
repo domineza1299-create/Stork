@@ -1078,16 +1078,16 @@ stork {
     gap: 1px;
 }
 
-.stk-cycle span {
+.stk-ib .stk-cycle span {
     border-radius: 2px;
 }
 
-.stk-cycle .is-past {
+.stk-ib .stk-cycle .is-past {
     opacity: 0.55;
 }
 
 /* today: the same cell, taller, so it reads as a marker on the line */
-.stk-cycle .is-today {
+.stk-ib .stk-cycle .is-today {
     box-shadow: none;
     opacity: 1;
     transform: scaleY(2.2);
@@ -1244,7 +1244,7 @@ stork {
     color: inherit;
 }
 
-.stk-edit {
+.stk-pn .stk-edit {
     display: flex;
     flex-direction: column;
     gap: 10px;
@@ -1670,6 +1670,303 @@ stork {
     white-space: nowrap;
 }
 
-.stk-cycle-big .stk-cycle .is-today {
+.stk-ib .stk-cycle-big .stk-cycle .is-today {
     transform: scaleY(1.45);
+}
+
+
+/* ═══════════ The Stork window: the classic look (rings around avatars, legends) ═══════════ */
+
+/* Meters and progress */
+.stk-meter {
+    display: grid;
+    grid-template-columns: 90px 1fr;
+    align-items: center;
+    gap: 10px;
+    font-size: 0.85em;
+    color: var(--stk-muted);
+}
+
+.stk-meter div,
+.stk-progress {
+    height: 6px;
+    border-radius: 4px;
+    background: var(--stk-line);
+    overflow: hidden;
+}
+
+.stk-meter i,
+.stk-progress i {
+    display: block;
+    height: 100%;
+    border-radius: 4px;
+    background: var(--stk-accent);
+}
+
+.stk-meter.is-pink i,
+.stk-progress i {
+    background: var(--stk-pink);
+}
+
+/* ═══ Person: rings around the avatar, legend beside ═══ */
+.stk-person {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 14px;
+}
+
+.stk-rings {
+    position: relative;
+    width: 124px;
+    aspect-ratio: 1;
+    flex-shrink: 0;
+}
+
+.stk-rings svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+.stk-ring-bg {
+    fill: none;
+    stroke: var(--stk-line);
+}
+
+.stk-ring-v {
+    fill: none;
+    stroke: var(--stk-accent);
+    stroke-linecap: round;
+    transition: stroke-dasharray 0.6s ease;
+}
+
+.stk-ring-v.is-pink { stroke: var(--stk-pink); }
+.stk-ring-v.is-period { stroke: var(--stk-period); }
+.stk-ring-v.is-warm { stroke: var(--stk-warm); }
+.stk-ring-v.is-preg { stroke: var(--stk-preg); }
+.stk-ring-v.is-accent { stroke: var(--stk-accent); }
+
+.stk-face {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    overflow: hidden;
+    background: var(--stk-glass-hover);
+    box-shadow: 0 0 0 1px var(--stk-line-strong);
+}
+
+.stk-face img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.stk-face b {
+    font-size: 1.1em;
+    color: var(--stk-muted);
+}
+
+.stk-legend-col {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+}
+
+.stk-leg {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    min-width: 0;
+}
+
+.stk-leg > i {
+    flex: none;
+    width: 9px;
+    height: 9px;
+    margin-top: 0.45em;
+    border-radius: 50%;
+    background: var(--stk-accent);
+}
+
+.stk-leg > i.is-pink { background: var(--stk-pink); }
+.stk-leg > i.is-period { background: var(--stk-period); }
+.stk-leg > i.is-warm { background: var(--stk-warm); }
+.stk-leg > i.is-preg { background: var(--stk-preg); }
+
+.stk-leg > div {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.stk-leg span {
+    overflow-wrap: anywhere;
+}
+
+.stk-leg small,
+.stk-sperm small {
+    color: var(--stk-muted);
+    font-size: 0.82em;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+}
+
+/* Sperm: three small rings with a word each */
+.stk-sperm {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.stk-sperm > div {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 8px 6px;
+    border-radius: 10px;
+    background: var(--stk-glass);
+    text-align: center;
+    min-width: 0;
+}
+
+.stk-sperm > div > div {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.stk-mini-ring {
+    position: relative;
+    width: 52px;
+    aspect-ratio: 1;
+}
+
+.stk-mini-ring svg {
+    width: 100%;
+    height: 100%;
+}
+
+.stk-mini-ring b {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.78em;
+}
+
+/* What the story shows about the person right now */
+.stk-story-note {
+    display: flex;
+    gap: 8px;
+    padding: 7px 10px;
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--stk-pink) 8%, transparent);
+    border-left: 2px solid color-mix(in srgb, var(--stk-pink) 55%, transparent);
+    font-size: 0.92em;
+}
+
+.stk-story-note .stk-ic {
+    color: var(--stk-pink);
+    margin-top: 0.2em;
+}
+
+.stk-recover {
+    color: var(--stk-warm);
+}
+
+/* ═══ Both of them side by side; one under the other when narrow ═══ */
+.stk-duo {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    align-items: start;
+}
+
+.stk-duo > .stk-card {
+    container-type: inline-size;
+}
+
+@container (max-width: 560px) {
+    .stk-duo {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+/* in a half-width card: rings over the legend, sperm one per row */
+@container (max-width: 380px) {
+    .stk-person {
+        grid-template-columns: minmax(0, 1fr);
+        justify-items: center;
+    }
+
+    .stk-legend-col {
+        width: 100%;
+    }
+
+    .stk-sperm {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .stk-sperm > div {
+        flex-direction: row;
+        text-align: left;
+    }
+
+    .stk-mini-ring {
+        width: 44px;
+        flex: none;
+    }
+}
+
+@container (max-width: 520px) {
+    /* the window on a phone */
+    .stk-person {
+        grid-template-columns: minmax(0, 1fr);
+        justify-items: center;
+    }
+
+    .stk-legend-col {
+        width: 100%;
+    }
+
+    .stk-rings.is-lg {
+        width: 112px;
+    }
+
+    .stk-sperm {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .stk-sperm > div {
+        flex-direction: row;
+        text-align: left;
+    }
+
+    .stk-mini-ring {
+        width: 44px;
+        flex: none;
+    }
+
+    .stk-stats {
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    }
+
+    .stk-cal span {
+        min-height: 32px;
+        font-size: 0.82em;
+    }
+
+    .stk-log {
+        grid-template-columns: 56px minmax(0, 1fr);
+    }
+
+    .stk-meter {
+        grid-template-columns: 80px minmax(0, 1fr);
+    }
 }

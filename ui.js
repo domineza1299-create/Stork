@@ -9,6 +9,7 @@ import { getContext } from '../../../extensions.js';
 import { absMinute, advanceTime, applyEvent, dateLabel, liveNow, maleSnapshot, MINUTES_PER_DAY, parseClock, recoveryLeft, storyDate, timeLabel, withLive } from './engine.js';
 import { activeIn, changed, currentState, currentView, onStateChange, readStatus, refreshStatus, retryRead, settings, updateCurrentState, VIEWS } from './store.js';
 import { applyPersonEdit, setPeriodStart } from './setup.js';
+import * as classic from './classic.js';
 
 // Persona avatar lives in personas.js; loaded lazily so a missing module never breaks Stork
 let personas = null;
@@ -22,19 +23,19 @@ const TABS = [
     { id: 'settings', icon: 'fa-sliders', label: 'Настройки' },
 ];
 
-const PHASE_TONE = { menstruation: 'period', follicular: 'calm', ovulation: 'fertile', luteal: 'calm', pms: 'warm' };
+export const PHASE_TONE = { menstruation: 'period', follicular: 'calm', ovulation: 'fertile', luteal: 'calm', pms: 'warm' };
 
-const esc = text => String(text ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const icon = (name, extra = '') => `<i class="fa-solid ${name} stk-ic ${extra}"></i>`;
+export const esc = text => String(text ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+export const icon = (name, extra = '') => `<i class="fa-solid ${name} stk-ic ${extra}"></i>`;
 /** 21 год, 24 года, 25 лет */
-function years(n) {
+export function years(n) {
     const tens = n % 100;
     const ones = n % 10;
     const word = tens >= 11 && tens <= 14 ? 'лет' : ones === 1 ? 'год' : ones >= 2 && ones <= 4 ? 'года' : 'лет';
     return `${n} ${word}`;
 }
-const capitalize = text => text.charAt(0).toUpperCase() + text.slice(1);
-const nameOf = person => person.name || (person.key === 'user' ? 'Ты' : 'Персонаж');
+export const capitalize = text => text.charAt(0).toUpperCase() + text.slice(1);
+export const nameOf = person => person.name || (person.key === 'user' ? 'Ты' : 'Персонаж');
 
 /** Shows new story events as toasts (rolls stay secret). */
 export function announce(events) {
@@ -46,7 +47,7 @@ export function announce(events) {
     }
 }
 
-function knowsPregnancy(person) {
+export function knowsPregnancy(person) {
     return !!person.female.pregnancy?.knownBy.includes(person.key);
 }
 
@@ -69,6 +70,13 @@ function readFolds() {
     return folds;
 }
 export const isFoldOpen = key => readFolds()[key] ?? FOLD_DEFAULT[key] ?? true;
+/** The block's main panels, the ones the automatic setting opens or folds. */
+export const MAIN_FOLDS = ['shared', 'user', 'char'];
+/** «always open» / «always folded» for a new reply; «remember» leaves them as she left them. */
+export function applyAutoFolds(mode = settings().blockFolds) {
+    if (mode !== 'open' && mode !== 'closed') return;
+    for (const key of MAIN_FOLDS) setFold(key, mode === 'open');
+}
 function setFold(key, open) {
     readFolds()[key] = open;
     try { localStorage.setItem(FOLD_KEY, JSON.stringify(folds)); } catch { /* private mode: only for this session */ }
@@ -120,7 +128,7 @@ const li = (iconName, html, cls = '') => `<div class="stk-li ${cls}">${icon(icon
 // #region Avatars
 
 /** Avatar of {{char}} (card) or {{user}} (persona), or null. */
-function avatarUrl(key) {
+export function avatarUrl(key) {
     try {
         const ctx = getContext();
         if (key === 'char') {
@@ -134,7 +142,7 @@ function avatarUrl(key) {
         return null;
     }
 }
-const initials = name => String(name || '?').trim().split(/\s+/).slice(0, 2).map(w => w[0] ?? '').join('').toUpperCase() || '?';
+export const initials = name => String(name || '?').trim().split(/\s+/).slice(0, 2).map(w => w[0] ?? '').join('').toUpperCase() || '?';
 
 /** A plain round avatar, initials when there is no picture. */
 function avatarHtml(key, name, size = '') {
@@ -505,12 +513,12 @@ function renderWaiting(state) {
 
 // #region Today: both of them, side by side and built the same way
 
-const clamp01 = value => Math.min(1, Math.max(0, Number(value) || 0));
+export const clamp01 = value => Math.min(1, Math.max(0, Number(value) || 0));
 /** «высокое влечение», «высокая энергия» */
-const levelWord = (value, female = false) => (value > 0.8 ? (female ? 'высокая' : 'высокое') : value > 0.55 ? (female ? 'обычная' : 'обычное') : (female ? 'низкая' : 'сниженное'));
+export const levelWord = (value, female = false) => (value > 0.8 ? (female ? 'высокая' : 'высокое') : value > 0.55 ? (female ? 'обычная' : 'обычное') : (female ? 'низкая' : 'сниженное'));
 
 /** What comes next in her cycle, in words. */
-function nextInCycle(s, suppressed) {
+export function nextInCycle(s, suppressed) {
     if (s.late) return `месячные запаздывают на ${s.cycleDay - s.length} дн.`;
     if (suppressed) return `до кровотечения отмены ${s.daysToPeriod} дн.`;
     if (s.relative < -5) return `фертильные дни через ${-5 - s.relative} дн., овуляция через ${-s.relative} дн.`;
@@ -520,14 +528,14 @@ function nextInCycle(s, suppressed) {
 }
 
 /** What the story did to this level: words for the offset from the analysis. */
-function storyWhy(offset) {
+export function storyWhy(offset) {
     if (offset >= 1.5) return 'по сюжету заметно выше обычного';
     if (offset >= 0.5) return 'по сюжету чуть выше';
     if (offset <= -1.5) return 'по сюжету заметно ниже обычного';
     if (offset <= -0.5) return 'по сюжету чуть ниже';
     return '';
 }
-const joinWhy = (...parts) => parts.filter(Boolean).join('; ');
+export const joinWhy = (...parts) => parts.filter(Boolean).join('; ');
 /** «Влечение — потому что…» inside «Самочувствие». */
 const whyRow = (label, why) => (why ? li('fa-circle-info', `<b>${esc(label)}:</b> ${esc(why)}`, 'is-muted') : '');
 
@@ -633,7 +641,7 @@ export function femaleCard(state, person, view = {}) {
 }
 
 /** Hours in words: «~5 ч», «~2 дн.» */
-const hoursWord = h => (h >= 36 ? `~${Math.round(h / 24)} дн.` : `~${Math.max(1, Math.round(h))} ч`);
+export const hoursWord = h => (h >= 36 ? `~${Math.round(h / 24)} дн.` : `~${Math.max(1, Math.round(h))} ч`);
 
 export function maleCard(state, person, view = {}) {
     const key = person.key;
@@ -729,15 +737,15 @@ function personEditor(state, key) {
     </div>`;
 }
 
-function readingLine() {
+export function readingLine() {
     const rs = readStatus();
     if (rs.index !== null) return `<div class="stk-reading">${icon('fa-feather-pointed')}<span>читаю последний ответ — показатели обновятся</span></div>`;
     if (rs.failed) return `<div class="stk-reading is-failed">${icon('fa-triangle-exclamation')}<span>анализ не прошёл${rs.failed.error ? `: ${esc(rs.failed.error)}` : ''}</span><button type="button" class="stk-btn is-ghost" data-stk-act="retry">${icon('fa-rotate-right')}Повторить</button></div>`;
     return '';
 }
 
-const ACT_LABEL = { none: 'без защиты', condom: 'презерватив', withdrawal: 'прерванный акт' };
-const KIND_ICON = { doctor: 'fa-user-doctor', labor: 'fa-baby', injury: 'fa-bandage', recovered: 'fa-battery-full', event: 'fa-circle-dot' };
+export const ACT_LABEL = { none: 'без защиты', condom: 'презерватив', withdrawal: 'прерванный акт' };
+export const KIND_ICON = { doctor: 'fa-user-doctor', labor: 'fa-baby', injury: 'fa-bandage', recovered: 'fa-battery-full', event: 'fa-circle-dot' };
 
 /** What is shared between them: closeness, what it means, what comes next, what happened lately. */
 export function sharedCard(state) {
@@ -768,22 +776,15 @@ export function sharedCard(state) {
 }
 
 /**
- * Both of them side by side (one under the other on a phone), then what they share.
- * @param {object} [options]
- * @param {boolean} [options.inBlock] in the chat: no clock (the head has it) and only the panels she chose
+ * The «Сейчас» tab of the infoblock: what they share on top, then both of them
+ * (side by side when there is room, one under the other on a phone). Only the panels she chose.
  */
-export function renderNow(state, view = {}, { inBlock = false } = {}) {
-    const parts = inBlock ? (settings().blockParts ?? {}) : { user: true, char: true, shared: true };
+export function renderNow(state, view = {}) {
+    const parts = settings().blockParts ?? {};
     const people = [parts.user !== false && femaleCard(state, state.people.user, view), parts.char !== false && maleCard(state, state.people.char, view)].filter(Boolean);
-    const top = inBlock ? '' : `<div class="stk-clock"><b>${esc(capitalize(dateLabel(state)))}</b><span class="stk-muted">${clockText(state)} · ${esc(timeLabel(state.clock.minutes))}${state.dateSure ? '' : ' · дата пока примерная'}</span></div>${readingLine()}`;
     const shared = parts.shared !== false ? sharedCard(state) : '';
     if (!people.length && !shared) return li('fa-eye-slash', 'Все плашки скрыты. Вернуть — в окне Stork, вкладка «Настройки».', 'is-muted');
-    return `${top}${people.length ? `<div class="stk-pair${people.length === 1 ? ' is-single' : ''}">${people.join('')}</div>` : ''}${shared}`;
-}
-
-function renderToday(state, view) {
-    return `${renderNow(state, view)}
-        <div class="stk-hint">${icon('fa-circle-info')}Stork сам следит за РП: время, близость, привычки, тесты. Карандаш у имени — поправить данные, нажатие на плашку — свернуть или развернуть.</div>`;
+    return `${shared}${people.length ? `<div class="stk-pair${people.length === 1 ? ' is-single' : ''}">${people.join('')}</div>` : ''}`;
 }
 
 /**
@@ -851,6 +852,11 @@ export function handleAction(target, view, rerender) {
             break;
         case 'block-pos':
             settings().blockPosition = target.dataset.pos;
+            saveSettingsDebounced();
+            changed();
+            break;
+        case 'block-auto':
+            settings()[target.dataset.k] = target.dataset.v;
             saveSettingsDebounced();
             changed();
             break;
@@ -1127,6 +1133,7 @@ function viewCard() {
         <i class="is-input"></i>
     </span>`;
     const parts = s.blockParts ?? {};
+    const autoSeg = (key, options) => `<div class="stk-seg is-wide">${options.map(([v, l]) => `<button type="button" class="${(s[key] ?? 'remember') === v ? 'is-on' : ''}" data-stk-act="block-auto" data-k="${key}" data-v="${v}">${l}</button>`).join('')}</div>`;
     const partCheck = (key, label) => `<label class="stk-check"><input type="checkbox" data-stk-act="block-part" data-part="${key}" ${parts[key] !== false ? 'checked' : ''}>${label}</label>`;
     return `
         <div class="stk-card">
@@ -1146,7 +1153,11 @@ function viewCard() {
                     ${partCheck('char', esc(nameOf(currentState().people.char)))}
                     ${partCheck('shared', '«Вместе»: близость, ближайшие даты, события')}
                 </div>
-                <div class="stk-hint">${icon('fa-hand-pointer')}Каждую плашку можно свернуть нажатием — Stork запомнит.</div>` : ''}
+                <div class="stk-sub">Инфоблок у нового ответа</div>
+                ${autoSeg('blockOpen', [['closed', 'свёрнут'], ['open', 'развёрнут'], ['remember', 'как оставила']])}
+                <div class="stk-sub">Плашки «Вместе», ${esc(nameOf(currentState().people.user))}, ${esc(nameOf(currentState().people.char))}</div>
+                ${autoSeg('blockFolds', [['closed', 'свёрнуты'], ['open', 'развёрнуты'], ['remember', 'как оставила']])}
+                <div class="stk-hint">${icon('fa-hand-pointer')}«Свёрнут» и «развёрнут» срабатывают с каждым новым ответом бота; между ответами всё можно открывать и закрывать нажатием. «Как оставила» — Stork помнит последнее.</div>` : ''}
         </div>`;
 }
 
@@ -1216,9 +1227,9 @@ export async function openStork({ tab } = {}) {
         $root.find('.stk-tabs').toggle(!setup && !waiting);
         $root.find('.stk-tab').each((_, el) => $(el).toggleClass('is-on', el.dataset.tab === view.tab));
         const html = waiting ? renderWaiting(state) : setup ? renderSetup(state, view) : {
-            today: renderToday,
-            calendar: renderCalendar,
-            pregnancy: renderPregnancy,
+            today: classic.renderToday,
+            calendar: classic.renderCalendar,
+            pregnancy: classic.renderPregnancy,
             journal: renderJournal,
             settings: renderSettings,
         }[view.tab](state, view);

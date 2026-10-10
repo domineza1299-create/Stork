@@ -27,6 +27,9 @@ const defaultSettings = {
     blockPosition: 'bottom',
     // which panels the infoblock shows (the window always shows everything)
     blockParts: { user: true, char: true, shared: true },
+    // with each new reply: the block itself and its main panels start folded, open, or as she left them
+    blockOpen: 'remember',
+    blockFolds: 'remember',
     toasts: true,
     showRolls: false,
     // 'analyzer': Stork reads each reply through a connection; 'tag': the story model leaves a hidden tag (free)
