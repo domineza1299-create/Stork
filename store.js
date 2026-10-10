@@ -20,9 +20,13 @@ const defaultSettings = {
     neutral: false,
     // 'inject': Stork places the status itself; 'macro': only through {{stork}} where the user put it
     placement: 'inject',
+    // where Stork shows itself in the chat: the infoblock under the reply, the line above the input, both, or neither
+    showBlock: true,
     statusBar: true,
-    // the infoblock inside the chat: top | middle | bottom of the latest reply, or off
+    // where the infoblock sits in the latest reply: top | middle | bottom
     blockPosition: 'bottom',
+    // which panels the infoblock shows (the window always shows everything)
+    blockParts: { user: true, char: true, shared: true },
     toasts: true,
     showRolls: false,
     // 'analyzer': Stork reads each reply through a connection; 'tag': the story model leaves a hidden tag (free)
@@ -31,7 +35,25 @@ const defaultSettings = {
 };
 
 export function initSettings() {
-    extension_settings[MODULE] = { ...defaultSettings, ...extension_settings[MODULE] };
+    const saved = extension_settings[MODULE] ?? {};
+    const s = { ...defaultSettings, ...saved };
+    // before 0.10 «off» was one of the positions: now it is its own switch
+    if (saved.showBlock === undefined && saved.blockPosition === 'off') s.showBlock = false;
+    if (!['top', 'middle', 'bottom'].includes(s.blockPosition)) s.blockPosition = 'bottom';
+    s.blockParts = { ...defaultSettings.blockParts, ...(saved.blockParts ?? {}) };
+    extension_settings[MODULE] = s;
+}
+
+/** The four ways to see Stork in the chat, as two switches. */
+export const VIEWS = {
+    both: { showBlock: true, statusBar: true },
+    block: { showBlock: true, statusBar: false },
+    bar: { showBlock: false, statusBar: true },
+    window: { showBlock: false, statusBar: false },
+};
+export function currentView() {
+    const s = settings();
+    return Object.entries(VIEWS).find(([, v]) => v.showBlock === !!s.showBlock && v.statusBar === !!s.statusBar)?.[0] ?? 'both';
 }
 
 export const settings = () => extension_settings[MODULE];

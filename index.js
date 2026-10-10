@@ -1,10 +1,10 @@
-import { eventSource, event_types } from '../../../../script.js';
+import { eventSource, event_types, saveSettingsDebounced } from '../../../../script.js';
 import { getContext } from '../../../extensions.js';
 import { dateLabel, detectHints, stripTag, timeLabel } from './engine.js';
 import { analyzeScene, sceneToTag } from './scene.js';
 import {
-    activeIn, changed, currentState, getGenerationState, hashText, initSettings, MODULE, onRetry, onStateChange, processMessage,
-    readStatus, refreshStatus, setGenerationState, setReadFailed, setReading, setStatus, settings, stateBefore, statusText, updateCurrentState,
+    activeIn, changed, currentState, currentView, getGenerationState, hashText, initSettings, MODULE, onRetry, onStateChange, processMessage,
+    readStatus, refreshStatus, setGenerationState, setReadFailed, setReading, setStatus, settings, stateBefore, statusText, updateCurrentState, VIEWS,
 } from './store.js';
 import { buildStatus } from './engine.js';
 import { analyzeCards, readCards } from './cards.js';
@@ -251,11 +251,29 @@ function renderSettingsDrawer() {
                 </div>
                 <div class="inline-drawer-content">
                     <div class="menu_button menu_button_icon" id="stork_open"><i class="fa-solid fa-dove"></i> Открыть Stork</div>
-                    <small>Всё в одном окне: настройка персонажей, цикл, беременность, журнал. Ещё его открывают палочка, строка над полем ввода и команда /stork.</small>
+                    <label for="stork_view"><small>Как показывать в чате</small></label>
+                    <select id="stork_view" class="text_pole">
+                        <option value="both">инфоблок и полоса над полем ввода</option>
+                        <option value="block">только инфоблок под ответом</option>
+                        <option value="bar">только полоса над полем ввода</option>
+                        <option value="window">ничего, только окно Stork</option>
+                    </select>
+                    <small>Всё остальное — в окне: персонажи, цикл, беременность, журнал, где стоит инфоблок и что в нём. Окно открывают палочка, полоса над полем ввода и команда /stork.</small>
                 </div>
             </div>
         </div>`);
     $('#stork_open').on('click', () => openStork());
+    $('#stork_view').val(currentView()).on('change', function () {
+        Object.assign(settings(), VIEWS[this.value] ?? VIEWS.both);
+        saveSettingsDebounced();
+        changed();
+    });
+}
+
+/** The same choice made in the window shows here too. */
+function syncDrawer() {
+    const select = document.getElementById('stork_view');
+    if (select && select.value !== currentView()) select.value = currentView();
 }
 
 // #endregion
@@ -268,6 +286,7 @@ jQuery(() => {
     renderSettingsDrawer();
     onStateChange(renderStatusBar);
     onStateChange(scheduleBlocks);
+    onStateChange(syncDrawer);
     onRetry(retry);
     watchChat();
 

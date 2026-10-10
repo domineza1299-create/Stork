@@ -1,11 +1,12 @@
 /*
  * The infoblock inside the chat: under (or above, or in the middle of) the latest reply.
- * Folded — one line: date, time and both of them in a word; open — tabs «Сейчас», «Календарь», «Беременность».
+ * Folded — one symmetric line: she on the left, he on the right, the date and time between them.
+ * Open — tabs «Сейчас», «Календарь», «Беременность»; every panel inside folds on its own.
  * Other extensions re-render the reply text and wipe foreign nodes: the block comes back in the same tick.
  */
 import { getContext } from '../../../extensions.js';
 import { activeIn, currentState, readStatus, settings } from './store.js';
-import { blockHeadHtml, handleAction, renderCalendar, renderNow, renderPregnancy } from './ui.js';
+import { blockHeadHtml, handleAction, onKeyActivate, renderCalendar, renderNow, renderPregnancy } from './ui.js';
 
 const OPEN_KEY = 'stork_block_open';
 /** The one infoblock and its view: tab, editing, picked day — survive re-renders. */
@@ -14,7 +15,7 @@ let nodeId = null;
 let lastHtml = '';
 const view = { tab: 'now', monthOffset: 0, editPerson: null, pickDay: null };
 
-const position = () => settings().blockPosition ?? 'bottom';
+const position = () => (['top', 'middle'].includes(settings().blockPosition) ? settings().blockPosition : 'bottom');
 const isOpen = () => {
     try { return localStorage.getItem(OPEN_KEY) === '1'; } catch { return false; }
 };
@@ -116,9 +117,13 @@ function bodyHtml(state) {
     const pregnant = !!f.pregnancy?.knownBy?.includes('user');
     const tabs = [['now', 'fa-sun', 'Сейчас'], ['calendar', 'fa-calendar-days', 'Календарь'], ...(pregnant ? [['baby', 'fa-baby', 'Беременность']] : [])];
     if (!tabs.some(([id]) => id === view.tab)) view.tab = 'now';
-    const panel = view.tab === 'calendar' ? renderCalendar(state, view) : view.tab === 'baby' ? renderPregnancy(state) : renderNow(state, view);
+    const panel = view.tab === 'calendar' ? renderCalendar(state, view) : view.tab === 'baby' ? renderPregnancy(state) : renderNow(state, view, { inBlock: true });
     return `<nav class="stk-tabs">${tabs.map(([id, ic, label]) => `<button type="button" class="stk-tab${view.tab === id ? ' is-on' : ''}" data-stk-act="tab" data-tab="${id}"><i class="fa-solid ${ic} stk-ic"></i><span>${label}</span></button>`).join('')}</nav>
-        <div class="stk-panel">${panel}</div>`;
+        <div class="stk-panel">${panel}</div>
+        <div class="stk-ib-foot">
+            <button type="button" class="stk-link" data-stk-act="open-window" data-tab="today"><i class="fa-solid fa-dove stk-ic"></i>Открыть Stork</button>
+            <button type="button" class="stk-link" data-stk-act="open-window" data-tab="settings"><i class="fa-solid fa-sliders stk-ic"></i>Вид и плашки</button>
+        </div>`;
 }
 
 let renderTimer = null;
@@ -130,7 +135,7 @@ export function scheduleBlocks() {
 /** Draws (or removes) the infoblock. force: even while she is typing in its form. */
 export function renderBlocks(force = false) {
     const state = currentState();
-    const id = position() === 'off' || !activeIn(state) ? null : targetIndex();
+    const id = !settings().showBlock || !activeIn(state) ? null : targetIndex();
     const mesEl = id === null ? null : getMesEl(id);
     if (!mesEl) {
         node?.remove();
@@ -181,6 +186,7 @@ function bind(el) {
         }
         handleAction(target, view, () => renderBlocks(true));
     });
+    el.addEventListener('keydown', onKeyActivate);
 }
 
 // #endregion
