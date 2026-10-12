@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-    advanceTime, applyEvent, buildStatus, createState, detectHints, parseDuration, parseTag, processReply, stripTag,
+    advanceTime, applyEvent, buildStatus, createState, detectHints, parseDuration, parseTag, processReply, sceneToTag, stripTag,
 } from '../engine.js';
 
 const seq = (...values) => () => (values.length ? values.shift() : 0.5);
@@ -68,16 +68,101 @@ describe('cycle over time', () => {
 });
 
 describe('conception and pregnancy', () => {
-    it('rolls on ovulation day and starts a hidden pregnancy', () => {
+    it('throws the dice right at the act and starts a hidden pregnancy dated by ovulation', () => {
         const state = couple();
-        advanceTime(state, 12 * DAY);
-        applyEvent(state, { type: 'intimacy', protection: 'none' });
-        advanceTime(state, 1 * DAY, seq(0)); // day 13 = cycle day 14 = ovulation
+        advanceTime(state, 11 * DAY); // day 11 = cycle day 12, two days before ovulation
+        applyEvent(state, { type: 'intimacy', protection: 'none' }, seq(0));
+        assert.equal(state.rolls.at(-1)?.kind, 'conception', 'rolled at once, no waiting for midnight');
         const p = state.people.user.female.pregnancy;
         assert.ok(p, 'conceived');
+        assert.equal(p.conceptionDay, 13, 'conception comes with ovulation');
         assert.deepEqual(p.knownBy, []);
-        assert.equal(state.rolls.at(-1).kind, 'conception');
         assert.ok(/does NOT know/.test(buildStatus(state)));
+    });
+
+    it('counts intimacy on ovulation day itself', () => {
+        const state = couple();
+        advanceTime(state, 13 * DAY + 3 * 60); // day 13 = ovulation, at noon
+        applyEvent(state, { type: 'intimacy', protection: 'none' }, seq(0.2));
+        assert.ok(state.rolls.at(-1).chance > 0.3);
+        assert.ok(state.people.user.female.pregnancy, 'conceived');
+    });
+
+    it('does not roll outside the fertile window, and rolls each act once', () => {
+        const state = couple();
+        advanceTime(state, 3 * DAY);
+        applyEvent(state, { type: 'intimacy', protection: 'none' }, seq(0));
+        assert.equal(state.rolls.length, 0, 'too early in the cycle');
+        advanceTime(state, 9 * DAY);
+        applyEvent(state, { type: 'intimacy', protection: 'none' }, seq(0.99));
+        applyEvent(state, { type: 'intimacy', protection: 'none' }, seq(0.99));
+        assert.equal(state.rolls.length, 2);
+        advanceTime(state, 3 * DAY, seq(0));
+        assert.equal(state.rolls.length, 2, 'nothing more at midnight');
+        assert.equal(state.people.user.female.pregnancy, null);
+    });
+
+    it('lets an emergency pill stop a pregnancy before ovulation', () => {
+        const state = couple();
+        advanceTime(state, 10 * DAY);
+        applyEvent(state, { type: 'intimacy', protection: 'none' }, seq(0));
+        assert.ok(state.people.user.female.pregnancy);
+        advanceTime(state, 1 * DAY);
+        applyEvent(state, { type: 'emergency_pill', who: 'user' }, seq(0.5));
+        assert.equal(state.people.user.female.pregnancy, null, 'ovulation stopped');
+        advanceTime(state, 20 * DAY);
+        assert.ok(state.log.some(e => /начались месячные/.test(e.text)), 'the cycle goes on');
+    });
+
+    it('throws again when the condom turns out broken later', () => {
+        const state = couple();
+        advanceTime(state, 12 * DAY);
+        applyEvent(state, { type: 'intimacy', protection: 'condom' }, seq(0.5, 0.5));
+        assert.equal(state.people.user.female.pregnancy, null);
+        applyEvent(state, { type: 'condom_broke' }, seq(0));
+        assert.equal(state.rolls.length, 2);
+        assert.ok(state.people.user.female.pregnancy, 'the second throw had no protection');
+    });
+
+    it('places intimacy after a time skip on the new day', () => {
+        const state = couple();
+        const scene = { minutes: 7 * DAY, intimacy: { protection: 'none', finished_inside: true, after_time_skip: true }, orgasm: ['char'] };
+        const tag = sceneToTag(scene);
+        assert.match(tag, /ev="" ev_end="intimacy:none,orgasm:char"/);
+        const after = processReply(state, `Через неделю они переспали.\n${tag}`, seq(0.99), scene).state;
+        assert.equal(after.acts[0].day, 7, 'a week later, not on the day the reply began');
+        const first = { ...scene, intimacy: { ...scene.intimacy, after_time_skip: false } };
+        const before = processReply(state, `Они переспали и уснули.\n${sceneToTag(first)}`, seq(0.99), first).state;
+        assert.equal(before.acts[0].day, 0);
+    });
+
+    it('still rolls acts saved by an older version at the end of ovulation day', () => {
+        const state = couple();
+        advanceTime(state, 12 * DAY);
+        state.acts.push({ day: 12, minute: 12 * DAY, protection: 'none', woman: 'user', force: 'yes', condomBroke: false });
+        advanceTime(state, 1 * DAY, seq(0));
+        assert.equal(state.rolls.length, 0);
+        advanceTime(state, 1 * DAY, seq(0));
+        assert.equal(state.rolls.length, 1);
+        assert.ok(state.people.user.female.pregnancy);
+    });
+
+    it('lets him learn about the pregnancy only after she knows', () => {
+        const state = couple();
+        advanceTime(state, 12 * DAY);
+        applyEvent(state, { type: 'intimacy', protection: 'none', force: 'yes' });
+        advanceTime(state, 17 * DAY, seq(0));
+        const p = state.people.user.female.pregnancy;
+        applyEvent(state, { type: 'told', who: 'char' });
+        assert.deepEqual(p.knownBy, [], 'nobody knows yet: nothing to tell');
+        applyEvent(state, { type: 'test', who: 'user' }, seq(0.1));
+        assert.ok(/Марк does not know about the pregnancy yet/.test(buildStatus(state)));
+        const { state: next } = processReply(state, `Она показала ему тест.\n${sceneToTag({ partner_learns_pregnancy: true })}`);
+        assert.deepEqual(next.people.user.female.pregnancy.knownBy, ['user', 'char']);
+        assert.ok(next.pending.some(e => /Марк узнал о беременности/.test(e.text)));
+        const status = buildStatus(next);
+        assert.ok(/going to be a father/.test(status));
+        assert.ok(!/does not know about the pregnancy/.test(status));
     });
 
     it('does not roll without a male partner or without acts', () => {
@@ -111,11 +196,10 @@ describe('conception and pregnancy', () => {
         const state = couple();
         advanceTime(state, 12 * DAY);
         applyEvent(state, { type: 'intimacy', protection: 'none', force: 'yes' });
-        advanceTime(state, 1 * DAY, seq(0));
         const f = state.people.user.female;
         f.pregnancy.knownBy.push('user', 'char');
         // Jump to week 42 (day 294 from the last period): labor must start
-        advanceTime(state, (42 * 7 - 13) * DAY, () => 0.99);
+        advanceTime(state, (42 * 7 - 12) * DAY, () => 0.99);
         assert.ok(f.pregnancy?.labor, 'labor started by week 42');
         assert.ok(/IN LABOR/.test(buildStatus(state)));
         advanceTime(state, 24 * 60, () => 0.99);
@@ -180,15 +264,16 @@ describe('scene analysis', async () => {
             pregnancy_test: true,
         }));
         assert.equal(tag.minutes, 480);
-        assert.deepEqual(tag.events.map(e => e.type), ['intimacy', 'condom_broke', 'orgasm', 'alcohol', 'test']);
+        assert.deepEqual(tag.events.map(e => e.type), ['intimacy', 'orgasm', 'alcohol', 'test']);
         assert.equal(tag.events[0].protection, 'condom');
+        assert.equal(tag.events[0].broke, true, 'the break rides with its act');
     });
     it('treats finishing outside without protection as withdrawal', () => {
         const tag = parseTag(sceneToTag({ minutes: 30, intimacy: { protection: 'none', finished_inside: false } }));
         assert.equal(tag.events[0].protection, 'withdrawal');
     });
     it('handles an empty or broken analysis', () => {
-        assert.deepEqual(parseTag(sceneToTag({})), { found: true, minutes: 0, events: [], clock: null });
+        assert.deepEqual(parseTag(sceneToTag({})), { found: true, minutes: 0, events: [], eventsEnd: [], clock: null });
         assert.equal(parseTag(sceneToTag({ minutes: 'много' })).minutes, 0);
     });
 });
