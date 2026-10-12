@@ -2,13 +2,11 @@
  * Reads what happened in the role-play after each reply, through a chosen connection,
  * so the story model never has to know about Stork.
  */
-import { getContext } from '../../../extensions.js';
-import { ConnectionManagerRequestService } from '../../shared.js';
-import { resolveProfileId } from './cards.js';
+import { requestModel } from './connection.js';
 import { cleanRpText, DIAGNOSES, SCENE_LIFESTYLE_TYPES as LIFESTYLE_TYPES } from './engine.js';
-import { recordCall } from './diag.js';
 
 export { sceneToTag } from './engine.js';
+export { errorText } from './connection.js';
 
 // Room for the notes about both people; models with reasoning need more
 const SCENE_MAX_TOKENS = 1200;
@@ -92,41 +90,17 @@ function parseJson(text) {
     }
 }
 
-/** The error and what caused it («API request failed» says little without its cause). */
-export const errorText = error => [error?.message ?? String(error), error?.cause?.message ?? (error?.cause ? String(error.cause) : '')].filter(Boolean).join(': ');
-
 /**
- * One request about the newest messages. It is remembered for the problem report, whatever happens.
- * @param {string} profileId Connection Manager profile, or '' for the current connection
+ * One request about the newest messages, through the connection chosen in Stork.
+ * @param {object} input
+ * @param {string} input.profileId the saved choice: a Connection Manager profile id or 'current'
+ * @param {string} input.reason why it is read now (goes into the log)
+ * @param {string} [input.replyKey] `${index}:${swipe}` of the reply, when read automatically
+ * @param {number} [input.replyHash] its story hash
  */
-export async function analyzeScene({ profileId: savedProfileId, ...input }) {
-    const profileId = resolveProfileId(savedProfileId);
-    const prompt = buildScenePrompt(input);
-    const started = Date.now();
-    const call = { kind: 'scene', profileId, maxTokens: SCENE_MAX_TOKENS, prompt: `${SYSTEM_PROMPT}\n\n${prompt}`, text: '' };
-    try {
-        call.text = await request(profileId, prompt, call);
-        return parseJson(call.text);
-    } catch (error) {
-        call.error = errorText(error);
-        throw error;
-    } finally {
-        call.ms = Date.now() - started;
-        recordCall(call);
-    }
-}
-
-async function request(profileId, prompt, call) {
-    let text;
-    if (profileId) {
-        const response = await ConnectionManagerRequestService.sendRequest(profileId, [
-            { role: 'system', content: SYSTEM_PROMPT },
-            { role: 'user', content: prompt },
-        ], SCENE_MAX_TOKENS, { stream: false, extractData: true, includePreset: false });
-        call.response = response;
-        text = response?.content ?? '';
-    } else {
-        text = await getContext().generateRaw({ prompt, systemPrompt: SYSTEM_PROMPT, responseLength: SCENE_MAX_TOKENS });
-    }
-    return String(text ?? '');
+export async function analyzeScene({ profileId, reason, replyKey, replyHash, ...input }) {
+    const text = await requestModel({
+        kind: 'scene', reason, replyKey, replyHash, choice: profileId, system: SYSTEM_PROMPT, prompt: buildScenePrompt(input), maxTokens: SCENE_MAX_TOKENS,
+    });
+    return parseJson(text);
 }

@@ -2225,13 +2225,94 @@ stork {
     }
 }
 
-/* The problem report, when the browser would not copy it by itself */
-.stk-report {
-    width: 100%;
-    min-height: 55vh;
-    font-family: var(--monoFontFamily, ui-monospace, monospace);
+/* Stork's log in the settings */
+.stk-hint.is-warn,
+.stk-hint.is-warn .stk-ic {
+    color: var(--stk-warm);
+}
+
+.stk-log-card .stk-card-title .stk-log-count {
+    margin-left: auto;
+    font-weight: 400;
     font-size: 0.8em;
-    line-height: 1.4;
-    white-space: pre;
-    resize: vertical;
+}
+
+.stk-log-list {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    max-height: 360px;
+    overflow-y: auto;
+    font-size: 0.78em;
+}
+
+.stk-log-row {
+    border-radius: 6px;
+    background: var(--stk-glass);
+}
+
+.stk-log-row > summary,
+div.stk-log-row {
+    display: grid;
+    grid-template-columns: 14px auto auto minmax(0, 1fr);
+    gap: 8px;
+    align-items: baseline;
+    padding: 4px 8px;
+}
+
+.stk-log-row > summary {
+    cursor: pointer;
+    list-style: none;
+}
+
+.stk-log-row > summary::-webkit-details-marker {
+    display: none;
+}
+
+.stk-log-row time {
+    color: var(--stk-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.stk-log-row span {
+    overflow-wrap: anywhere;
+}
+
+.stk-log-row i {
+    color: var(--stk-muted);
+}
+
+.stk-log-row.is-warn i {
+    color: var(--stk-warm);
+}
+
+.stk-log-row.is-error i,
+.stk-log-row.is-error span {
+    color: var(--stk-period);
+}
+
+.stk-log-row.is-request i,
+.stk-log-row.is-response i {
+    color: var(--stk-accent);
+}
+
+.stk-log-row pre {
+    margin: 0;
+    padding: 6px 10px 8px 30px;
+    max-height: 300px;
+    overflow: auto;
+    white-space: pre-wrap;
+    font-size: 0.95em;
+    opacity: 0.85;
+}
+
+@media (max-width: 600px) {
+    .stk-log-row > summary,
+    div.stk-log-row {
+        grid-template-columns: 14px auto minmax(0, 1fr);
+    }
+
+    .stk-log-row time {
+        display: none;
+    }
 }

@@ -5,13 +5,15 @@
 import { saveSettingsDebounced } from '../../../../script.js';
 import { callGenericPopup, POPUP_TYPE } from '../../../popup.js';
 import { cycleInfo, FEMALE_CONDITIONS, FEMALE_CONTRACEPTION, MALE_FERTILITY, PERIOD_FLOW, STORY_MODES } from './biology.js';
-import { analyzeCards, getProfiles, guessAge, readCards } from './cards.js';
+import { analyzeCards, guessAge, readCards } from './cards.js';
+import { connectionManagerOn, CURRENT, describeChoice, ensureProfileChoice, errorText, getProfiles, requestModel } from './connection.js';
 import { advanceTime, applyEvent, dateLabel, MINUTES_PER_DAY, parseClock, storyDate } from './engine.js';
 import { currentState, currentView, onStateChange, refreshStatus, rereadLast, settings, updateCurrentState, VIEWS } from './store.js';
 import { ADULT_AGE, applySetupForm } from './setup.js';
 import { capitalize, esc, icon, nameOf, years } from './common.js';
 import { eventLook, notify, notifyDone, notifyWarn } from './notify.js';
-import { buildReport } from './diag.js';
+import { downloadReport } from './diag.js';
+import { clearLog, logCountText, logEvent, logListHtml, onLogChange } from './log.js';
 import { handleAction, onKeyActivate } from './ui.js';
 import * as classic from './classic.js';
 
@@ -50,34 +52,30 @@ export function announce(events) {
     }
 }
 
-// #region Problem report
+// #region The log
 
-/** Into the clipboard; false when the browser does not allow it (then she copies it by hand). */
-async function copyToClipboard(text) {
+/** «Скачать журнал»: a .txt file with everything needed to see what went wrong. */
+export async function downloadProblemLog() {
     try {
-        await navigator.clipboard.writeText(text);
-        return true;
-    } catch {
-        const area = document.createElement('textarea');
-        area.value = text;
-        (document.querySelector('dialog[open]:last-of-type') ?? document.body).append(area);
-        area.select();
-        let done = false;
-        try { done = document.execCommand('copy'); } catch { /* nothing more to try */ }
-        area.remove();
-        return done;
+        await downloadReport();
+        notifyDone('Журнал скачан: пришли этот файл вместе с описанием, что случилось', { icon: 'fa-file-arrow-down', timeOut: 6000 });
+    } catch (error) {
+        notifyWarn(`Не получилось сохранить журнал: ${error?.message ?? error}`);
     }
 }
 
-/** «Скопировать отчёт о проблеме»: everything needed to see what went wrong, ready to paste into a message. */
-export async function copyProblemReport() {
-    const text = await buildReport();
-    if (await copyToClipboard(text)) {
-        notifyDone('Отчёт скопирован. Вставь его в сообщение (Ctrl+V или долгое нажатие → Вставить)', { icon: 'fa-clipboard-check', timeOut: 6000 });
-        return;
-    }
-    await callGenericPopup(`<div class="stk"><div class="stk-hint">${icon('fa-circle-info')}Браузер не дал скопировать само: выдели весь текст ниже и скопируй.</div>
-        <textarea class="text_pole stk-report" readonly>${esc(text)}</textarea></div>`, POPUP_TYPE.TEXT, '', { wide: true, large: true, okButton: 'Закрыть' });
+function logCard() {
+    return `
+        <div class="stk-card stk-log-card">
+            <div class="stk-card-title">${icon('fa-file-lines')}Журнал Stork<span class="stk-muted stk-log-count">${esc(logCountText())}</span></div>
+            <div class="stk-hint">${icon('fa-circle-info')}Всё, что Stork делает: каждый запрос к модели (зачем, через какой профиль, сколько ждали, что вернулось), события чата и ошибки. Живёт до перезагрузки страницы. Если что-то не так — скачай журнал и пришли файл; ключей API в нём нет.</div>
+            <label class="stk-check"><input type="checkbox" class="stk-set" data-k="debugPrompts" ${settings().debugPrompts ? 'checked' : ''}>записывать промпты целиком (журнал станет большим, в нём будет текст истории)</label>
+            <div class="stk-actions">
+                <button type="button" class="stk-btn is-primary" data-stk-act="download-log">${icon('fa-download')}Скачать журнал</button>
+                <button type="button" class="stk-btn is-ghost stk-log-clear">${icon('fa-broom')}Очистить</button>
+            </div>
+            <div class="stk-log-list">${logListHtml()}</div>
+        </div>`;
 }
 
 // #endregion
@@ -277,27 +275,35 @@ function renderJournal(state) {
         <div class="stk-card">${rows || '<div class="stk-muted">Пока ничего не произошло.</div>'}</div>`;
 }
 
-/** How Stork reads the role-play: a separate request per reply, or a hidden tag from the story model. */
+/** How Stork reads the role-play: a separate request per reply through a chosen profile, or a hidden tag from the story model. */
 function readingCard() {
     const s = settings();
+    const analyzer = s.readMode === 'analyzer';
+    if (analyzer) ensureProfileChoice(s, saveSettingsDebounced);
     const profiles = getProfiles();
+    const missing = analyzer && s.readProfile && s.readProfile !== CURRENT && !profiles.some(p => p.id === s.readProfile);
+    const used = analyzer ? describeChoice(s.readProfile) : '';
     return `
         <div class="stk-card">
             <div class="stk-card-title">${icon('fa-book-open-reader')}Чтение РП</div>
             <label class="stk-field"><span>Как Stork понимает, что произошло</span>
                 <select class="text_pole stk-set" data-k="readMode">
-                    <option value="analyzer" ${s.readMode === 'analyzer' ? 'selected' : ''}>отдельный анализ каждого ответа (надёжно)</option>
-                    <option value="tag" ${s.readMode === 'tag' ? 'selected' : ''}>скрытая метка от РП-модели (бесплатно)</option>
+                    <option value="analyzer" ${analyzer ? 'selected' : ''}>отдельный анализ каждого ответа (надёжно)</option>
+                    <option value="tag" ${!analyzer ? 'selected' : ''}>скрытая метка от РП-модели (бесплатно)</option>
                 </select>
             </label>
-            ${s.readMode === 'analyzer' ? `
-                <label class="stk-field"><span>Через что читать</span>
+            ${analyzer ? `
+                <label class="stk-field"><span>Профиль подключения для анализа</span>
                     <select class="text_pole stk-set" data-k="readProfile">
-                        <option value="" ${s.readProfile ? '' : 'selected'}>Текущее подключение</option>
-                        ${profiles.map(p => `<option value="${esc(p.id)}" ${p.id === s.readProfile ? 'selected' : ''}>Профиль «${esc(p.name)}» · ${esc(p.model ?? '?')}</option>`).join('')}
+                        ${missing ? '<option value="" selected>— профиль не найден, выбери заново —</option>' : ''}
+                        ${profiles.map(p => `<option value="${esc(p.id)}" ${p.id === s.readProfile ? 'selected' : ''}>${esc(p.name)} · ${esc(p.model || '?')}</option>`).join('')}
+                        <option value="${CURRENT}" ${s.readProfile === CURRENT ? 'selected' : ''}>Основное подключение SillyTavern (та же модель, что пишет РП)</option>
                     </select>
                 </label>
-                <div class="stk-hint">${icon('fa-coins')}Один короткий запрос после каждого ответа, около 1-2 тысяч токенов. Дешевле всего выбрать недорогую модель отдельным профилем.</div>`
+                <div class="stk-hint ${used.startsWith('ОШИБКА') ? 'is-warn' : ''}">${icon(used.startsWith('ОШИБКА') ? 'fa-triangle-exclamation' : 'fa-plug')}Запросы идут: ${esc(used)}</div>
+                ${!connectionManagerOn() ? `<div class="stk-hint is-warn">${icon('fa-triangle-exclamation')}Connection Manager выключен: профилей нет, доступно только основное подключение.</div>` : ''}
+                <div class="stk-actions"><button type="button" class="stk-btn is-ghost stk-test-connection">${icon('fa-plug-circle-check')}Проверить подключение</button></div>
+                <div class="stk-hint">${icon('fa-coins')}Ровно один короткий запрос после каждого нового ответа бота, около 1-2 тысяч токенов (плюс один раз чтение карточек, когда Stork включается в чате). Свайп назад, правки других расширений и картинки запросов не тратят. Дешевле всего выбрать недорогую модель отдельным профилем.</div>`
                 : `<div class="stk-hint">${icon('fa-circle-info')}РП-модель в конце ответа ставит скрытую строчку. Бесплатно, но модель иногда забывает: тогда Stork предложит отметить сам.</div>`}
         </div>`;
 }
@@ -412,13 +418,7 @@ function renderSettings(state, view) {
             </div>
             <div class="stk-hint">${icon('fa-circle-info')}«Перечитать» прочитает заново твоё последнее сообщение и ответ бота на него, если что-то записалось не так.</div>
         </div>
-        <div class="stk-card">
-            <div class="stk-card-title">${icon('fa-life-ring')}Если что-то не так</div>
-            <div class="stk-actions">
-                <button type="button" class="stk-btn is-primary" data-stk-act="copy-report">${icon('fa-clipboard')}Скопировать отчёт о проблеме</button>
-            </div>
-            <div class="stk-hint">${icon('fa-circle-info')}Stork не обновился, написал ошибку или модель вернула пустой ответ: нажми и вставь отчёт в сообщение. В нём настройки, последние запросы к модели-анализатору и её ответы, состояние Stork и начало последних сообщений чата.</div>
-        </div>
+        ${logCard()}
         ${manualCard(view)}`;
 }
 
@@ -461,7 +461,8 @@ export async function openStork({ tab } = {}) {
         view.analysis = { loading: true };
         render();
         try {
-            view.analysis = { data: await analyzeCards(settings().readProfile ?? '') };
+            ensureProfileChoice(settings(), saveSettingsDebounced);
+            view.analysis = { data: await analyzeCards(settings().readProfile, 'окно настройки: чтение карточек') };
         } catch (error) {
             view.analysis = { error: String(error?.message ?? error) };
         }
@@ -525,12 +526,27 @@ export async function openStork({ tab } = {}) {
     // Settings
     $root.on('change', '.stk-set', function () {
         settings()[this.dataset.k] = this.type === 'checkbox' ? this.checked : this.value;
+        if (this.dataset.k === 'readProfile' || this.dataset.k === 'readMode') {
+            logEvent('info', 'настройки', `${this.dataset.k === 'readMode' ? 'чтение РП' : 'анализ через'}: ${this.dataset.k === 'readMode' ? this.value : describeChoice(this.value)}`);
+        }
         saveSettingsDebounced();
         // Before setup nothing is written into the chat: just redraw
         if (currentState().setupDone) updateCurrentState(() => { });
         else refreshStatus();
         if (view.touched) return;
         render();
+    });
+    $root.on('click', '.stk-log-clear', () => clearLog());
+    $root.on('click', '.stk-test-connection', async function () {
+        const button = $(this).prop('disabled', true);
+        try {
+            const text = await requestModel({ kind: 'test', reason: 'кнопка «Проверить подключение»', choice: settings().readProfile, system: 'You are a connection test.', prompt: 'Reply with one word: OK', maxTokens: 300 });
+            notifyDone(`Подключение работает (${describeChoice(settings().readProfile)}): ${text.trim().slice(0, 60)}`, { icon: 'fa-plug-circle-check', timeOut: 7000 });
+        } catch (error) {
+            notifyWarn(`Подключение не работает: ${errorText(error)}`, { timeOut: 12000 });
+        } finally {
+            button.prop('disabled', false);
+        }
     });
     $root.on('click', '.stk-reread', () => {
         if (rereadLast()) notify('Перечитываю последний ответ, это займёт столько же, сколько обычный анализ', { icon: 'fa-rotate', tone: 'accent', timeOut: 4000 });
@@ -557,8 +573,14 @@ export async function openStork({ tab } = {}) {
         if ($root[0].contains(document.activeElement) && document.activeElement.closest?.('.stk-edit')) return;
         render();
     });
+    // the log list in the settings updates by itself while the window is open
+    const unsubscribeLog = onLogChange(() => {
+        $root.find('.stk-log-list').html(logListHtml());
+        $root.find('.stk-log-count').text(logCountText());
+    });
     $root[0].addEventListener('keydown', onKeyActivate);
     render();
     await callGenericPopup($root, POPUP_TYPE.TEXT, '', { wide: true, large: true, allowVerticalScrolling: true, okButton: 'Закрыть' });
     unsubscribe?.();
+    unsubscribeLog?.();
 }

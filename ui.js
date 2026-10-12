@@ -13,7 +13,7 @@ import {
     KIND_ICON, knowsPregnancy, levelWord, maleLevels, monthGrid, nameOf, nextInCycle, personFields, pickBar, pregnancyLibidoWhy, recentEvents, riskyLately,
     upcomingRows, upcomingWhen, years,
 } from './common.js';
-import { copyProblemReport, openStork } from './window.js';
+import { downloadProblemLog, openStork } from './window.js';
 import { notify, notifyDone, notifyWarn } from './notify.js';
 
 // #region Folds: every panel opens and closes, and stays as she left it
@@ -485,8 +485,8 @@ export function handleAction(target, view, rerender) {
         case 'open-window':
             openStork({ tab: target.dataset.tab });
             return true;
-        case 'copy-report':
-            copyProblemReport();
+        case 'download-log':
+            downloadProblemLog();
             return true;
         default: return false;
     }

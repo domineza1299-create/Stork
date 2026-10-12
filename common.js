@@ -165,7 +165,7 @@ export function readingLine() {
     if (rs.failed) {
         return `<div class="stk-reading is-failed">${icon('fa-triangle-exclamation')}<span>анализ не прошёл${rs.failed.error ? `: ${esc(rs.failed.error)}` : ''}</span>
             <button type="button" class="stk-btn is-ghost" data-stk-act="retry">${icon('fa-rotate-right')}Повторить</button>
-            <button type="button" class="stk-btn is-ghost" data-stk-act="copy-report" title="Скопировать отчёт о проблеме">${icon('fa-clipboard')}Отчёт</button></div>`;
+            <button type="button" class="stk-btn is-ghost" data-stk-act="download-log" title="Скачать журнал Stork для разработчика">${icon('fa-download')}Журнал</button></div>`;
     }
     return '';
 }

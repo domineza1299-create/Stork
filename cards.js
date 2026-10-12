@@ -4,10 +4,10 @@
  * and an analysis of the cards and the story opening fills the rest through the chosen connection.
  */
 import { getContext } from '../../../extensions.js';
-import { ConnectionManagerRequestService } from '../../shared.js';
-
+import { requestModel } from './connection.js';
 import { cleanRpText } from './engine.js';
-import { recordCall } from './diag.js';
+
+export { getProfiles } from './connection.js';
 
 export { guessAge } from './engine.js';
 
@@ -87,46 +87,12 @@ function parseJson(text) {
     }
 }
 
-/** A saved profile may not exist on this device (the phone has its own): fall back to the current connection. */
-export function resolveProfileId(profileId) {
-    return profileId && getProfiles().some(p => p.id === profileId) ? profileId : '';
-}
-
-export function getProfiles() {
-    try {
-        return ConnectionManagerRequestService.getSupportedProfiles();
-    } catch {
-        return [];
-    }
-}
-
 /**
- * One request that reads both cards. It is remembered for the problem report, whatever happens.
- * @param {string} profileId Connection Manager profile, or '' for the current connection
+ * One request that reads both cards and the story opening, through the connection chosen in Stork.
+ * @param {string} choice a Connection Manager profile id or 'current'
+ * @param {string} [reason] why it is read now (goes into the log)
  */
-export async function analyzeCards(savedProfileId) {
-    const profileId = resolveProfileId(savedProfileId);
-    const cards = readCards();
-    const prompt = buildPrompt(cards);
-    const started = Date.now();
-    const call = { kind: 'cards', profileId, maxTokens: ANALYSIS_MAX_TOKENS, prompt: `${SYSTEM_PROMPT}\n\n${prompt}`, text: '' };
-    try {
-        if (profileId) {
-            const response = await ConnectionManagerRequestService.sendRequest(profileId, [
-                { role: 'system', content: SYSTEM_PROMPT },
-                { role: 'user', content: prompt },
-            ], ANALYSIS_MAX_TOKENS, { stream: false, extractData: true, includePreset: false });
-            call.response = response;
-            call.text = String(response?.content ?? '');
-        } else {
-            call.text = String(await getContext().generateRaw({ prompt, systemPrompt: SYSTEM_PROMPT, responseLength: ANALYSIS_MAX_TOKENS }) ?? '');
-        }
-        return parseJson(call.text);
-    } catch (error) {
-        call.error = [error?.message ?? String(error), error?.cause?.message ?? ''].filter(Boolean).join(': ');
-        throw error;
-    } finally {
-        call.ms = Date.now() - started;
-        recordCall(call);
-    }
+export async function analyzeCards(choice, reason = 'настройка Stork в этом чате') {
+    const text = await requestModel({ kind: 'cards', reason, choice, system: SYSTEM_PROMPT, prompt: buildPrompt(readCards()), maxTokens: ANALYSIS_MAX_TOKENS });
+    return parseJson(text);
 }

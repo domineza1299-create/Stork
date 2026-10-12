@@ -34,7 +34,10 @@ const defaultSettings = {
     showRolls: false,
     // 'analyzer': Stork reads each reply through a connection; 'tag': the story model leaves a hidden tag (free)
     readMode: 'analyzer',
+    // a Connection Manager profile id, or 'current' for the main connection; '' = not chosen yet (the first profile is taken)
     readProfile: '',
+    // the log keeps whole prompts too (big, and has the story's text)
+    debugPrompts: false,
 };
 
 export function initSettings() {
