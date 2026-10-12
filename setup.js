@@ -7,10 +7,40 @@ import { guessAge, parseClock } from './engine.js';
 
 export const ADULT_AGE = 18;
 const CONTRACEPTIONS = ['none', 'pill', 'ring', 'patch', 'injection', 'implant', 'iud', 'copper_iud'];
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+/** A whole number in [min, max]; nothing given (null, as the analysis says «unknown», or an empty field) is the fallback. */
 const clampInt = (v, min, max, fallback) => {
+    if (v === null || v === undefined || v === '') return fallback;
     const n = Math.round(Number(v));
     return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
 };
+
+/** Children and a pregnancy the cards describe: she and he already know about it. */
+function pregnancyFromCards(f, day, u, rng) {
+    if (u.children) f.births = Math.max(f.births, Number(u.children) || 0);
+    if (u.pregnant && !f.pregnancy) {
+        const weeks = clampInt(u.pregnancy_weeks, 4, 41, 8);
+        const lmp = day - weeks * 7;
+        f.pregnancy = createPregnancy({ lmp, conceptionDay: lmp + 14, twins: false, births: f.births, rng });
+        f.pregnancy.knownBy = ['user', 'char'];
+    }
+}
+
+/**
+ * Varicocele and a vasectomy are not ticked by hand: the cards say so, or the scene analysis finds them later
+ * (a doctor, the story). A card can add them, never take them away.
+ */
+function diagnosesFromCards(m, day, c) {
+    if (c.varicocele) m.varicocele = true;
+    if (c.vasectomy && (m.vasectomyDay === null || m.vasectomyDay === undefined)) m.vasectomyDay = day - 365;
+}
+
+/** Today in the story is this ISO date: story day 0 moves so that the current day lands on it. */
+function anchorStartDate(state, iso) {
+    const base = new Date(`${iso}T12:00:00Z`);
+    base.setUTCDate(base.getUTCDate() - state.clock.day);
+    state.startDate = base.toISOString().slice(0, 10);
+}
 
 /**
  * Ages from the analysis or the card text. null when unknown.
@@ -63,29 +93,21 @@ export function setupFromAnalysis(state, analysis, cards, rng = Math.random) {
     f.painfulPeriods = !!u.painful_periods;
     f.pcos = !!u.pcos;
     f.endometriosis = !!u.endometriosis;
+    f.smoker = !!u.smoker;
+    f.drinker = !!u.drinker;
     f.perimenopause = perimenopause(user.age);
-    if (u.children) f.births = Math.max(f.births, Number(u.children) || 0);
-    if (u.pregnant && !f.pregnancy) {
-        const weeks = clampInt(u.pregnancy_weeks, 4, 41, 8);
-        const lmp = day - weeks * 7;
-        f.pregnancy = createPregnancy({ lmp, conceptionDay: lmp + 14, twins: false, births: f.births, rng });
-        f.pregnancy.knownBy = ['user', 'char'];
-    }
+    pregnancyFromCards(f, day, u, rng);
 
     const m = char.male;
     m.fertility = ['normal', 'low', 'sterile'].includes(c.fertility) ? c.fertility : 'normal';
     m.smoker = !!c.smoker;
     m.drinker = !!c.drinker;
-    m.overweight = !!c.overweight;
-    m.varicocele = !!c.varicocele;
-    m.vasectomyDay = c.vasectomy ? day - 365 : null;
+    diagnosesFromCards(m, day, c);
 
     // the story's own date and time; a guessed date stays "not sure" until the story names one
     const start = a.start ?? {};
-    if (/^\d{4}-\d{2}-\d{2}$/.test(String(start.date ?? ''))) {
-        const base = new Date(`${start.date}T12:00:00Z`);
-        base.setUTCDate(base.getUTCDate() - day);
-        state.startDate = base.toISOString().slice(0, 10);
+    if (ISO_DATE.test(String(start.date ?? ''))) {
+        anchorStartDate(state, start.date);
         state.dateSure = start.date_guessed === false;
     }
     const time = parseClock(start.time);
@@ -93,6 +115,57 @@ export function setupFromAnalysis(state, analysis, cards, rng = Math.random) {
     if (a.story?.summary) state.storySummary = a.story.summary;
     state.setupDone = true;
     state.autoSetup = true;
+    return state;
+}
+
+/**
+ * The setup form in the window (shown with what the analysis found), read into the state.
+ * {{user}} is always the woman, {{char}} always the man.
+ * @param {object} v Form values (strings or booleans) plus names and ages: userName, charName, userAge, charAge
+ * @param {object|null} analysis What analyzeCards() returned: a pregnancy and children the cards describe
+ */
+export function applySetupForm(state, v, analysis = null, rng = Math.random) {
+    const user = state.people.user;
+    const char = state.people.char;
+    user.sex = 'female';
+    char.sex = 'male';
+    user.name = v.userName;
+    char.name = v.charName;
+    user.age = v.userAge ?? 25;
+    char.age = v.charAge ?? 28;
+
+    const f = user.female;
+    const day = state.clock.day;
+    f.cycleLength = clampInt(v.cycleLength, 21, 35, 28);
+    f.periodLength = clampInt(v.periodLength, 3, 7, 5);
+    f.cycleStart = day - (clampInt(v.cycleDay, 1, f.cycleLength, 1) - 1);
+    f.cycleShift = 0;
+    f.irregularity = clampInt(v.irregularity, 0, 7, 0);
+    const contraception = CONTRACEPTIONS.includes(v.contraception) ? v.contraception : 'none';
+    if (f.contraception === 'pill' && contraception !== 'pill') f.pillStoppedDay = day;
+    f.contraception = contraception;
+    f.pmsSevere = !!v.pmsSevere;
+    f.painfulPeriods = !!v.painfulPeriods;
+    f.pcos = !!v.pcos;
+    f.endometriosis = !!v.endometriosis;
+    f.smoker = !!v.userSmoker;
+    f.drinker = !!v.userDrinker;
+    f.flow = ['light', 'normal', 'heavy'].includes(v.flow) ? v.flow : 'normal';
+    f.perimenopause = perimenopause(user.age);
+    pregnancyFromCards(f, day, analysis?.user ?? {}, rng);
+
+    const m = char.male;
+    m.fertility = ['normal', 'low', 'sterile'].includes(v.fertility) ? v.fertility : 'normal';
+    m.smoker = !!v.smoker;
+    m.drinker = !!v.drinker;
+    diagnosesFromCards(m, day, analysis?.char ?? {});
+
+    if (ISO_DATE.test(String(v.startDate ?? ''))) anchorStartDate(state, v.startDate);
+    state.clock.minutes = parseClock(v.time) ?? state.clock.minutes;
+    state.storyMode = v.storyMode ?? 'realistic';
+    if (analysis?.story?.summary) state.storySummary = analysis.story.summary;
+    state.setupDone = true;
+    state.chatOff = false;
     return state;
 }
 
@@ -126,13 +199,12 @@ export function applyPersonEdit(state, key, v) {
             if (f.contraception === 'pill' && v.contraception !== 'pill') f.pillStoppedDay = day;
             f.contraception = v.contraception;
         }
-        for (const k of ['pmsSevere', 'painfulPeriods', 'pcos', 'endometriosis']) if (v[k] !== undefined) f[k] = !!v[k];
+        for (const k of ['pmsSevere', 'painfulPeriods', 'pcos', 'endometriosis', 'smoker', 'drinker']) if (v[k] !== undefined) f[k] = !!v[k];
         f.perimenopause = perimenopause(person.age);
     } else {
         const m = person.male;
         if (v.fertility !== undefined && ['normal', 'low', 'sterile'].includes(v.fertility)) m.fertility = v.fertility;
-        for (const k of ['smoker', 'drinker', 'overweight', 'varicocele']) if (v[k] !== undefined) m[k] = !!v[k];
-        if (v.vasectomy !== undefined) m.vasectomyDay = v.vasectomy ? (m.vasectomyDay ?? day - 365) : null;
+        for (const k of ['smoker', 'drinker']) if (v[k] !== undefined) m[k] = !!v[k];
     }
     return state;
 }

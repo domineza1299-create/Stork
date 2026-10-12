@@ -5,7 +5,7 @@
  */
 import { saveChatDebounced } from '../../../../script.js';
 import { extension_settings, getContext } from '../../../extensions.js';
-import { buildStatus, createState, processReply, upgradeState } from './engine.js';
+import { buildStatus, cleanRpText, createState, MINUTES_PER_DAY, parseSkip, processReply, upgradeState } from './engine.js';
 
 export const MODULE = 'stork';
 const PROMPT_KEY = 'stork_status';
@@ -117,27 +117,110 @@ export function hashText(text) {
     return h;
 }
 
+// #region Other extensions rewrite replies: telling the same reply from a new one
+
+/**
+ * The story of a reply: no pictures or HTML (an image generator puts the picture in place of its tag, other extensions
+ * add their markup), but Stork's own tag stays, it is the story's data.
+ */
+export const storyText = mes => cleanRpText(String(mes ?? '').replace(/<(stork\b[^>]*?)\/?>/gi, '[$1]')).replace(/\s+/g, ' ').trim();
+export const storyHash = mes => hashText(storyText(mes));
+
+const SIG_SIZE = 24;
+/** Share of the fingerprint two texts must have in common to be one reply (a block added or a picture swapped in). */
+const SAME_REPLY = 0.6;
+/** A short fingerprint of the wording (MinHash of word pairs): two versions of one reply share most of it, another reply almost none. */
+export function storySig(mes) {
+    const words = storyText(mes).toLowerCase().split(' ');
+    const sig = new Array(SIG_SIZE).fill(0x7fffffff);
+    for (let i = 0; i < Math.max(1, words.length - 1); i++) {
+        const pair = `${words[i]} ${words[i + 1] ?? ''}`;
+        for (let k = 0; k < SIG_SIZE; k++) {
+            const h = hashText(`${k}:${pair}`) & 0x7fffffff;
+            if (h < sig[k]) sig[k] = h;
+        }
+    }
+    return sig;
+}
+export const likeness = (a, b) => (Array.isArray(a) && Array.isArray(b) ? a.filter((v, k) => v === b[k]).length / SIG_SIZE : 0);
+export const similarSig = (a, b) => likeness(a, b) >= SAME_REPLY;
+
+/**
+ * This snapshot still belongs to this text. strict: only the very same story counts (her own edit, a continued reply);
+ * otherwise a version rewritten by another extension counts too.
+ */
+export function sameReply(snapshot, mes, { strict = false } = {}) {
+    if (!snapshot) return false;
+    // older snapshots kept the hash of the raw text
+    if (snapshot.hash === storyHash(mes) || snapshot.hash === hashText(mes)) return true;
+    return !strict && similarSig(snapshot.sig, storySig(mes));
+}
+
+// #endregion
+
 /**
  * (Re)computes the state after one model reply. Unchanged text keeps its dice.
+ * @param {object} [options]
+ * @param {boolean} [options.strict] only the very same text keeps its dice (see sameReply)
  * @returns {{tag: object, events: object[]}|null} The tag and the new log entries
  */
-export function processMessage(index, textOverride = null, scene = null) {
+export function processMessage(index, textOverride = null, scene = null, { strict = false } = {}) {
     const chat = getContext().chat ?? [];
     const message = chat[index];
     if (!message || message.is_user || message.is_system) return null;
-    const hash = hashText(message.mes);
+    const hash = storyHash(message.mes);
     const existing = snapshotOf(message);
-    if (existing?.hash === hash && textOverride === null) return null;
+    if (textOverride === null && sameReply(existing, message.mes, { strict })) return null;
     const before = stateBefore(index);
     // An analysis result is read together with the reply itself, so a time header in the text still counts
     const { state, tag } = processReply(before, textOverride === null ? message.mes : `${message.mes}
 ${textOverride}`, Math.random, scene);
     message.extra ??= {};
     message.extra.stork ??= {};
-    message.extra.stork[message.swipe_id ?? 0] = { hash, state, tagFound: tag.found, fromHints: textOverride !== null };
+    message.extra.stork[message.swipe_id ?? 0] = { hash, sig: storySig(message.mes), state, tagFound: tag.found, fromHints: textOverride !== null };
     if (textOverride !== null) saveChatDebounced();
     notify();
     return { tag, events: state.log.slice(before.log.length) };
+}
+
+/** Skips shorter than a day are left to the reading of the reply: they change nothing in her cycle. */
+const MIN_PRE_SKIP = MINUTES_PER_DAY;
+
+/**
+ * Her message opens with a time skip («4 месяца спустя…»): the time moves now, before the bot answers, so the bot
+ * writes from the right day of her cycle. The reading of the reply then counts only what comes after the skip.
+ * @returns {{minutes: number, state: object, events: object[]}|null} what changed, or null
+ */
+export function processUserMessage(index) {
+    const chat = getContext().chat ?? [];
+    const message = chat[index];
+    if (!message?.is_user) return null;
+    const minutes = parseSkip(message.mes);
+    const existing = snapshotOf(message);
+    if (minutes < MIN_PRE_SKIP) {
+        // the skip was edited away
+        if (existing) {
+            delete message.extra.stork;
+            saveChatDebounced();
+            notify();
+        }
+        return null;
+    }
+    if (existing?.hash === storyHash(message.mes)) return null;
+    const before = stateBefore(index);
+    const { state } = processReply(before, `<stork t="+${minutes}m" ev=""/>`);
+    message.extra ??= {};
+    message.extra.stork = { 0: { hash: storyHash(message.mes), sig: storySig(message.mes), state, skip: minutes } };
+    saveChatDebounced();
+    notify();
+    return { minutes, state, events: state.log.slice(before.log.length) };
+}
+
+/** The time skip of her message before this reply, already counted before the bot answered (0 if none). */
+export function skipBefore(index) {
+    const chat = getContext().chat ?? [];
+    const user = chat[index - 1];
+    return user?.is_user ? (snapshotOf(user)?.skip ?? 0) : 0;
 }
 
 /**
@@ -182,6 +265,10 @@ export function setReadFailed(index, error) {
 }
 export const onRetry = handler => { retryHandler = handler; };
 export const retryRead = () => (reading.failed && retryHandler ? retryHandler(reading.failed.index) : null);
+let rereadHandler = null;
+export const onReread = handler => { rereadHandler = handler; };
+/** «Перечитать последний ответ» in the window: her message and the latest reply are read anew. */
+export const rereadLast = () => rereadHandler?.() ?? false;
 
 // #endregion
 

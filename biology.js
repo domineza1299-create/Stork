@@ -40,6 +40,12 @@ export const FEMALE_CONDITIONS = {
     endometriosis: { factor: 0.6, painful: true, label: 'эндометриоз', note: 'сильная боль при месячных, забеременеть труднее' },
 };
 
+/** Her habits: they lower the chance to conceive too (smoking ages the eggs, drinking upsets the hormones). */
+export const FEMALE_HABITS = {
+    smoker: { factor: 0.8, label: 'курит', en: 'smokes' },
+    drinker: { factor: 0.9, label: 'часто выпивает', en: 'drinks often' },
+};
+
 export const PERIOD_FLOW = {
     light: 'скудные',
     normal: 'обычные',
@@ -262,7 +268,6 @@ export function spermQuality(m, age, day) {
     factor *= maleAgeFactor(age);
     if (m.smoker) factor *= 0.85;
     if (m.drinker) factor *= 0.9;
-    if (m.overweight) factor *= 0.85;
     if (m.varicocele) factor *= 0.7;
     for (const event of m.lifestyle ?? []) {
         const weight = LIFESTYLE[event.type]?.weight ?? 0;
@@ -407,10 +412,10 @@ export function actChance(act, ovulationAbsoluteDay, femaleContraception, male, 
  * An act marked force: 'yes' or 'no' overrides the dice.
  * @returns {{conceived: boolean, chance: number, twins: boolean, forced: boolean}}
  */
-/** Her own fertility: conditions like PCOS or endometriosis lower it. */
+/** Her own fertility: conditions like PCOS or endometriosis lower it, and so do smoking and drinking. */
 export function femaleConditionFactor(f) {
     let factor = 1;
-    for (const [key, condition] of Object.entries(FEMALE_CONDITIONS)) if (f?.[key]) factor *= condition.factor;
+    for (const [key, condition] of Object.entries({ ...FEMALE_CONDITIONS, ...FEMALE_HABITS })) if (f?.[key]) factor *= condition.factor;
     return factor;
 }
 

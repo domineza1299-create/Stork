@@ -7,6 +7,7 @@ import { getContext } from '../../../extensions.js';
 import { ConnectionManagerRequestService } from '../../shared.js';
 
 import { cleanRpText } from './engine.js';
+import { recordCall } from './diag.js';
 
 export { guessAge } from './engine.js';
 
@@ -60,14 +61,14 @@ ${cards.opening || '(empty)'}
 
 Return JSON exactly in this shape:
 {
-  "char": { "age": number|null, "fertility": "normal"|"low"|"sterile"|null, "smoker": boolean, "drinker": boolean, "overweight": boolean, "varicocele": boolean, "vasectomy": boolean },
-  "user": { "age": number|null, "pregnant": boolean, "pregnancy_weeks": number|null, "children": number, "contraception": "none"|"pill"|"ring"|"patch"|"injection"|"implant"|"iud"|"copper_iud"|null, "cycle_length": number|null, "cycle_day": number|null, "flow": "light"|"normal"|"heavy"|null, "pms_severe": boolean, "painful_periods": boolean, "pcos": boolean, "endometriosis": boolean },
+  "char": { "age": number|null, "fertility": "normal"|"low"|"sterile"|null, "smoker": boolean, "drinker": boolean, "varicocele": boolean, "vasectomy": boolean },
+  "user": { "age": number|null, "smoker": boolean, "drinker": boolean, "pregnant": boolean, "pregnancy_weeks": number|null, "children": number, "contraception": "none"|"pill"|"ring"|"patch"|"injection"|"implant"|"iud"|"copper_iud"|null, "cycle_length": number|null, "cycle_day": number|null, "flow": "light"|"normal"|"heavy"|null, "pms_severe": boolean, "painful_periods": boolean, "pcos": boolean, "endometriosis": boolean },
   "start": { "time": "HH:MM"|null, "date": "YYYY-MM-DD"|null, "date_guessed": boolean, "place": "a short place name in Russian"|null },
   "story": { "relationship": "a short phrase in Russian", "trying_for_baby": boolean, "summary": "1-2 sentences in Russian about what matters for the tracker in this story" }
 }
 Rules:
 - Ages: only a number the texts give or clearly imply (a student, "in her thirties" — the middle of the range); null otherwise.
-- Booleans are true only when the texts say so; habits count when they are part of who he is (smokes, drinks often), not a single scene.
+- Booleans are true only when the texts say so; habits count when they are part of who the person is (smokes, drinks often), not a single scene.
 - contraception, cycle_length, cycle_day, flow: only if stated. cycle_day only if the texts say where she is in her cycle (period now, ovulation, period due soon).
 - "start" is when and where the story opening takes place. time: if stated or clear (morning, late evening). date: if the opening or the card names it; if not, the most plausible date by the setting (year of the setting, season, holidays, school or work rhythm) with "date_guessed": true; null only if there is nothing to go on.
 - "summary": only what matters for the body and the relationship (are they a couple, living together, planning a child, any health facts); no retelling.`;
@@ -75,6 +76,7 @@ Rules:
 
 function parseJson(text) {
     const raw = String(text ?? '');
+    if (!raw.trim()) throw new Error('Модель вернула пустой ответ. Попробуй ещё раз или выбери другой профиль.');
     const start = raw.indexOf('{');
     const end = raw.lastIndexOf('}');
     if (start < 0 || end <= start) throw new Error('Модель не вернула данные. Попробуй ещё раз или выбери другой профиль.');
@@ -99,22 +101,32 @@ export function getProfiles() {
 }
 
 /**
- * One request that reads both cards.
+ * One request that reads both cards. It is remembered for the problem report, whatever happens.
  * @param {string} profileId Connection Manager profile, or '' for the current connection
  */
 export async function analyzeCards(savedProfileId) {
     const profileId = resolveProfileId(savedProfileId);
     const cards = readCards();
     const prompt = buildPrompt(cards);
-    let text;
-    if (profileId) {
-        const response = await ConnectionManagerRequestService.sendRequest(profileId, [
-            { role: 'system', content: SYSTEM_PROMPT },
-            { role: 'user', content: prompt },
-        ], ANALYSIS_MAX_TOKENS, { stream: false, extractData: true, includePreset: false });
-        text = response?.content ?? '';
-    } else {
-        text = await getContext().generateRaw({ prompt, systemPrompt: SYSTEM_PROMPT, responseLength: ANALYSIS_MAX_TOKENS });
+    const started = Date.now();
+    const call = { kind: 'cards', profileId, maxTokens: ANALYSIS_MAX_TOKENS, prompt: `${SYSTEM_PROMPT}\n\n${prompt}`, text: '' };
+    try {
+        if (profileId) {
+            const response = await ConnectionManagerRequestService.sendRequest(profileId, [
+                { role: 'system', content: SYSTEM_PROMPT },
+                { role: 'user', content: prompt },
+            ], ANALYSIS_MAX_TOKENS, { stream: false, extractData: true, includePreset: false });
+            call.response = response;
+            call.text = String(response?.content ?? '');
+        } else {
+            call.text = String(await getContext().generateRaw({ prompt, systemPrompt: SYSTEM_PROMPT, responseLength: ANALYSIS_MAX_TOKENS }) ?? '');
+        }
+        return parseJson(call.text);
+    } catch (error) {
+        call.error = [error?.message ?? String(error), error?.cause?.message ?? ''].filter(Boolean).join(': ');
+        throw error;
+    } finally {
+        call.ms = Date.now() - started;
+        recordCall(call);
     }
-    return parseJson(text);
 }

@@ -1,15 +1,19 @@
 import { eventSource, event_types, saveSettingsDebounced } from '../../../../script.js';
 import { getContext } from '../../../extensions.js';
 import { dateLabel, detectHints, stripTag, timeLabel } from './engine.js';
-import { analyzeScene, sceneToTag } from './scene.js';
+import { analyzeScene, errorText, sceneToTag } from './scene.js';
+import { trace, watchErrors } from './diag.js';
 import {
-    activeIn, changed, currentState, currentView, getGenerationState, hashText, initSettings, MODULE, onRetry, onStateChange, processMessage,
-    readStatus, refreshStatus, setGenerationState, setReadFailed, setReading, setStatus, settings, stateBefore, statusText, updateCurrentState, VIEWS,
+    activeIn, changed, currentState, currentView, getGenerationState, initSettings, MODULE, onReread, onRetry, onStateChange, processMessage,
+    processUserMessage, readStatus, refreshStatus, sameReply, setGenerationState, setReadFailed, setReading, setStatus, settings, similarSig,
+    skipBefore, stateBefore, statusText, storyHash, storySig, updateCurrentState, VIEWS,
 } from './store.js';
 import { buildStatus } from './engine.js';
 import { analyzeCards, readCards } from './cards.js';
 import { hasMinor, setupFromAnalysis } from './setup.js';
-import { announce, openStork, renderStatusBar } from './ui.js';
+import { renderStatusBar } from './ui.js';
+import { announce, openStork } from './window.js';
+import { notify, notifyDone, notifyWarn } from './notify.js';
 import { renderBlocks, resetBlock, scheduleBlocks, watchChat } from './block.js';
 
 // #region Generation
@@ -74,14 +78,17 @@ function offerHints(index) {
     const parts = [];
     if (hints.minutes) parts.push(`прошло около ${hints.minutes >= 1440 ? `${Math.round(hints.minutes / 1440)} дн.` : `${Math.round(hints.minutes / 60)} ч`}`);
     if (hints.intimacy) parts.push('была близость');
-    toastr.info(`Похоже, ${parts.join(' и ')}, но модель не оставила метку. Нажми, чтобы отметить.`, 'Stork', {
+    notify(`Похоже, ${parts.join(' и ')}, но модель не оставила метку.`, {
+        icon: 'fa-wand-magic-sparkles',
+        tone: 'accent',
         timeOut: 15000,
-        onclick: () => {
+        action: 'Отметить',
+        onClick: () => {
             const ev = hints.intimacy ? 'intimacy:none' : '';
             const result = processMessage(index, `<stork t="+${hints.minutes}m" ev="${ev}"/>`);
             refreshStatus();
             announce(result?.events);
-            toastr.success('Отмечено', 'Stork', { timeOut: 2000 });
+            notifyDone('Отмечено');
         },
     });
 }
@@ -90,19 +97,64 @@ function offerHints(index) {
 let pendingReading = null;
 const READ_WAIT_MS = 30000;
 
+// #region Reading a reply, safe from other extensions that rewrite it
+
+/** Readings running now, one per reply and swipe: the same reply is never read twice at once. */
+const readsInFlight = new Map();
+/** The newest reading of each reply: an older one that comes back later must not overwrite it. */
+const latestRead = new Map();
+let readCount = 0;
+/** How many times a reply was read again because its reading had to be thrown away: never in a loop. */
+const rereads = new Map();
+const MAX_REREADS = 2;
+
+/**
+ * Reads one reply. strict: her own edit or a continued reply, read anew unless the story is exactly the same.
+ * Otherwise (another extension updated the reply: a picture, a block, markup) a reply that is still the same story
+ * keeps its reading, and a second event for it joins the reading already running instead of paying again.
+ */
+export function readReply(index, { force = false, strict = false } = {}) {
+    const message = getContext().chat?.[index];
+    if (!message) return Promise.resolve();
+    const key = `${index}:${message.swipe_id ?? 0}`;
+    const hash = storyHash(message.mes);
+    const sig = storySig(message.mes);
+    const running = readsInFlight.get(key);
+    if (running && (running.hash === hash || (!strict && similarSig(running.sig, sig)))) return running.run;
+    const entry = { hash, sig };
+    entry.run = readReplyNow(index, { force, strict }).finally(() => {
+        if (readsInFlight.get(key) === entry) readsInFlight.delete(key);
+    });
+    readsInFlight.set(key, entry);
+    return entry.run;
+}
+
+/** A reading had to be thrown away and nothing else will read the reply: read it once more, a little later. */
+function rereadLater(index) {
+    const chat = getContext().chat;
+    const count = rereads.get(index) ?? 0;
+    if (count >= MAX_REREADS) return;
+    rereads.set(index, count + 1);
+    setTimeout(() => {
+        const message = getContext().chat === chat ? chat?.[index] : null;
+        if (!message || message.extra?.stork?.[message.swipe_id ?? 0]) return;
+        pendingReading = readReply(index, { force: true }).finally(() => { pendingReading = null; });
+    }, 500);
+}
+
 /**
  * Reads one reply: through a connection (analyzer) or from the hidden tag.
  * Unchanged text is skipped, so swiping back and forth costs nothing.
  */
-async function readReply(index, force = false) {
+async function readReplyNow(index, { force = false, strict = false } = {}) {
     const chat = getContext().chat ?? [];
     const message = chat[index];
     if (!message || message.is_user || message.is_system) return;
     const snapshot = message.extra?.stork?.[message.swipe_id ?? 0];
-    if (!force && snapshot && snapshot.hash === hashText(message.mes)) return;
+    if (!force && sameReply(snapshot, message.mes, { strict })) return;
 
     if (settings().readMode !== 'analyzer') {
-        const result = processMessage(index);
+        const result = processMessage(index, null, null, { strict });
         refreshStatus();
         if (!result) return;
         announce(result.events);
@@ -110,8 +162,11 @@ async function readReply(index, force = false) {
         return;
     }
 
+    const mine = ++readCount;
+    latestRead.set(index, mine);
     const before = stateBefore(index);
-    const hash = hashText(message.mes);
+    const sig = storySig(message.mes);
+    const swipe = message.swipe_id ?? 0;
     // the reply before the user's message — context, so the analysis follows the scene, not one line of it
     const userAt = chat[index - 1]?.is_user ? index - 1 : null;
     const earlier = userAt !== null && chat[userAt - 1] && !chat[userAt - 1].is_user && !chat[userAt - 1].is_system ? chat[userAt - 1].mes : '';
@@ -122,25 +177,34 @@ async function readReply(index, force = false) {
             userName: before.people.user.name,
             charName: before.people.char.name,
             dateText: `${dateLabel(before)}, ${String(Math.floor(before.clock.minutes / 60)).padStart(2, '0')}:${String(before.clock.minutes % 60).padStart(2, '0')} (${timeLabel(before.clock.minutes)})`,
-            status: buildStatus(before, { detailed: true, withTag: false }),
+            status: buildStatus(before, { detailed: true, withTag: false, guide: false }),
             earlier,
             userMessage: userAt !== null ? chat[userAt].mes : '',
             reply: message.mes,
+            skipCounted: skipBefore(index) > 0,
         });
-        // the text changed while we read (swipe, edit): this answer is about the old one
-        if (hashText(getContext().chat?.[index]?.mes) !== hash) return;
+        // another chat opened, the reply was swiped or deleted, or a newer reading of it started: this answer is not for what is there now
+        const now = getContext().chat === chat ? chat[index] : null;
+        if (!now || (now.swipe_id ?? 0) !== swipe || latestRead.get(index) !== mine) {
+            trace(`ответ #${index}: пока шёл анализ, ответ сменился или его читают заново, этот результат не нужен`);
+            return;
+        }
+        // another extension may have rewritten the reply meanwhile (a picture in place of its tag): the same story still counts
+        if (!similarSig(sig, storySig(now.mes))) {
+            trace(`ответ #${index}: сильно изменился, пока шёл анализ (другое расширение?), читаю заново`);
+            rereadLater(index);
+            return;
+        }
         console.info('[Stork] сцена:', scene);
+        trace(`ответ #${index} прочитан: ${sceneToTag(scene)}`);
         const result = processMessage(index, sceneToTag(scene), scene);
         setReading(null);
         refreshStatus();
         announce(result?.events);
     } catch (error) {
-        console.warn('[Stork] Scene analysis failed', error);
+        trace(`ответ #${index}: анализ не прошёл: ${errorText(error)}`, 'warn');
         setReadFailed(index, error);
-        toastr.warning(`Не получилось прочитать сцену: ${error?.message ?? error}. Нажми, чтобы повторить.`, 'Stork', {
-            timeOut: 12000,
-            onclick: () => retry(index),
-        });
+        notifyWarn(`Не получилось прочитать сцену: ${error?.message ?? error}`, { timeOut: 12000, action: 'Повторить', onClick: () => retry(index) });
     } finally {
         if (readStatus().index === index) setReading(null);
     }
@@ -150,8 +214,10 @@ async function readReply(index, force = false) {
 function retry(index) {
     const chat = getContext().chat ?? [];
     if (!chat[index]) return;
-    pendingReading = readReply(index, true).finally(() => { pendingReading = null; });
+    pendingReading = readReply(index, { force: true }).finally(() => { pendingReading = null; });
 }
+
+// #endregion
 
 // #region Each chat on its own: Stork turns itself on with the first real reply
 
@@ -175,33 +241,83 @@ async function autoEnable(index) {
         try {
             analysis = await analyzeCards(settings().readProfile ?? '');
             console.info('[Stork] карточки и начало истории:', analysis);
+            trace('карточки прочитаны, Stork включается в этом чате');
         } catch (error) {
-            console.warn('[Stork] Card analysis failed — setting up with defaults', error);
+            trace(`карточки прочитать не вышло, настраиваюсь по умолчанию: ${errorText(error)}`, 'warn');
         }
         if (hasMinor(analysis, cards)) {
             updateCurrentState(state => { state.minorBlocked = true; });
-            toastr.warning('По карточке персонаж младше 18 лет: Stork в этом чате не работает.', 'Stork');
+            notifyWarn('По карточке персонаж младше 18 лет: Stork в этом чате не работает.', { icon: 'fa-ban' });
             setReading(null);
             return false;
         }
         updateCurrentState(state => setupFromAnalysis(state, analysis, cards));
-        toastr.success('Stork включился в этом чате: цикл и состояние ведутся по сюжету. Поправить — в окне Stork.', 'Stork', { timeOut: 5000 });
+        notify('Stork включился в этом чате: цикл и состояние ведутся по сюжету. Нажми, чтобы поправить.', { icon: 'fa-dove', tone: 'pink', timeOut: 7000, onClick: () => openStork() });
         return true;
     })().finally(() => { enabling = null; });
     return enabling;
 }
 
+/**
+ * Her message, before the bot answers it: a time skip it opens with moves the story right now,
+ * so the bot already writes from the right day.
+ */
+function onMessageSent(messageId) {
+    const index = Number(messageId);
+    if (!activeIn(stateBefore(index))) return;
+    const result = processUserMessage(index);
+    refreshStatus();
+    if (!result) return;
+    const when = dateLabel(result.state, result.state.clock.day, { day: 'numeric', month: 'long' });
+    trace(`сообщение #${index}: перемотка на ${result.minutes} мин до ответа бота, теперь ${when}`);
+    notify(`Перемотала время по твоему сообщению: теперь в истории ${when}`, { icon: 'fa-forward', tone: 'accent', timeOut: 5000 });
+    announce(result.events);
+}
+
+/**
+ * Read the latest reply anew, by hand: her message before it first (a time skip in it), then the reply itself.
+ * @returns {boolean} there was a reply to read
+ */
+export function rereadLatest() {
+    const chat = getContext().chat ?? [];
+    let index = chat.length - 1;
+    while (index >= 0 && (chat[index]?.is_user || chat[index]?.is_system)) index--;
+    if (index < 0 || isOpening(index) || !activeIn(stateBefore(index))) return false;
+    if (chat[index - 1]?.is_user) processUserMessage(index - 1);
+    trace(`ответ #${index}: перечитываю по кнопке`);
+    rereads.delete(index);
+    pendingReading = readReply(index, { force: true, strict: true }).finally(() => { pendingReading = null; });
+    return true;
+}
+
+/** A new reply, or one continued: whatever it says now is read. */
 async function onMessageReceived(messageId) {
     const index = Number(messageId);
     hideTagIn(messageId);
     if (!activeIn(stateBefore(index)) && !(await autoEnable(index))) return;
-    pendingReading = readReply(index).finally(() => { pendingReading = null; });
+    pendingReading = readReply(index, { strict: true }).finally(() => { pendingReading = null; });
 }
 
-async function onMessageChanged(messageId) {
+/** Her edit is read anew; a swipe or another extension's update only when the story itself is different. */
+async function onMessageChanged(messageId, eventName) {
     const index = Number(messageId);
     setTimeout(() => hideTagIn(messageId), 0);
+    if (getContext().chat?.[index]?.is_user) return onMessageSent(index);
     if (!activeIn(stateBefore(index)) && !(await autoEnable(index))) return;
+    pendingReading = readReply(index, { strict: eventName === 'MESSAGE_EDITED' }).finally(() => { pendingReading = null; });
+}
+
+/**
+ * A chat opened with its latest reply never read (the page was closed while reading, or the reading was lost):
+ * read it now, so the story does not stand still at an older reply.
+ */
+function readMissed() {
+    const chat = getContext().chat ?? [];
+    const index = chat.length - 1;
+    const message = chat[index];
+    if (!message || message.is_user || message.is_system || isOpening(index) || pendingReading) return;
+    if (message.extra?.stork?.[message.swipe_id ?? 0] || !activeIn(stateBefore(index))) return;
+    trace(`ответ #${index} не был прочитан: читаю при открытии чата`);
     pendingReading = readReply(index).finally(() => { pendingReading = null; });
 }
 
@@ -288,22 +404,30 @@ jQuery(() => {
     onStateChange(scheduleBlocks);
     onStateChange(syncDrawer);
     onRetry(retry);
+    onReread(rereadLatest);
     watchChat();
+    watchErrors();
 
     eventSource.on(event_types.GENERATION_AFTER_COMMANDS, onGenerationAfterCommands);
     eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, stripTagsFromPrompt);
     eventSource.on(event_types.GENERATE_AFTER_COMBINE_PROMPTS, stripTagsFromTextPrompt);
     eventSource.on(event_types.MESSAGE_RECEIVED, onMessageReceived);
+    if (event_types.MESSAGE_SENT) eventSource.on(event_types.MESSAGE_SENT, onMessageSent);
     for (const name of ['GENERATION_ENDED', 'GENERATION_STOPPED']) {
         if (event_types[name]) eventSource.on(event_types[name], () => setGenerationState(null));
     }
     for (const name of ['MESSAGE_EDITED', 'MESSAGE_SWIPED', 'MESSAGE_UPDATED']) {
-        if (event_types[name]) eventSource.on(event_types[name], onMessageChanged);
+        if (event_types[name]) eventSource.on(event_types[name], messageId => onMessageChanged(messageId, name));
     }
     for (const name of ['CHAT_CHANGED', 'MESSAGE_DELETED']) {
         if (event_types[name]) {
             eventSource.on(event_types[name], () => {
-                if (name === 'CHAT_CHANGED') resetBlock();
+                if (name === 'CHAT_CHANGED') {
+                    resetBlock();
+                    rereads.clear();
+                    latestRead.clear();
+                    setTimeout(readMissed, 1000);
+                }
                 refreshStatus();
                 changed();
                 setTimeout(hideAllTags, 50);

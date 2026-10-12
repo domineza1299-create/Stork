@@ -8,7 +8,8 @@ stork {
 }
 
 .stk,
-#stork_bar {
+#stork_bar,
+.stk-toasts {
     --stk-text: var(--SmartThemeBodyColor, #ddd);
     --stk-accent: var(--SmartThemeQuoteColor, #8ab4f8);
     --stk-pink: color-mix(in srgb, #e46a9a 80%, var(--stk-text));
@@ -438,7 +439,7 @@ stork {
     gap: 4px;
 }
 
-.stk-cal span {
+.stk-cal > span {
     position: relative;
     display: flex;
     flex-direction: column;
@@ -465,20 +466,55 @@ stork {
     background: transparent;
 }
 
-.stk-cal .is-period { background: color-mix(in srgb, var(--stk-period) 35%, transparent); }
-.stk-cal .is-window { background: color-mix(in srgb, var(--stk-pink) 22%, transparent); }
-.stk-cal .is-ovulation { background: color-mix(in srgb, var(--stk-pink) 50%, transparent); }
-.stk-cal .is-preg { background: color-mix(in srgb, var(--stk-preg) 25%, transparent); }
+/* each kind of day looks different at a glance: period filled red, fertile days a pink ring, ovulation filled pink, PMS warm */
+.stk-cal .is-period { background: color-mix(in srgb, var(--stk-period) 55%, transparent); }
+.stk-cal .is-window {
+    background: color-mix(in srgb, var(--stk-pink) 10%, transparent);
+    box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--stk-pink) 70%, transparent);
+}
+.stk-cal .is-ovulation {
+    background: color-mix(in srgb, var(--stk-pink) 55%, transparent);
+    box-shadow: inset 0 0 0 1.5px var(--stk-pink);
+}
+.stk-cal .is-warm { background: color-mix(in srgb, var(--stk-warm) 18%, transparent); }
+.stk-cal .is-preg { background: color-mix(in srgb, var(--stk-preg) 28%, transparent); }
 .stk-cal .is-future { opacity: 0.65; }
 
 .stk-cal .is-today {
     box-shadow: inset 0 0 0 2px var(--stk-text);
 }
 
+.stk-cal .is-today.is-window,
+.stk-cal .is-today.is-ovulation {
+    box-shadow: inset 0 0 0 2px var(--stk-text), 0 0 0 2px color-mix(in srgb, var(--stk-pink) 70%, transparent);
+}
+
+/* closeness and a test: small icons along the bottom of the day */
+.stk-cal .stk-marks {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 3px;
+    display: flex;
+    justify-content: center;
+    gap: 3px;
+    line-height: 1;
+    pointer-events: none;
+}
+
 .stk-cal .stk-mark {
-    font-size: 0.6em;
     width: auto;
+    font-size: 0.72em;
     color: var(--stk-pink);
+    filter: drop-shadow(0 0 2px rgb(0 0 0 / 0.55));
+}
+
+.stk-cal .stk-mark.fa-vial {
+    color: var(--stk-accent);
+}
+
+.stk-cal > :has(.stk-marks) em {
+    transform: translateY(-5px);
 }
 
 .stk-legend {
@@ -502,9 +538,12 @@ stork {
 }
 
 .stk-legend .is-period { background: var(--stk-period); }
-.stk-legend .is-window { background: color-mix(in srgb, var(--stk-pink) 45%, transparent); }
+.stk-legend .is-window { box-shadow: inset 0 0 0 1.5px var(--stk-pink); }
 .stk-legend .is-ovulation { background: var(--stk-pink); }
+.stk-legend .is-warm { background: color-mix(in srgb, var(--stk-warm) 60%, transparent); }
 .stk-legend .is-preg { background: var(--stk-preg); }
+.stk-legend .stk-ic.fa-heart { color: var(--stk-pink); }
+.stk-legend .stk-ic.fa-vial { color: var(--stk-accent); }
 
 /* Journal */
 .stk-log {
@@ -647,18 +686,70 @@ stork {
     to { transform: translateX(100%); }
 }
 
-/* Status line: wraps instead of cutting off; a retry button when the analysis failed */
+/*
+ * Status line: always one line. When it is narrow (a phone) it switches to short words and first names;
+ * whatever still does not fit ends with «…». A retry button when the analysis failed.
+ */
 #stork_bar {
     position: relative;
-    white-space: normal;
+    white-space: nowrap;
     line-height: 1.35;
+    container-type: inline-size;
 }
 
 #stork_bar .stk-bar-text {
     flex: 1;
     min-width: 0;
-    overflow: visible;
-    text-overflow: clip;
+    display: flex;
+    align-items: center;
+    overflow: hidden;
+}
+
+#stork_bar .stk-bar-when {
+    flex: none;
+    color: var(--stk-muted);
+}
+
+#stork_bar .stk-bar-who {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    min-width: 0;
+    flex: 0 1 auto;
+}
+
+#stork_bar .stk-bar-who b {
+    flex: none;
+}
+
+#stork_bar .stk-bar-st {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+#stork_bar .stk-short {
+    display: none;
+}
+
+@container (max-width: 560px) {
+    #stork_bar .stk-full {
+        display: none;
+    }
+
+    #stork_bar .stk-short {
+        display: inline;
+    }
+
+    #stork_bar .stk-dot-sep {
+        margin: 0 5px;
+    }
+}
+
+@container (max-width: 360px) {
+    #stork_bar .stk-bar-part {
+        display: none;
+    }
 }
 
 #stork_bar.is-failed {
@@ -800,10 +891,6 @@ stork {
     box-shadow: inset 0 0 0 1px var(--stk-line-strong);
 }
 
-.stk-cal button.is-period { background: color-mix(in srgb, var(--stk-period) 35%, transparent); }
-.stk-cal button.is-window { background: color-mix(in srgb, var(--stk-pink) 22%, transparent); }
-.stk-cal button.is-ovulation { background: color-mix(in srgb, var(--stk-pink) 50%, transparent); }
-.stk-cal button.is-today { box-shadow: inset 0 0 0 2px var(--stk-text); }
 .stk-cal button em { font-style: normal; }
 
 .stk-cal .is-picked {
@@ -854,11 +941,6 @@ stork {
     .stk-ib-mark.is-reading .stk-ic {
         animation: none;
     }
-}
-
-/* a name never breaks in the middle */
-.stk-nw {
-    white-space: nowrap;
 }
 
 
@@ -1580,13 +1662,6 @@ stork {
     background: color-mix(in srgb, var(--stk-pink) 8%, var(--stk-glass-hover));
 }
 
-/* the status line: names keep their colour dot */
-#stork_bar .stk-nw {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    margin-right: 5px;
-}
 
 @media (prefers-reduced-motion: reduce) {
     .stk-pn.is-anim.is-open > .stk-pn-body,
@@ -1625,7 +1700,7 @@ stork {
         grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     }
 
-    .stk-cal span,
+    .stk-cal > span,
     .stk-cal button {
         min-height: 32px;
         font-size: 0.82em;
@@ -1957,7 +2032,7 @@ stork {
         grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     }
 
-    .stk-cal span {
+    .stk-cal > span {
         min-height: 32px;
         font-size: 0.82em;
     }
@@ -1969,4 +2044,194 @@ stork {
     .stk-meter {
         grid-template-columns: 80px minmax(0, 1fr);
     }
+}
+
+/* ═══ Notifications: glass cards in the theme's colours, an icon in the colour of the event ═══ */
+.stk-toasts {
+    position: fixed;
+    top: calc(var(--topBarBlockSize, 0px) + env(safe-area-inset-top, 0px) + 10px);
+    right: 12px;
+    z-index: 10050;
+    width: min(380px, calc(100vw - 24px));
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    pointer-events: none;
+    text-align: left;
+    font-size: var(--mainFontSize, 15px);
+}
+
+.stk-toast {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 8px 10px 10px;
+    overflow: hidden;
+    border-radius: 16px;
+    border: 1px solid color-mix(in srgb, var(--tone) 30%, var(--stk-line));
+    background:
+        radial-gradient(130% 160% at 0% 50%, color-mix(in srgb, var(--tone) 17%, transparent), transparent 62%),
+        color-mix(in srgb, var(--SmartThemeBlurTintColor, #1a1a1a) 90%, transparent);
+    backdrop-filter: blur(calc(var(--SmartThemeBlurStrength, 10px) + 10px)) saturate(140%);
+    box-shadow: 0 12px 32px rgb(0 0 0 / 0.3);
+    color: var(--stk-text);
+    font-size: 0.9em;
+    line-height: 1.35;
+    pointer-events: auto;
+    cursor: pointer;
+    touch-action: pan-y;
+    user-select: none;
+    animation: stk-toast-in 0.34s cubic-bezier(0.2, 0.9, 0.3, 1.15) both;
+    transition: transform 0.26s ease, opacity 0.26s ease;
+}
+
+.stk-toast.is-dragging {
+    transition: none;
+}
+
+.stk-toast.is-leaving {
+    opacity: 0;
+    transform: translateY(-10px) scale(0.97);
+}
+
+.stk-toast-ic {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--tone) 18%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tone) 38%, transparent), 0 0 16px color-mix(in srgb, var(--tone) 28%, transparent);
+    color: var(--tone);
+    font-size: 15px;
+}
+
+.stk-toast-text {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.stk-toast-text b {
+    color: var(--tone);
+    font-size: 0.8em;
+    font-weight: 600;
+    letter-spacing: 0.2px;
+}
+
+.stk-toast-text span {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+}
+
+.stk-toast-act {
+    flex: none;
+    padding: 5px 12px;
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--tone) 45%, transparent);
+    background: color-mix(in srgb, var(--tone) 14%, transparent);
+    color: var(--stk-text);
+    font-size: 0.88em;
+    cursor: pointer;
+}
+
+.stk-toast-x {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--stk-muted);
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.stk-toast-x:hover {
+    background: var(--stk-glass-hover);
+    color: var(--stk-text);
+}
+
+/* how much time is left: a thin line along the bottom, it stops while she looks */
+.stk-toast-time {
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    width: 100%;
+    height: 2px;
+    background: var(--tone);
+    opacity: 0.55;
+    transform-origin: left;
+    animation: stk-toast-time linear forwards;
+}
+
+.stk-toast.is-paused .stk-toast-time {
+    animation-play-state: paused;
+}
+
+@keyframes stk-toast-in {
+    from {
+        opacity: 0;
+        transform: translateY(-14px) scale(0.96);
+    }
+}
+
+@keyframes stk-toast-time {
+    to { transform: scaleX(0); }
+}
+
+/* a phone: across the screen under the top bar */
+@media (max-width: 600px) {
+    .stk-toasts {
+        left: 8px;
+        right: 8px;
+        width: auto;
+    }
+
+    .stk-toast {
+        padding: 9px 6px 9px 9px;
+        font-size: 0.88em;
+    }
+
+    .stk-toast-ic {
+        width: 32px;
+        height: 32px;
+        font-size: 14px;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .stk-toast {
+        animation: none;
+        transition: opacity 0.2s ease;
+    }
+
+    .stk-toast.is-leaving {
+        transform: none;
+    }
+
+    .stk-toast-time {
+        display: none;
+    }
+}
+
+/* The problem report, when the browser would not copy it by itself */
+.stk-report {
+    width: 100%;
+    min-height: 55vh;
+    font-family: var(--monoFontFamily, ui-monospace, monospace);
+    font-size: 0.8em;
+    line-height: 1.4;
+    white-space: pre;
+    resize: vertical;
 }
