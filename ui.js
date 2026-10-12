@@ -1111,6 +1111,7 @@ function manualCard(view) {
             <div class="stk-sub">Он</div>
             <div class="stk-actions">
                 ${lifestyle.map(([k, l]) => `<button type="button" class="stk-btn is-ghost stk-do" data-ev="${k}" data-who="char">${l}</button>`).join('')}
+                <button type="button" class="stk-btn is-ghost stk-do" data-ev="told" data-who="char">узнал о беременности</button>
             </div>
         </details>`;
 }

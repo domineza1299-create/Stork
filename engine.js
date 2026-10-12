@@ -3,7 +3,7 @@
  * Pure functions over a plain JSON state, so it is saved with chat messages and tested in Node.
  */
 import {
-    ACT_PROTECTION, createPregnancy, cycleInfo, cycleReturnDay, DOCTOR_VISITS, falseContractionsToday, FEMALE_CONTRACEPTION,
+    ACT_PROTECTION, createPregnancy, cycleInfo, cycleReturnDay, DOCTOR_VISITS, EMERGENCY_PILL_FACTOR, EMERGENCY_PILL_WINDOW_DAYS, falseContractionsToday, FEMALE_CONTRACEPTION,
     femaleConditionFactor, FEMALE_CONDITIONS, femaleState, laborChance, laborProgress, LIFESTYLE, maleState, pillState, POSTPARTUM_RECOVERY_DAYS, pregnancyInfo,
     rollCondomBreak, rollConception, rollCycles, rollTest, startLabor, stressDelay, ultrasoundShowsSex,
 } from './biology.js';
@@ -143,39 +143,25 @@ function processFemaleDay(state, person, rng) {
         return;
     }
 
+    // Acts saved before the dice were thrown at the act itself: they get the old single roll
+    // at the end of ovulation day, so a chat in progress loses nothing
+    const ovulated = day - 1;
+    const pill = pillState(f, ovulated);
+    if (cycleInfo(f, ovulated).relative === 0 && f.rolledCycle !== f.cycleStart && !pill.suppressed) {
+        const legacy = state.acts.filter(a => a.woman === person.key && a.rolled === undefined && a.day >= ovulated - 5 && a.day <= ovulated);
+        if (legacy.length) {
+            f.rolledCycle = f.cycleStart;
+            for (const act of legacy) act.rolled = true;
+            if (throwDice(state, person, legacy, ovulated, pill, rng)) return;
+        }
+    }
+
     if (rollCycles(f, day, rng)) {
         // Irregular after stopping the pill
         if (pillState(f, day).recovering) f.cycleShift += Math.round((rng() * 2 - 1) * 4);
         f.lateNoticed = [];
         const withdrawalBleed = ['pill', 'ring', 'patch'].includes(f.contraception);
         note(state, person, withdrawalBleed ? `${name}: началось кровотечение отмены (перерыв в контрацепции)` : `${name}: начались месячные`);
-    }
-
-    const info = cycleInfo(f, day);
-    const pill = pillState(f, day);
-    // Decisive roll on ovulation day; hormonal contraception used correctly suppresses ovulation
-    if (info.relative === 0 && f.rolledCycle !== f.cycleStart && !pill.suppressed) {
-        f.rolledCycle = f.cycleStart;
-        const partner = partnerOf(state, person.key);
-        const acts = state.acts.filter(a => a.woman === person.key);
-        if (partner && acts.some(a => a.day >= day - 5 && a.day <= day)) {
-            const result = rollConception({
-                acts,
-                ovulationAbsoluteDay: day,
-                femaleAge: person.age,
-                femaleContraception: pill.effective,
-                femaleFactor: femaleConditionFactor(f),
-                male: partner.male,
-                maleAge: partner.age,
-                storyMode: state.storyMode ?? 'realistic',
-                rng,
-            });
-            roll(state, { who: person.key, kind: 'conception', chance: result.chance, result: result.conceived, forced: result.forced });
-            note(state, person, `Бросок на зачатие: ${Math.round(result.chance * 100)}%, ${result.conceived ? 'получилось' : 'не получилось'}`, { model: false, kind: 'roll' });
-            if (result.conceived) {
-                f.pregnancy = createPregnancy({ lmp: f.cycleStart, conceptionDay: day, twins: result.twins, births: f.births, rng });
-            }
-        }
     }
 }
 
@@ -260,6 +246,51 @@ export function advanceTime(state, minutes, rng = Math.random) {
 
 // #endregion
 
+// #region Conception: the dice are thrown at the act
+
+/**
+ * One roll for these acts against the ovulation of this cycle. A success starts a hidden pregnancy dated by that
+ * ovulation: sperm lives up to 5 days, so an act before it can still lead to one.
+ * @returns {boolean} conceived
+ */
+function throwDice(state, person, acts, ovulated, pill, rng) {
+    const f = person.female;
+    const partner = partnerOf(state, person.key);
+    if (!partner) return false;
+    const result = rollConception({
+        acts,
+        ovulationAbsoluteDay: ovulated,
+        femaleAge: person.age,
+        femaleContraception: pill.effective,
+        femaleFactor: femaleConditionFactor(f),
+        male: partner.male,
+        maleAge: partner.age,
+        storyMode: state.storyMode ?? 'realistic',
+        rng,
+    });
+    for (const act of acts) act.conceived = result.conceived;
+    roll(state, { who: person.key, kind: 'conception', chance: result.chance, result: result.conceived, forced: result.forced });
+    note(state, person, `Бросок на зачатие: ${Math.round(result.chance * 100)}%, ${result.conceived ? 'получилось' : 'не получилось'}`, { model: false, kind: 'roll' });
+    if (result.conceived) f.pregnancy = createPregnancy({ lmp: f.cycleStart, conceptionDay: ovulated, twins: result.twins, births: f.births, rng });
+    return result.conceived;
+}
+
+/** The dice for one act, right when it happens: only inside the fertile window of this cycle. */
+function rollAct(state, act, rng) {
+    const woman = state.people[act.woman];
+    const f = woman?.female;
+    act.rolled = true;
+    if (!f || f.pregnancy || f.postpartum) return;
+    const pill = pillState(f, act.day);
+    // hormonal contraception used correctly: no ovulation, nothing to roll
+    if (pill.suppressed) return;
+    const ovulated = f.cycleStart + cycleInfo(f, act.day).ovulation - 1;
+    if (act.day < ovulated - 5 || act.day > ovulated) return;
+    throwDice(state, woman, [act], ovulated, pill, rng);
+}
+
+// #endregion
+
 // #region Events from the story
 
 /** One orgasm of his, once per moment (intimacy and orgasm:char in the same reply are the same one). */
@@ -290,9 +321,12 @@ export function applyEvent(state, event, rng = Math.random) {
                 act.condomBroke = true;
                 note(state, man ?? woman, 'презерватив порвался');
             }
-            if (woman && man) state.acts.push(act);
-            if (man) markOrgasm(man.male, day, absMinute(state.clock));
             note(state, null, `близость (${ACT_PROTECTION[protection].label})`, { model: false, kind: 'intimacy' });
+            if (man) markOrgasm(man.male, day, absMinute(state.clock));
+            if (woman && man) {
+                state.acts.push(act);
+                rollAct(state, act, rng);
+            }
             break;
         }
         case 'condom_broke': {
@@ -300,6 +334,8 @@ export function applyEvent(state, event, rng = Math.random) {
             if (act && act.day === day && !act.condomBroke) {
                 act.condomBroke = true;
                 note(state, null, 'презерватив порвался');
+                // found out after the dice: the act is thrown again, now without protection
+                if (act.rolled) rollAct(state, act, rng);
             }
             break;
         }
@@ -315,7 +351,16 @@ export function applyEvent(state, event, rng = Math.random) {
             break;
         case 'emergency_pill': {
             const woman = who ?? Object.values(state.people).find(p => p.sex === 'female');
-            for (const act of state.acts) if (act.woman === woman?.key && day - act.day <= 3) act.emergencyPillDay = day;
+            for (const act of state.acts) if (act.woman === woman?.key && day - act.day <= EMERGENCY_PILL_WINDOW_DAYS) act.emergencyPillDay = day;
+            // the dice already said yes, but ovulation has not come yet: the pill can still stop it
+            const p = woman?.female?.pregnancy;
+            const lucky = state.acts.some(a => a.woman === woman?.key && a.conceived && a.force !== 'yes' && day - a.day <= EMERGENCY_PILL_WINDOW_DAYS);
+            if (p && !p.knownBy.length && day <= p.conceptionDay && lucky) {
+                const stopped = rng() >= EMERGENCY_PILL_FACTOR;
+                roll(state, { who: woman.key, kind: 'emergency_pill', result: stopped });
+                note(state, woman, `Экстренная таблетка: ${stopped ? 'остановила овуляцию' : 'не сработала'}`, { model: false, kind: 'roll' });
+                if (stopped) woman.female.pregnancy = null;
+            }
             note(state, woman, 'приняла экстренную таблетку', { model: false });
             break;
         }
@@ -347,6 +392,17 @@ export function applyEvent(state, event, rng = Math.random) {
             note(state, woman, `УЗИ: ${p.babies > 1 ? 'двойня' : 'один малыш'}, срок ${week} нед.${p.sexKnown ? `, пол: ${p.sexes.join(' и ')}` : ', пол пока не виден'}`);
             break;
         }
+        case 'told': {
+            // he learns about her pregnancy: she tells him, he sees the test, the doctor says it with him there
+            const woman = Object.values(state.people).find(p => p.sex === 'female');
+            const p = woman?.female.pregnancy;
+            const learner = who ?? (woman ? partnerOf(state, woman.key) : null);
+            // only once she knows herself: he cannot learn what nobody knows yet
+            if (!p || !learner || learner === woman || p.knownBy.includes(learner.key) || !p.knownBy.includes(woman.key)) break;
+            p.knownBy.push(learner.key);
+            note(state, learner, `${learner.name || 'Он'} узнал о беременности`);
+            break;
+        }
         case 'stress':
         case 'illness':
             if (who?.sex === 'female' && !who.female.pregnancy && !who.female.postpartum) {
@@ -368,9 +424,10 @@ export function applyEvent(state, event, rng = Math.random) {
 export const TAG_INSTRUCTION = 'At the very end of the reply add one hidden tracker line (the reader never sees it): '
     + '<stork t="story time that passed in this reply: +15m, +2h, +1d or 0" ev="events, comma-separated, or empty"/>. '
     + 'Events: intimacy:none|condom|withdrawal (intercourse and protection), orgasm:user|char, test:user|char (pregnancy test), '
-    + 'condom_broke, doctor, ultrasound, stress:user|char, illness:user|char (only a sickness with fever — never an injury or a bruise), '
+    + 'condom_broke, doctor, ultrasound, told:char (he learned she is pregnant), stress:user|char, illness:user|char (only a sickness with fever — never an injury or a bruise), '
     + 'alcohol:user|char, smoking:user|char, cannabis:user|char, sauna:user|char, no_sleep:user|char, pill_missed:user|char, emergency_pill:user|char. '
-    + 'If he did not finish inside, write intimacy:withdrawal. Only what actually happened in this reply. Never mention or explain the line.';
+    + 'If he did not finish inside, write intimacy:withdrawal. Events that happened after the time skip of this reply (a week later they made love) go into ev_end="..." instead of ev. '
+    + 'Only what actually happened in this reply. Never mention or explain the line.';
 
 const TAG_RE = /<stork\b([^>]*?)\/?>(?:\s*<\/stork>)?/gi;
 
@@ -389,14 +446,24 @@ export function parseDuration(text) {
  */
 export function parseTag(text) {
     const matches = [...String(text ?? '').matchAll(TAG_RE)];
-    if (!matches.length) return { found: false, minutes: 0, events: [], clock: null };
+    if (!matches.length) return { found: false, minutes: 0, events: [], eventsEnd: [], clock: null };
     const attrs = Object.fromEntries([...matches.at(-1)[1].matchAll(/(\w+)\s*=\s*"([^"]*)"/g)].map(m => [m[1], m[2]]));
-    const events = String(attrs.ev ?? '').split(',').map(s => s.trim()).filter(Boolean).map(token => {
+    return { found: true, minutes: parseDuration(attrs.t), events: parseEvents(attrs.ev), eventsEnd: parseEvents(attrs.ev_end), clock: parseClock(attrs.clock) };
+}
+
+function parseEvents(text) {
+    const events = String(text ?? '').split(',').map(s => s.trim()).filter(Boolean).map(token => {
         const [type, arg] = token.split(':').map(s => s.trim());
         if (type === 'intimacy') return { type, protection: arg || 'none' };
         return { type, who: arg || null };
     });
-    return { found: true, minutes: parseDuration(attrs.t), events, clock: parseClock(attrs.clock) };
+    // a broken condom belongs to the act of the same reply: the dice for it are thrown with the break known
+    const act = events.find(e => e.type === 'intimacy');
+    if (act?.protection === 'condom' && events.some(e => e.type === 'condom_broke')) {
+        act.broke = true;
+        return events.filter(e => e.type !== 'condom_broke');
+    }
+    return events;
 }
 
 export const stripTag = text => String(text ?? '').replace(TAG_RE, '').replace(/\n{3,}$/g, '\n\n').trimEnd();
@@ -430,14 +497,17 @@ const LIFESTYLE_TYPES = SCENE_LIFESTYLE_TYPES;
  */
 export function sceneToTag(scene) {
     const events = [];
+    // the closeness came after the time skip («a week later they made love»): it happens on the new day
+    const late = [];
     const intimacy = scene?.intimacy;
+    const closeness = intimacy?.after_time_skip === true ? late : events;
     if (intimacy) {
         let protection = intimacy.protection === 'condom' ? 'condom' : 'none';
         if (protection === 'none' && intimacy.finished_inside === false) protection = 'withdrawal';
-        events.push(`intimacy:${protection}`);
-        if (protection === 'condom' && intimacy.condom_broke) events.push('condom_broke');
+        closeness.push(`intimacy:${protection}`);
+        if (protection === 'condom' && intimacy.condom_broke) closeness.push('condom_broke');
     }
-    for (const who of scene?.orgasm ?? []) if (who === 'user' || who === 'char') events.push(`orgasm:${who}`);
+    for (const who of scene?.orgasm ?? []) if (who === 'user' || who === 'char') closeness.push(`orgasm:${who}`);
     for (const item of scene?.lifestyle ?? []) {
         // a bruise, a cut or a hangover is not an illness: only a sickness with fever counts as one
         if (item?.type === 'illness' && item.fever !== true) continue;
@@ -446,12 +516,14 @@ export function sceneToTag(scene) {
     if (scene?.pregnancy_test) events.push('test:user');
     if (scene?.doctor_visit) events.push('doctor');
     if (scene?.ultrasound) events.push('ultrasound');
+    // after the test, the doctor and the ultrasound: she learns first, then he can
+    if (scene?.partner_learns_pregnancy === true) events.push('told:char');
     if (scene?.missed_pill) events.push('pill_missed:user');
     if (scene?.emergency_pill) events.push('emergency_pill:user');
     const minutes = Math.max(0, Math.round(Number(scene?.minutes) || 0));
     const clock = parseClock(scene?.clock);
     const clockAttr = clock === null ? '' : ` clock="${String(Math.floor(clock / 60)).padStart(2, '0')}:${String(clock % 60).padStart(2, '0')}"`;
-    return `<stork t="+${minutes}m"${clockAttr} ev="${events.join(',')}"/>`;
+    return `<stork t="+${minutes}m"${clockAttr} ev="${events.join(',')}"${late.length ? ` ev_end="${late.join(',')}"` : ''}/>`;
 }
 
 // #endregion
@@ -547,6 +619,8 @@ function femaleLineRaw(state, person, detailed) {
             return `${name}${age}: pregnant (${info.week} weeks) but does NOT know it yet. Only hints may show: ${hints}. Never name the cause.`;
         }
         const parts = [`${name}${age}: pregnant, ${info.week} weeks (trimester ${info.trimester}), ${days(Math.max(0, info.daysToDue))} to the due date. Belly: ${BELLY_EN[info.belly] ?? info.belly}.`];
+        const partner = partnerOf(state, person.key);
+        if (partner && !p.knownBy.includes(partner.key)) parts.push(`${partner.name || 'He'} does not know about the pregnancy yet.`);
         if (detailed) {
             if (info.symptoms.length) parts.push(`Feels: ${info.symptoms.join(', ')}.`);
             parts.push(`The baby is the size of ${info.baby.compare}${info.kicksFelt ? ', kicks' : ''}.`);
@@ -728,6 +802,8 @@ export function processReply(previousState, replyText, rng = Math.random, scene 
     for (const event of tag.events) applyEvent(state, event, rng);
     const clock = tag.clock ?? extractClock(replyText);
     advanceTime(state, storyMinutes(state, { clock, minutes: tag.minutes, date: scene?.date, part: scene?.part_of_day }), rng);
+    // ...and what came after the time skip happens at the new moment
+    for (const event of tag.eventsEnd ?? []) applyEvent(state, event, rng);
     if (scene) {
         applyPeople(state, scene.people);
         applyInjuries(state, scene.injury);
