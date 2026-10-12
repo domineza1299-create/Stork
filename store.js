@@ -4,7 +4,7 @@
  * per swipe, so a reroll or a deleted message rolls the story back.
  */
 import { saveChatDebounced } from '../../../../script.js';
-import { extension_settings, getContext } from '../../../extensions.js';
+import { extension_settings, extensionNames, getContext } from '../../../extensions.js';
 import { buildStatus, cleanRpText, createState, MINUTES_PER_DAY, parseSkip, processReply, upgradeState } from './engine.js';
 
 export const MODULE = 'stork';
@@ -277,8 +277,23 @@ export const rereadLast = () => rereadHandler?.() ?? false;
 
 // #region Status for the model
 
+/** Other trackers that tell the story model the time themselves: with one of them on, Stork does not add a second clock. */
+const CLOCK_KEEPERS = [
+    { name: 'Mnema', folder: /(^|\/)(5555990|mnema)$/i, on: () => extension_settings.mnema?.enabled !== false },
+    { name: 'Horae', folder: /(^|\/)(SillyTavern-)?Horae$/i, on: () => true },
+];
+/** The other tracker that keeps the time in this SillyTavern, or null. */
+export function otherClock() {
+    const disabled = extension_settings.disabledExtensions ?? [];
+    for (const keeper of CLOCK_KEEPERS) {
+        const folder = (extensionNames ?? []).find(n => keeper.folder.test(n));
+        if (folder && !disabled.includes(folder) && keeper.on()) return keeper.name;
+    }
+    return null;
+}
+
 export function statusText(state, withTag = settings().readMode === 'tag') {
-    return buildStatus(state, { detailed: settings().detailed, neutral: settings().neutral, withTag });
+    return buildStatus(state, { detailed: settings().detailed, neutral: settings().neutral, withTag, withTime: !otherClock() });
 }
 
 /** The state a running generation builds on; the macro must agree with the injected status. */

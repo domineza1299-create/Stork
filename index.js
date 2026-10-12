@@ -8,7 +8,7 @@ import { ensureProfileChoice, forgetReplyCounts } from './connection.js';
 import {
     activeIn, changed, currentState, currentView, getGenerationState, initSettings, MODULE, onReread, onRetry, onStateChange, processMessage,
     processUserMessage, readStatus, refreshStatus, sameReply, setGenerationState, setReadFailed, setReading, setStatus, settings, similarSig,
-    skipBefore, stateBefore, statusText, storyHash, storySig, storyText, updateCurrentState, VIEWS,
+    otherClock, skipBefore, stateBefore, statusText, storyHash, storySig, storyText, updateCurrentState, VIEWS,
 } from './store.js';
 import { buildStatus } from './engine.js';
 import { analyzeCards, readCards } from './cards.js';
@@ -194,8 +194,8 @@ async function readReplyNow(index, { force = false, strict = false, reason = '' 
         if (!similarSig(sigAsked, storySig(now.mes))) {
             trace(`ответ #${index}: текст заметно изменился, пока шёл анализ (другое расширение?): результат всё равно записан, повторного запроса нет`);
         }
-        trace(`ответ #${index} прочитан: ${sceneToTag(scene)}`);
         const result = processMessage(index, sceneToTag(scene), scene);
+        trace(`ответ #${index} прочитан: ${sceneToTag(scene)} · ${timeMove(before, stateBefore(index + 1), scene)}`);
         setReading(null);
         refreshStatus();
         announce(result?.events);
@@ -206,6 +206,14 @@ async function readReplyNow(index, { force = false, strict = false, reason = '' 
     } finally {
         if (readStatus().index === index) setReading(null);
     }
+}
+
+const hhmm = minutes => `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+/** For the log: how the story clock moved with this reply, and why (the analysis' minutes or a time in the text). */
+function timeMove(before, after, scene) {
+    const moved = (after.clock.day - before.clock.day) * 1440 + after.clock.minutes - before.clock.minutes;
+    const why = scene ? `модель: ${Number(scene.minutes) || 0} мин${scene.clock ? `, часы в тексте ${scene.clock}` : ''}` : '';
+    return `время ${hhmm(before.clock.minutes)} → ${hhmm(after.clock.minutes)}${after.clock.day !== before.clock.day ? ` (+${after.clock.day - before.clock.day} дн.)` : ''}, +${moved} мин${why ? ` (${why})` : ''}`;
 }
 
 /** Repeat the analysis of a reply that failed: the same text, read again. */
@@ -489,5 +497,5 @@ jQuery(() => {
     refreshStatus();
     renderStatusBar();
     setTimeout(() => renderBlocks(), 300);
-    logEvent('info', 'stork', `Stork загружен · чтение: ${settings().readMode === 'analyzer' ? 'анализ каждого ответа' : 'скрытая метка'}`);
+    logEvent('info', 'stork', `Stork загружен · чтение: ${settings().readMode === 'analyzer' ? 'анализ каждого ответа' : 'скрытая метка'}${otherClock() ? ` · время РП-модели сообщает ${otherClock()}, Stork свои часы в статус не добавляет` : ''}`);
 });

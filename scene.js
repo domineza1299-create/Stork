@@ -38,8 +38,8 @@ ${cleanRpText(reply).slice(-MAX_MESSAGE_CHARS)}
 
 Return JSON:
 {
-  "minutes": how many minutes of story time passed in these messages (0 if a continuous scene; a night is about 480; "the next morning" about 720; "a week later" 10080),
-  "clock": "HH:MM" time of day at the end of these messages if the text states it (for example a header like 22:40), otherwise null,
+  "minutes": how many minutes of story time these messages take, from the user message to the end of the reply. Time moves in a continuous scene too: estimate it from what is done and said (a few lines of talk 2-5, washing up or a shower 10-20, getting dressed 5-10, a meal 20-40, a drive across town 20-40, a night about 480, "the next morning" about 720, "a week later" 10080). 0 only if it all is one single instant,
+  "clock": "HH:MM" time of day at the END of these messages if the text states it as the time now (a header like 22:40, a clock or phone screen read in the scene), otherwise null. A header copied unchanged from the earlier reply is not the time now: then null,
   "date": "YYYY-MM-DD" only if these messages name the calendar date (a header, a letter, a phone screen, "on the 15th of March"), otherwise null,
   "part_of_day": "morning" | "day" | "evening" | "night" — the time of day these messages end in, if the text makes it clear (light, meals, "at dawn", "late at night"), otherwise null,
   "scene_after_skip": true | false,
@@ -63,6 +63,7 @@ Return JSON:
   }
 }
 Rules:
+- Service lines of other extensions ([MN: …], status blocks, trackers' tags) are not the story: never take the time, the date or events from them.
 - Count intimacy only for actual intercourse between {{user}} and {{char}} in these messages.
 - "scene_after_skip": true when the messages first jump forward in time and the scene with everything in it (closeness, drinking, a test, a doctor, an injury) comes after the jump ("four months later… he pours a whiskey"); false when things happen first and the time passes after them (they made love, then slept till morning), or when there is no jump.
 - "illness" only for a sickness with a raised temperature (flu, an infection, a cold with fever) — then "fever": true. Injuries, bruises, cuts, pain, a hangover or tiredness are NOT an illness: put an injury into "injury", tiredness into "energy".

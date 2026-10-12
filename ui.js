@@ -5,7 +5,7 @@
  */
 import { saveSettingsDebounced } from '../../../../script.js';
 import { cycleInfo, DOCTOR_VISITS, FEMALE_CONTRACEPTION, femaleState, laborProgress, pillState, pregnancyInfo } from './biology.js';
-import { absMinute, acceptPregnancyClaim, dateLabel, editPregnancyClaim, liveNow, maleSnapshot, recoveryLeft, rejectPregnancyClaim, timeLabel, withLive } from './engine.js';
+import { absMinute, acceptPregnancyClaim, clockText, dateLabel, editPregnancyClaim, liveNow, maleSnapshot, recoveryLeft, rejectPregnancyClaim, shortDate, timeLabel, withLive } from './engine.js';
 import { activeIn, changed, currentState, readStatus, refreshStatus, retryRead, settings, updateCurrentState, VIEWS } from './store.js';
 import { applyPersonEdit, setPeriodStart } from './setup.js';
 import {
@@ -136,25 +136,28 @@ function statusOf(state, person) {
 }
 
 /**
- * One line above the input: date, and the most important about each person. Every part comes in two lengths:
- * the line shows the short one when it is narrow (a phone), so it never wraps.
+ * The line above the input: she on the left, the story clock in the middle, he on the right. Square, one line
+ * on any screen: on a narrow one the words get shorter, then the names and the date step back (CSS container queries).
  */
-function statusLineText(state) {
-    const both = (full, short) => `<span class="stk-full">${esc(full)}</span><span class="stk-short">${esc(short)}</span>`;
-    const day = state.clock.day;
-    const part = timeLabel(state.clock.minutes);
-    // the part of the day goes first when even the short line is too long
-    const when = `${both(dateLabel(state, day, { day: 'numeric', month: 'long' }), dateLabel(state, day, { day: 'numeric', month: 'short' }))}<span class="stk-bar-part">, ${esc(part)}</span>`;
-    const who = person => {
-        const s = statusOf(state, person);
+function statusLineHtml(state, rs) {
+    const side = (person, key) => {
+        const st = statusOf(state, person);
         const name = nameOf(person);
-        return `<span class="stk-bar-who"><b>${both(name, name.split(/\s+/)[0])}</b>${dot(s.tone)}<span class="stk-bar-st">${both(s.text, s.short)}</span></span>`;
+        const parts = [
+            `<i class="fa-solid ${key === 'user' ? 'fa-venus' : 'fa-mars'} stk-sb-ic t-${st.tone}" aria-hidden="true"></i>`,
+            `<b class="stk-sb-name">${esc(name.split(/\s+/)[0])}</b>`,
+            `<span class="stk-sb-st t-${st.tone}" title="${esc(st.text)}"><span class="stk-sb-long">${esc(st.text)}</span><span class="stk-sb-short">${esc(st.short)}</span></span>`,
+        ];
+        return `<span class="stk-sb-side is-${key}">${(key === 'user' ? parts : parts.reverse()).join('')}</span>`;
     };
-    const sep = '<span class="stk-dot-sep">·</span>';
-    return `<span class="stk-bar-when">${when}</span>${sep}${who(state.people.user)}${sep}${who(state.people.char)}`;
+    const [hh, mm] = clockText(state.clock.minutes).split(':');
+    const mark = rs.failed
+        ? `<button type="button" class="stk-retry" title="Анализ не прошёл: ${esc(rs.failed.error)}. Нажми, чтобы повторить" aria-label="Повторить анализ"><i class="fa-solid fa-rotate-right"></i></button>`
+        : rs.index !== null ? '<i class="fa-solid fa-feather-pointed stk-sb-reading" title="Читаю последний ответ" aria-hidden="true"></i>' : '';
+    return `${side(state.people.user, 'user')}
+        <span class="stk-sb-mid">${mark}<span class="stk-sb-date">${esc(shortDate(state))}</span><time class="stk-sb-clock">${hh}<i>:</i>${mm}</time><span class="stk-sb-part">${esc(timeLabel(state.clock.minutes))}</span></span>
+        ${side(state.people.char, 'char')}`;
 }
-
-const clockText = state => `${String(Math.floor(state.clock.minutes / 60)).padStart(2, '0')}:${String(state.clock.minutes % 60).padStart(2, '0')}`;
 
 /**
  * Folded infoblock: her on the left, him on the right (each with a word and a colour), the date and time between them.
@@ -170,7 +173,7 @@ export function blockHeadHtml(state, open, reading) {
         : failed ? `<button type="button" class="stk-ib-mark is-failed" data-stk-act="retry" title="Анализ не прошёл: ${esc(failed.error)}. Повторить">${icon('fa-rotate-right')}</button>` : '';
     return `<div class="stk-ib-head" data-stk-act="block-toggle" role="button" tabindex="0" aria-expanded="${open}" title="${open ? 'Свернуть' : 'Развернуть'}">
         <div class="stk-ib-side">${avatarHtml('user', nameOf(u), 'sm')}<div class="stk-ib-who"><b>${esc(nameOf(u))}</b><span title="${esc(su.text)}">${dot(su.tone)}<span>${esc(su.short)}</span></span></div></div>
-        <div class="stk-ib-mid"><b>${esc(dateLabel(state, state.clock.day, { weekday: 'short', day: 'numeric', month: 'short' }))}</b><span>${mark}${clockText(state)}${chevron()}</span></div>
+        <div class="stk-ib-mid"><b>${mark}${clockText(state.clock.minutes)}</b><span>${esc(shortDate(state, state.clock.day, true))}${chevron()}</span></div>
         <div class="stk-ib-side is-right"><div class="stk-ib-who"><b>${esc(nameOf(c))}</b><span title="${esc(sc.text)}"><span>${esc(sc.short)}</span>${dot(sc.tone)}</span></div>${avatarHtml('char', nameOf(c), 'sm')}</div>
     </div>`;
 }
@@ -188,7 +191,6 @@ function syncBar(line, form) {
     line.style.maxWidth = '100%';
     line.style.marginLeft = cs.marginLeft;
     line.style.marginRight = cs.marginRight;
-    line.style.borderRadius = cs.borderRadius && cs.borderRadius !== '0px' ? cs.borderRadius : '';
 }
 function watchForm(line, form) {
     if (!form) return;
@@ -229,8 +231,7 @@ export function renderStatusBar() {
     const rs = readStatus();
     line.classList.toggle('is-reading', rs.index !== null);
     line.classList.toggle('is-failed', !!rs.failed);
-    const retry = rs.failed ? `<button type="button" class="stk-retry" title="Анализ не прошёл: ${esc(rs.failed.error)}. Нажми, чтобы повторить">${icon('fa-rotate-right')}</button>` : '';
-    line.innerHTML = `${icon(rs.index !== null ? 'fa-feather-pointed' : 'fa-moon')}<span class="stk-bar-text">${statusLineText(state)}</span>${retry}`;
+    line.innerHTML = statusLineHtml(state, rs);
 }
 
 // #endregion

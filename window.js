@@ -275,14 +275,28 @@ function renderJournal(state) {
         <div class="stk-card">${rows || '<div class="stk-muted">Пока ничего не произошло.</div>'}</div>`;
 }
 
+/**
+ * The profile the analysis goes through, as a select. compact: names only, for the window's head;
+ * otherwise with the model, for the settings. The same setting either way.
+ */
+function profileSelect(compact = false) {
+    const s = settings();
+    ensureProfileChoice(s, saveSettingsDebounced);
+    const profiles = getProfiles();
+    const missing = s.readProfile && s.readProfile !== CURRENT && !profiles.some(p => p.id === s.readProfile);
+    return `<select class="text_pole stk-set${compact ? ' stk-head-profile' : ''}" data-k="readProfile" title="Через какой профиль Stork читает РП" aria-label="Профиль подключения для анализа">
+        ${missing ? '<option value="" selected>— профиль не найден —</option>' : ''}
+        ${profiles.map(p => `<option value="${esc(p.id)}" ${p.id === s.readProfile ? 'selected' : ''}>${esc(p.name)}${compact ? '' : ` · ${esc(p.model || '?')}`}</option>`).join('')}
+        <option value="${CURRENT}" ${s.readProfile === CURRENT ? 'selected' : ''}>${compact ? 'Основное подключение' : 'Основное подключение SillyTavern (та же модель, что пишет РП)'}</option>
+    </select>`;
+}
+
 /** How Stork reads the role-play: a separate request per reply through a chosen profile, or a hidden tag from the story model. */
 function readingCard() {
     const s = settings();
     const analyzer = s.readMode === 'analyzer';
-    if (analyzer) ensureProfileChoice(s, saveSettingsDebounced);
-    const profiles = getProfiles();
-    const missing = analyzer && s.readProfile && s.readProfile !== CURRENT && !profiles.some(p => p.id === s.readProfile);
     const used = analyzer ? describeChoice(s.readProfile) : '';
+    const iconBtn = (cls, ic, title) => `<button type="button" class="stk-icon-btn ${cls}" title="${title}" aria-label="${title}">${icon(ic)}</button>`;
     return `
         <div class="stk-card">
             <div class="stk-card-title">${icon('fa-book-open-reader')}Чтение РП</div>
@@ -293,16 +307,15 @@ function readingCard() {
                 </select>
             </label>
             ${analyzer ? `
-                <label class="stk-field"><span>Профиль подключения для анализа</span>
-                    <select class="text_pole stk-set" data-k="readProfile">
-                        ${missing ? '<option value="" selected>— профиль не найден, выбери заново —</option>' : ''}
-                        ${profiles.map(p => `<option value="${esc(p.id)}" ${p.id === s.readProfile ? 'selected' : ''}>${esc(p.name)} · ${esc(p.model || '?')}</option>`).join('')}
-                        <option value="${CURRENT}" ${s.readProfile === CURRENT ? 'selected' : ''}>Основное подключение SillyTavern (та же модель, что пишет РП)</option>
-                    </select>
-                </label>
+                <div class="stk-field"><span>Профиль подключения для анализа</span>
+                    <div class="stk-profile-row">
+                        ${profileSelect()}
+                        ${iconBtn('stk-test-connection', 'fa-plug-circle-check', 'Проверить подключение')}
+                        ${iconBtn('stk-refresh-profiles', 'fa-rotate', 'Обновить список профилей')}
+                    </div>
+                </div>
                 <div class="stk-hint ${used.startsWith('ОШИБКА') ? 'is-warn' : ''}">${icon(used.startsWith('ОШИБКА') ? 'fa-triangle-exclamation' : 'fa-plug')}Запросы идут: ${esc(used)}</div>
                 ${!connectionManagerOn() ? `<div class="stk-hint is-warn">${icon('fa-triangle-exclamation')}Connection Manager выключен: профилей нет, доступно только основное подключение.</div>` : ''}
-                <div class="stk-actions"><button type="button" class="stk-btn is-ghost stk-test-connection">${icon('fa-plug-circle-check')}Проверить подключение</button></div>
                 <div class="stk-hint">${icon('fa-coins')}Ровно один короткий запрос после каждого нового ответа бота, около 1-2 тысяч токенов (плюс один раз чтение карточек, когда Stork включается в чате). Свайп назад, правки других расширений и картинки запросов не тратят. Дешевле всего выбрать недорогую модель отдельным профилем.</div>`
                 : `<div class="stk-hint">${icon('fa-circle-info')}РП-модель в конце ответа ставит скрытую строчку. Бесплатно, но модель иногда забывает: тогда Stork предложит отметить сам.</div>`}
         </div>`;
@@ -392,8 +405,8 @@ function renderSettings(state, view) {
     const s = settings();
     const toggle = (key, title, note) => `<label class="stk-setting"><div><b>${title}</b><span class="stk-muted">${note}</span></div><input type="checkbox" class="stk-set" data-k="${key}" ${s[key] ? 'checked' : ''}></label>`;
     return `
-        ${viewCard()}
         ${readingCard()}
+        ${viewCard()}
         <div class="stk-card">
             <div class="stk-card-title">${icon('fa-comments')}Для модели</div>
             ${toggle('detailed', 'Подробный статус', 'самочувствие, влечение, малыш; выключи, чтобы экономить токены')}
@@ -433,7 +446,7 @@ export async function openStork({ tab } = {}) {
     const view = { randomDay: 1 + Math.floor(Math.random() * 28), tab: tab ?? 'today', monthOffset: 0, editing: false, analysis: null, manualAge: {}, editPerson: null, pickDay: null };
     const $root = $(`
         <div class="stk stk-window">
-            <div class="stk-head"><div class="stk-brand">${icon('fa-dove')}<span>Stork</span></div><span class="stk-switch-slot"></span></div>
+            <div class="stk-head"><div class="stk-brand">${icon('fa-dove')}<span>Stork</span></div><span class="stk-profile-slot"></span><span class="stk-switch-slot"></span></div>
             <nav class="stk-tabs">${TABS.map(t => `<button type="button" class="stk-tab" data-tab="${t.id}">${icon(t.icon)}<span>${t.label}</span></button>`).join('')}</nav>
             <div class="stk-panel"></div>
         </div>`);
@@ -441,6 +454,8 @@ export async function openStork({ tab } = {}) {
     const render = () => {
         const state = currentState();
         $root.find('.stk-switch-slot').html(switchHtml());
+        // the profile right in the head: switching between profiles without opening the settings
+        $root.find('.stk-profile-slot').html(settings().readMode === 'analyzer' ? profileSelect(true) : '');
         const setup = view.editing;
         // not on here yet, turned off here, or off everywhere: a short explanation instead of an empty tracker
         const waiting = !setup && (!settings().enabled || !state.setupDone || state.chatOff || state.minorBlocked);
@@ -530,6 +545,11 @@ export async function openStork({ tab } = {}) {
             logEvent('info', 'настройки', `${this.dataset.k === 'readMode' ? 'чтение РП' : 'анализ через'}: ${this.dataset.k === 'readMode' ? this.value : describeChoice(this.value)}`);
         }
         saveSettingsDebounced();
+        // the connection and the log change nothing in the story: no chat save, only a redraw
+        if (['readProfile', 'debugPrompts'].includes(this.dataset.k)) {
+            if (!view.touched) render();
+            return;
+        }
         // Before setup nothing is written into the chat: just redraw
         if (currentState().setupDone) updateCurrentState(() => { });
         else refreshStatus();
@@ -537,15 +557,21 @@ export async function openStork({ tab } = {}) {
         render();
     });
     $root.on('click', '.stk-log-clear', () => clearLog());
+    $root.on('click', '.stk-refresh-profiles', () => {
+        const count = getProfiles().length;
+        logEvent('info', 'настройки', `список профилей обновлён: ${count}`);
+        render();
+        notifyDone(count ? `Профилей подключения: ${count}` : 'Профилей нет: создай их в Connection Manager', { icon: 'fa-rotate', timeOut: 2500 });
+    });
     $root.on('click', '.stk-test-connection', async function () {
-        const button = $(this).prop('disabled', true);
+        const button = $(this).prop('disabled', true).addClass('is-busy');
         try {
             const text = await requestModel({ kind: 'test', reason: 'кнопка «Проверить подключение»', choice: settings().readProfile, system: 'You are a connection test.', prompt: 'Reply with one word: OK', maxTokens: 300 });
             notifyDone(`Подключение работает (${describeChoice(settings().readProfile)}): ${text.trim().slice(0, 60)}`, { icon: 'fa-plug-circle-check', timeOut: 7000 });
         } catch (error) {
             notifyWarn(`Подключение не работает: ${errorText(error)}`, { timeOut: 12000 });
         } finally {
-            button.prop('disabled', false);
+            button.prop('disabled', false).removeClass('is-busy');
         }
     });
     $root.on('click', '.stk-reread', () => {

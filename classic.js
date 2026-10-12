@@ -4,7 +4,7 @@
  * both use come from common.js, the buttons from handleAction in ui.js.
  */
 import { DOCTOR_VISITS, FEMALE_CONTRACEPTION, femaleState, laborProgress, pillState, pregnancyInfo } from './biology.js';
-import { absMinute, dateLabel, liveNow, storyDate, timeLabel, withLive } from './engine.js';
+import { absMinute, clockText, dateLabel, liveNow, shortDate, storyDate, timeLabel, withLive } from './engine.js';
 import {
     ACT_LABEL, agoWord, avatarUrl, babyWeight, capitalize, claimCard, clamp01, cycleFields, esc, femaleLevels, femaleTraits, icon, initials, KIND_ICON, knowsPregnancy,
     levelWord, maleLevels, monthGrid, nameOf, nextInCycle, personFields, pickBar, pregnancyLibidoWhy, readingLine, recentEvents, riskyLately, upcomingRows,
@@ -168,9 +168,9 @@ export function sharedCard(state) {
 
 /** Both of them side by side (one under the other on a phone), then what they share. */
 export function renderNow(state, view = {}) {
-    const hh = String(Math.floor(state.clock.minutes / 60)).padStart(2, '0'), mm = String(state.clock.minutes % 60).padStart(2, '0');
+    const weekday = storyDate(state)?.toLocaleDateString('ru-RU', { weekday: 'long' }) ?? '';
     return `
-        <div class="stk-clock"><b>${esc(capitalize(dateLabel(state)))}</b><span class="stk-muted">${hh}:${mm} · ${esc(timeLabel(state.clock.minutes))}${state.dateSure ? '' : ' · дата пока примерная'}</span></div>
+        <div class="stk-clock"><div><b class="stk-clock-time">${clockText(state.clock.minutes)}</b><span>${esc(shortDate(state, state.clock.day, true))}</span></div><span class="stk-muted">${esc([weekday, timeLabel(state.clock.minutes), state.dateSure ? '' : 'дата пока примерная'].filter(Boolean).join(' · '))}</span></div>
         ${readingLine()}
         ${claimCard(state)}
         <div class="stk-duo">

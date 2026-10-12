@@ -427,6 +427,13 @@ describe('story clock from the text', async () => {
     it('moves to the written time instead of guessing', () => {
         assert.equal(minutesToClock(at(8), at(22, 40), 600), at(14, 40));
         assert.equal(minutesToClock(at(22, 40), at(22, 35), 0), 0, 'a few minutes earlier is the same moment');
+        assert.equal(minutesToClock(at(10, 45), at(10, 45), 5), 5, 'a header copied unchanged: the scene still takes its minutes');
+        assert.equal(extractClock('[MN: clock: 10:45 | location: кухня]\nОн налил кофе.'), null, "Mnema's line is not the story's clock");
+        assert.equal(extractClock('<horae>time:10:45</horae>\n**12:10, кухня**'), at(12, 10), "Horae's block is skipped, the real header is read");
+        const t = processReply(couple(), 'Она вышла из ванной. [MN: clock: 10:45]\n<stork t="+7m" ev=""/>', () => 0.5).state.clock.minutes;
+        assert.equal(t, at(9, 7), 'the time of the reply comes from Stork, not from the other tracker');
+        assert.equal(minutesToClock(at(10, 45), at(10, 40), 15), 15, 'a header lagging behind: the minutes of the scene count');
+        assert.equal(minutesToClock(at(10, 40), at(10, 45), 2), 5, 'a header ahead of now: the header wins');
         assert.equal(minutesToClock(at(23), at(7), 480), at(8), 'past midnight to the morning');
         assert.equal(minutesToClock(at(22), at(9), 10080), 7 * 1440 + at(11), 'a week later at nine');
     });

@@ -809,6 +809,7 @@ export function sceneToTag(scene) {
  */
 export function cleanRpText(text) {
     return String(text ?? '')
+        .replace(FOREIGN_TRACKERS, '')
         .replace(/<(script|style)\b[\s\S]*?<\/\1>/gi, '')
         .replace(/<[^>]*>/g, '')
         .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
@@ -816,6 +817,13 @@ export function cleanRpText(text) {
         .replace(/\n{3,}/g, '\n\n')
         .trim();
 }
+
+/**
+ * Service lines other trackers make the story model write into the reply. They are not the story, and their time
+ * is theirs: Stork keeps its own clock and must not take it from them.
+ * [MN: clock: 10:45 | …] — Mnema (5555990); <horae>…</horae>, <horaeevent>…</horaeevent> — Horae; HTML comments.
+ */
+const FOREIGN_TRACKERS = /\[MN:[^\]]*\]|<(horae\w*)\b[^>]*>[\s\S]*?<\/\1\s*>|<!--[\s\S]*?-->/gi;
 
 /** Reads "22:40" style time into minutes of the day, or null. */
 export function parseClock(text) {
@@ -1054,13 +1062,24 @@ export function dateLabel(state, day = state.clock.day, options = { day: 'numeri
     return date ? date.toLocaleDateString('ru-RU', options) : `день ${day + 1}`;
 }
 
+/** The part of the day in words, with the same boundaries as Mnema (5555990): both blocks name it alike. */
 export function timeLabel(minutes) {
-    const h = Math.floor(minutes / 60);
-    if (h < 5) return 'ночь';
+    const h = Math.floor(minutes / 60) % 24;
+    if (h < 6) return 'ночь';
     if (h < 12) return 'утро';
-    if (h < 17) return 'день';
-    if (h < 22) return 'вечер';
-    return 'ночь';
+    if (h < 18) return 'день';
+    return 'вечер';
+}
+
+/** «10:45» */
+export const clockText = minutes => `${String(Math.floor(minutes / 60) % 24).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+
+const SHORT_MONTHS = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
+/** «16 янв» or «16 янв 2026»: the date the way Mnema (5555990) writes it, so the two blocks read the same. */
+export function shortDate(state, day = state.clock.day, withYear = false) {
+    const date = storyDate(state, day);
+    if (!date) return `день ${day + 1}`;
+    return `${date.getDate()} ${SHORT_MONTHS[date.getMonth()]}${withYear ? ` ${date.getFullYear()}` : ''}`;
 }
 
 /**
@@ -1071,11 +1090,12 @@ export function timeLabel(minutes) {
  * @param {boolean} [options.withTag] Ask for the tracker tag
  * @param {boolean} [options.guide] How to play the states out: for the story model, not for the scene analysis
  */
-export function buildStatus(state, { detailed = true, neutral = false, withTag = true, guide = true } = {}) {
+export function buildStatus(state, { detailed = true, neutral = false, withTag = true, guide = true, withTime = true } = {}) {
     const hh = String(Math.floor(state.clock.minutes / 60)).padStart(2, '0'), mm = String(state.clock.minutes % 60).padStart(2, '0');
     const date = storyDate(state);
     const when = date ? `${date.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })}, ${hh}:${mm}` : `story day ${state.clock.day + 1}, ${hh}:${mm}`;
-    const lines = [`[Stork — the bodies of ${state.people.char.name || '{{char}}'} and ${state.people.user.name || '{{user}}'}; background for the story, not its topic | ${when}]`];
+    // withTime false: another tracker already tells the story model the time, and two clocks only confuse it
+    const lines = [`[Stork — the bodies of ${state.people.char.name || '{{char}}'} and ${state.people.user.name || '{{user}}'}; background for the story, not its topic${withTime ? ` | ${when}` : ''}]`];
     for (const person of [state.people.char, state.people.user]) {
         lines.push(person.sex === 'female' ? femaleLine(state, person, detailed) : maleLine(state, person, detailed));
     }
@@ -1174,8 +1194,9 @@ export function storyMinutes(state, { clock = null, minutes = 0, date = null, pa
 export function minutesToClock(nowMinutes, clockMinutes, guessedMinutes = 0) {
     const days = Math.floor(Math.max(0, guessedMinutes) / MINUTES_PER_DAY);
     let delta = (clockMinutes - nowMinutes + MINUTES_PER_DAY) % MINUTES_PER_DAY;
-    // A header a few minutes "earlier" than now is the same moment, not tomorrow
-    if (!days && delta > 18 * 60 && guessedMinutes < 6 * 60) delta = 0;
+    // The same time as now, or a few minutes "earlier": a header the story model copied without moving it, not tomorrow.
+    // Then the time these messages took counts, so the clock does not stand still for the whole scene.
+    if (!days && (delta === 0 || delta > 18 * 60) && guessedMinutes < 6 * 60) return Math.max(0, guessedMinutes);
     return days * MINUTES_PER_DAY + delta;
 }
 

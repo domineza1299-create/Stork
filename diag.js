@@ -8,7 +8,7 @@ import { cycleInfo } from './biology.js';
 import { describeChoice } from './connection.js';
 import { cleanRpText, dateLabel } from './engine.js';
 import { logEvent, logText } from './log.js';
-import { currentState, readStatus, settings } from './store.js';
+import { currentState, otherClock, readStatus, settings } from './store.js';
 
 const cut = (text, max) => {
     const s = String(text ?? '');
@@ -96,6 +96,7 @@ export async function buildReport() {
     out.push(`анализ через: ${describeChoice(s.readProfile)} (сохранено: ${s.readProfile || 'не выбрано'})`);
     out.push(`основное подключение: ${ctx.mainApi ?? '?'} · ${ctx.onlineStatus ?? '?'}${ctx.mainApi === 'openai' ? ` · ${ctx.getChatCompletionModel?.() ?? '?'}` : ''}`);
     out.push(`статус для модели: ${s.placement}, подробный ${s.detailed}, мягкие слова ${s.neutral} · включён везде: ${s.enabled} · промпты в журнал: ${!!s.debugPrompts}`);
+    out.push(`время в статусе для РП-модели: ${otherClock() ? `не передаётся, время ведёт ${otherClock()}` : 'передаётся'} · служебные строки [MN: …] и <horae> Stork не читает`);
     out.push(`сейчас: ${rs.index !== null ? `читаю ответ #${rs.index}` : 'не читаю'}${rs.failed ? ` · последняя ошибка: ответ #${rs.failed.index}: ${rs.failed.error}` : ''}`);
     out.push(`другие расширения: ${extensionNames.filter(n => !/Stork$/i.test(n)).map(n => n.replace(/^third-party\//, '')).join(', ') || 'нет'}`);
 
