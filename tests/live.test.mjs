@@ -87,6 +87,45 @@ describe('story time, not real time', () => {
         state.clock.minutes = at(20);
         assert.equal(storyMinutes(state, { part: 'evening', minutes: 15 }), 15);
     });
+
+    it('takes the world of the story from the first reply that tells it, and keeps it', async () => {
+        const { careOf } = await import('../biology.js');
+        let state = couple();
+        state = read(state, { minutes: 5 });
+        assert.equal(careOf(state).title, 'Врач', 'nothing said yet: modern');
+        state = read(state, { minutes: 5, era: 'past' });
+        assert.equal(careOf(state).title, 'Повитуха');
+        state = read(state, { minutes: 5, era: 'modern' });
+        assert.equal(careOf(state).title, 'Повитуха', 'one reply saying otherwise does not switch it');
+    });
+
+    it('asks once when the story names another date, and moves only the dates when she agrees', async () => {
+        const { setStoryDate } = await import('../setup.js');
+        const { shortDate, dateWithWeekday } = await import('../engine.js');
+        let state = couple();
+        setStoryDate(state, '2026-05-10');
+        const cycleStart = state.people.user.female.cycleStart;
+        state = read(state, { minutes: 5, date: '2026-06-03' });
+        assert.equal(shortDate(state), '10 мая', 'nothing moves by itself');
+        const hints = s => s.log.filter(e => e.kind === 'date_hint');
+        assert.equal(hints(state).length, 1);
+        assert.equal(hints(state)[0].date, '2026-06-03');
+        assert.match(hints(state)[0].text, /В истории 3 июня, а у Stork 10 мая/);
+        state = read(state, { minutes: 5, date: '2026-06-03' });
+        assert.equal(hints(state).length, 1, 'the same difference is asked once');
+        // «Переставить», pressed twice: the second tap changes nothing
+        const hint = hints(state)[0];
+        assert.equal(setStoryDate(state, hint.date, hint.day), true);
+        setStoryDate(state, hint.date, hint.day);
+        assert.equal(shortDate(state), '3 июн');
+        assert.equal(dateWithWeekday(state, undefined, { long: true }), 'среда, 3 июн');
+        assert.equal(state.people.user.female.cycleStart, cycleStart, 'the cycle keeps its days');
+        state = read(state, { minutes: 5, date: '2026-06-03' });
+        assert.equal(hints(state).length, 1, 'agreed: no more questions');
+        state = read(state, { minutes: 4 * 1440, date: '2026-06-07', clock: '10:00' });
+        assert.equal(shortDate(state), '7 июн', 'a time skip to a later date still moves on by itself');
+        assert.equal(hints(state).length, 1);
+    });
 });
 
 describe('the story drives how they are', () => {

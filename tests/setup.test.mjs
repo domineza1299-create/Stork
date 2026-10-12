@@ -81,6 +81,46 @@ describe('the setup form in the window', async () => {
         assert.equal(state.storySummary, 'итог');
         assert.equal(state.setupDone, true);
     });
+
+    it('in a chat already set up changes only what she edits', async () => {
+        const { advanceTime, MINUTES_PER_DAY: DAY } = await import('../engine.js');
+        const { cycleInfo } = await import('../biology.js');
+        const state = setupFromAnalysis(createState(), { user: { age: 26, cycle_day: 3 }, char: { age: 30 }, start: { date: '2026-03-01', time: '20:00', date_guessed: false } }, cards, () => 0.5);
+        advanceTime(state, 16 * DAY + 150);
+        const f = state.people.user.female;
+        f.cycleShift = 3;
+        f.syncedDay = 5;
+        const before = { start: state.startDate, day: state.clock.day, minutes: state.clock.minutes, cycleStart: f.cycleStart };
+        // the form as the window draws it for this chat, with one box ticked
+        const shown = Math.min(f.cycleLength, cycleInfo(f, state.clock.day).cycleDay);
+        const iso = new Date(Date.parse(`${state.startDate}T12:00:00Z`) + state.clock.day * 86400000).toISOString().slice(0, 10);
+        const hhmm = `${String(Math.floor(state.clock.minutes / 60)).padStart(2, '0')}:${String(state.clock.minutes % 60).padStart(2, '0')}`;
+        applySetupForm(state, {
+            userName: 'Нина', charName: 'Лёша', userAge: 26, charAge: 30, cycleLength: String(f.cycleLength), periodLength: String(f.periodLength), cycleDay: String(shown),
+            irregularity: '0', flow: 'normal', contraception: 'none', userSmoker: true, fertility: 'normal', startDate: iso, time: hhmm, storyMode: 'realistic', era: 'modern',
+        });
+        assert.deepEqual({ start: state.startDate, day: state.clock.day, minutes: state.clock.minutes, cycleStart: f.cycleStart }, before);
+        assert.equal(f.cycleShift, 3, 'the delay stays');
+        assert.equal(f.syncedDay, 5);
+        assert.equal(f.smoker, true, 'the ticked box is saved');
+        applySetupForm(state, { userName: 'Нина', charName: 'Лёша', userAge: 26, charAge: 30, cycleLength: '28', cycleDay: '2', startDate: iso, time: hhmm });
+        assert.equal(cycleInfo(f, state.clock.day).cycleDay, 2, 'a day she changed starts the cycle again');
+        assert.equal(f.cycleShift, 0);
+    });
+
+    it('keeps a date she typed herself: a date the story names later does not move the calendar', async () => {
+        const { storyMinutes, shortDate } = await import('../engine.js');
+        const typed = applySetupForm(createState(), { userName: 'Нина', charName: 'Лёша', startDate: '2026-05-10', dateChanged: true, time: '10:00' });
+        assert.equal(typed.dateSure, true);
+        storyMinutes(typed, { date: '2026-06-03', minutes: 5 });
+        assert.equal(shortDate(typed, typed.clock.day), '10 мая', 'a stray date in a reply is not taken');
+        const untouched = applySetupForm(createState(), { userName: 'Нина', charName: 'Лёша', startDate: '2026-10-12', time: '10:00' });
+        assert.equal(untouched.dateSure, false, 'a date left as the form guessed it waits for the story');
+        storyMinutes(untouched, { date: '2026-06-03', minutes: 5 });
+        assert.equal(shortDate(untouched, untouched.clock.day), '3 июн');
+        const fromCard = applySetupForm(createState(), { userName: 'Нина', charName: 'Лёша', startDate: '2024-03-15' }, { start: { date: '2024-03-15', date_guessed: false } });
+        assert.equal(fromCard.dateSure, true, 'a date the card states is sure');
+    });
 });
 
 describe('quick edits', async () => {
@@ -113,5 +153,23 @@ describe('quick edits', async () => {
         assert.equal(setPeriodStart(state, 52), false, 'not in the future');
         const pregnant = setupFromAnalysis(createState(), { user: { pregnant: true, pregnancy_weeks: 10 } }, cards);
         assert.equal(setPeriodStart(pregnant, 0), false);
+    });
+
+    it('keeps a pregnancy she does not know of hidden: her cycle stays editable, the delay follows it', async () => {
+        const { advanceTime, applyEvent, MINUTES_PER_DAY: DAY } = await import('../engine.js');
+        const state = setupFromAnalysis(createState(), { user: { cycle_day: 1 } }, cards, () => 0.5);
+        advanceTime(state, 12 * DAY);
+        applyEvent(state, { type: 'intimacy', protection: 'none', force: 'yes' });
+        advanceTime(state, 10 * DAY, () => 0.9);
+        const f = state.people.user.female;
+        assert.ok(f.pregnancy && !f.pregnancy.knownBy.length);
+        assert.equal(setPeriodStart(state, state.clock.day - 1), true, 'the calendar takes it like any other day');
+        applyPersonEdit(state, 'user', { cycleDay: '3' });
+        assert.equal(cycleInfo(f, state.clock.day).cycleDay, 3, 'the pencil too');
+        assert.ok(f.pregnancy, 'the pregnancy stays');
+        advanceTime(state, 25 * DAY, () => 0.9);
+        assert.ok(!state.log.some(e => /задержка/.test(e.text)), 'no delay before the cycle she sees runs out');
+        advanceTime(state, 2 * DAY, () => 0.9);
+        assert.ok(state.log.some(e => /задержка месячных 1 день/.test(e.text)));
     });
 });
