@@ -13,7 +13,8 @@ export { guessAge } from './engine.js';
 
 /** Card texts are capped so one analysis stays cheap. */
 const MAX_CHARS_PER_FIELD = 6000;
-const ANALYSIS_MAX_TOKENS = 900;
+// A ceiling, not a cost: a plain model writes a few hundred; a thinking model spends its thoughts from the same budget
+const ANALYSIS_MAX_TOKENS = 2500;
 
 const clip = text => cleanRpText(text).slice(0, MAX_CHARS_PER_FIELD);
 

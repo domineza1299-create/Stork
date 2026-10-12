@@ -7,10 +7,10 @@ import { callGenericPopup, POPUP_TYPE } from '../../../popup.js';
 import { cycleInfo, ERAS, FEMALE_CONDITIONS, FEMALE_CONTRACEPTION, MALE_FERTILITY, PERIOD_FLOW, STORY_MODES } from './biology.js';
 import { analyzeCards, guessAge, readCards } from './cards.js';
 import { connectionManagerOn, CURRENT, describeChoice, ensureProfileChoice, errorText, getProfiles, requestModel } from './connection.js';
-import { advanceTime, applyEvent, dateLabel, MINUTES_PER_DAY, parseClock, storyDate } from './engine.js';
+import { advanceTime, applyEvent, dateLabel, dateWithWeekday, MINUTES_PER_DAY, parseClock } from './engine.js';
 import { currentState, currentView, onStateChange, refreshStatus, rereadLast, settings, updateCurrentState, VIEWS } from './store.js';
-import { ADULT_AGE, applySetupForm, setPeriodStart } from './setup.js';
-import { capitalize, esc, icon, nameOf, years } from './common.js';
+import { ADULT_AGE, applySetupForm, setPeriodStart, setStoryDate } from './setup.js';
+import { capitalize, esc, icon, nameOf, storyIsoDate, years } from './common.js';
 import { eventLook, notify, notifyDone, notifyWarn } from './notify.js';
 import { downloadReport } from './diag.js';
 import { clearLog, logCountText, logEvent, logListHtml, onLogChange } from './log.js';
@@ -48,10 +48,12 @@ export function announce(events) {
         seen.add(event.text);
         const name = event.who ? people[event.who]?.name : '';
         const own = !!name && event.text.startsWith(`${name}: `);
-        // the story spoke of a period the cycle does not expect: she decides, with one tap
+        // the story spoke of a period the cycle does not expect, or named another date: she decides, with one tap
         const shift = event.kind === 'period_hint'
             ? { timeOut: 15000, action: 'Сдвинуть цикл', onClick: () => { updateCurrentState(state => setPeriodStart(state, event.day)); notifyDone('Цикл сдвинут: месячные с этого дня', { icon: 'fa-droplet', tone: 'period' }); } }
-            : { timeOut: 7000, onClick: () => openStork() };
+            : event.kind === 'date_hint'
+                ? { timeOut: 15000, action: 'Переставить', onClick: () => { updateCurrentState(state => setStoryDate(state, event.date, event.day)); notifyDone(`Дата переставлена: ${dateWithWeekday(currentState(), undefined, { long: true })}`, { icon: 'fa-calendar-day' }); } }
+                : { timeOut: 7000, onClick: () => openStork() };
         notify(capitalize(own ? event.text.slice(name.length + 2) : event.text), { ...eventLook(event), title: own ? name : 'Stork', ...shift });
     }
 }
@@ -87,20 +89,22 @@ function logCard() {
 // #region Setup
 
 /**
- * Names always come from SillyTavern; ages from the analysis, the card text, or (if nothing found) a small field.
+ * Names always come from SillyTavern. Ages: in a chat already set up, what Stork keeps (the pencil may have changed it);
+ * otherwise from the analysis, the card text, or (if nothing found) a small field.
  * @returns {{user: {name: string, age: number|null}, char: {name: string, age: number|null}}}
  */
-function cardPeople(view) {
+function cardPeople(view, state) {
     const cards = readCards();
     const analysis = view.analysis?.data;
+    const kept = key => (state.setupDone ? state.people[key].age : null);
     return {
-        user: { name: cards.userName, age: analysis?.user?.age ?? guessAge(cards.userText) },
-        char: { name: cards.charName, age: analysis?.char?.age ?? guessAge(cards.charText) },
+        user: { name: cards.userName, age: kept('user') ?? analysis?.user?.age ?? guessAge(cards.userText) },
+        char: { name: cards.charName, age: kept('char') ?? analysis?.char?.age ?? guessAge(cards.charText) },
     };
 }
 
-function ageBadge(key, person, view) {
-    if (person.age) return `<span class="stk-muted">${years(person.age)}, из карточки</span>`;
+function ageBadge(key, person, view, state) {
+    if (person.age) return `<span class="stk-muted">${years(person.age)}${state.setupDone ? '' : ', из карточки'}</span>`;
     const manual = view.manualAge?.[key] ?? '';
     return `<label class="stk-inline-age"><span class="stk-muted">возраст не нашёлся в карточке:</span><input class="text_pole stk-age" data-person="${key}" type="number" min="18" max="90" value="${esc(manual)}" placeholder="лет"></label>`;
 }
@@ -128,16 +132,12 @@ function renderAnalysis(view) {
         </div>`;
 }
 
-/** ISO date (yyyy-mm-dd) of the current story day, for the date field. */
-function storyIsoDate(state) {
-    const date = storyDate(state);
-    if (!date) return new Date().toISOString().slice(0, 10);
-    const pad = n => String(n).padStart(2, '0');
-    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-}
-
+/**
+ * The setup form. The first time it is filled from the analysis of the cards and the story opening;
+ * in a chat already set up (no analysis then) from what Stork keeps now, so a save changes only what she edits.
+ */
 function renderSetup(state, view) {
-    const people = cardPeople(view);
+    const people = cardPeople(view, state);
     const f = state.people.user.female;
     const m = state.people.char.male;
     const pre = view.analysis?.data;
@@ -151,15 +151,17 @@ function renderSetup(state, view) {
     const fromAnalysis = parseClock(pre?.start?.time);
     const minutes = fromAnalysis ?? state.clock.minutes;
     const startTime = `${pad(Math.floor(minutes / 60))}:${pad(minutes % 60)}`;
+    // remembered: a date she types over this one is hers and is kept
+    view.shownDate = /^\d{4}-\d{2}-\d{2}$/.test(pre?.start?.date ?? '') ? pre.start.date : storyIsoDate(state);
     const ageOf = key => people[key].age ?? (Number(view.manualAge?.[key]) || null);
     const minors = ['user', 'char'].filter(key => ageOf(key) && ageOf(key) < ADULT_AGE);
     const checked = (value, fallback) => ((value ?? fallback) ? 'checked' : '');
 
     return `
-        ${renderAnalysis(view)}
+        ${state.setupDone ? '' : renderAnalysis(view)}
         ${readingCard()}
         <div class="stk-card">
-            <div class="stk-card-title">${icon('fa-venus')}${esc(people.user.name || '{{user}}')}${ageBadge('user', people.user, view)}</div>
+            <div class="stk-card-title">${icon('fa-venus')}${esc(people.user.name || '{{user}}')}${ageBadge('user', people.user, view, state)}</div>
             ${preUser.pregnant ? `<div class="stk-row">${icon('fa-person-pregnant')}по карточке беременна${preUser.pregnancy_weeks ? `, ${preUser.pregnancy_weeks} нед.` : ''}: Stork начнёт с этого срока</div>` : ''}
             <div class="stk-grid">
                 <label class="stk-field"><span>Длина цикла, дней</span><input class="text_pole stk-in" data-k="cycleLength" type="number" min="21" max="35" value="${cycleLength}"></label>
@@ -194,7 +196,7 @@ function renderSetup(state, view) {
             <label class="stk-check"><input type="checkbox" class="stk-in" data-k="userDrinker" ${checked(preUser.drinker, f.drinker)}>часто выпивает</label>
         </div>
         <div class="stk-card">
-            <div class="stk-card-title">${icon('fa-mars')}${esc(people.char.name || '{{char}}')}${ageBadge('char', people.char, view)}</div>
+            <div class="stk-card-title">${icon('fa-mars')}${esc(people.char.name || '{{char}}')}${ageBadge('char', people.char, view, state)}</div>
             <label class="stk-field"><span>Фертильность</span>
                 <select class="text_pole stk-in" data-k="fertility">
                     ${Object.entries(MALE_FERTILITY).map(([k, v]) => `<option value="${k}" ${fertility === k ? 'selected' : ''}>${v.label}</option>`).join('')}
@@ -209,7 +211,7 @@ function renderSetup(state, view) {
         <div class="stk-card">
             <div class="stk-card-title">${icon('fa-clock')}История</div>
             <div class="stk-grid">
-                <label class="stk-field"><span>Дата в истории сейчас</span><input class="text_pole stk-story" data-k="startDate" type="date" value="${esc(/^\d{4}-\d{2}-\d{2}$/.test(pre?.start?.date ?? '') ? pre.start.date : storyIsoDate(state))}"></label>
+                <label class="stk-field"><span>Дата в истории сейчас</span><input class="text_pole stk-story" data-k="startDate" type="date" value="${esc(view.shownDate)}"></label>
                 <label class="stk-field"><span>Время в истории сейчас</span><input class="text_pole stk-story" data-k="time" type="time" value="${esc(startTime)}"></label>
                 <label class="stk-field"><span>Шансы зачатия</span>
                     <select class="text_pole stk-story" data-k="storyMode">
@@ -228,12 +230,15 @@ function renderSetup(state, view) {
             : `<div class="stk-actions"><button type="button" class="stk-btn is-primary stk-setup-save">${icon('fa-check')}${state.setupDone ? 'Сохранить' : 'Включить Stork в этом чате'}</button></div>`}`;
 }
 
+/** What the setup form shows from the story: when it changes, the form is behind. */
+const formStamp = state => `${state.setupDone}|${state.clock.day}|${state.clock.minutes}|${state.startDate}|${state.log.length}|${state.people.user.female.cycleStart}`;
+
 const SETUP_FIELDS = ['cycleLength', 'periodLength', 'cycleDay', 'irregularity', 'flow', 'contraception', 'pmsSevere', 'painfulPeriods', 'pcos', 'endometriosis',
     'userSmoker', 'userDrinker', 'fertility', 'smoker', 'drinker', 'startDate', 'time', 'storyMode', 'era'];
 
 /** Reads the setup form (and the names and ages from the cards) into the state. */
 function applySetup($root, state, view) {
-    const people = cardPeople(view);
+    const people = cardPeople(view, state);
     const values = {
         userName: people.user.name,
         charName: people.char.name,
@@ -244,6 +249,7 @@ function applySetup($root, state, view) {
         const el = $root.find(`[data-k="${key}"]`)[0];
         if (el) values[key] = el.type === 'checkbox' ? el.checked : el.value;
     }
+    values.dateChanged = 'startDate' in (view.edits ?? {}) && !!values.startDate && values.startDate !== view.shownDate;
     applySetupForm(state, values, view.analysis?.data ?? null);
 }
 
@@ -335,7 +341,7 @@ function readingCard() {
                 <div class="stk-hint">${icon('fa-clock-rotate-left')}От каждого ответа в память идёт одна строка «когда и что было», не весь текст. Так анализ помнит прошлые дни и не путает время. Больше ответов — дольше память, но дороже каждый запрос.</div>
                 ${!connectionManagerOn() ? `<div class="stk-hint is-warn">${icon('fa-triangle-exclamation')}Connection Manager выключен: профилей нет, доступно только основное подключение.</div>` : ''}
                 <div class="stk-hint">${icon('fa-coins')}Ровно один короткий запрос после каждого нового ответа бота, около 1-2 тысяч токенов (плюс один раз чтение карточек, когда Stork включается в чате). Свайп назад, правки других расширений и картинки запросов не тратят. Дешевле всего выбрать недорогую модель отдельным профилем.</div>`
-                : `<div class="stk-hint">${icon('fa-circle-info')}РП-модель в конце ответа ставит скрытую строчку. Бесплатно, но модель иногда забывает: тогда Stork предложит отметить сам.</div>`}
+                : `<div class="stk-hint">${icon('fa-circle-info')}РП-модель в конце ответа ставит скрытую строчку. Бесплатно, но модель иногда забывает: тогда у часов появится значок, а Stork предложит перейти на анализ.</div>`}
         </div>`;
 }
 
@@ -487,6 +493,18 @@ export async function openStork({ tab } = {}) {
             settings: renderSettings,
         }[view.tab](state, view);
         $root.find('.stk-panel').html(html);
+        // the setup form drawn again (an age, the analysis, a reply read): what she changed goes back on top,
+        // the fields she did not touch show Stork's newest values
+        if (setup) {
+            view.formStamp = formStamp(state);
+            for (const [key, value] of Object.entries(view.edits ?? {})) {
+                const el = $root.find(`.stk-in[data-k="${key}"], .stk-story[data-k="${key}"]`)[0];
+                if (!el) continue;
+                if (el.type === 'checkbox') el.checked = value;
+                else el.value = value;
+            }
+            view.stale = false;
+        }
     };
 
     /** Reads the cards and the story opening as soon as setup is shown: no button to press. */
@@ -512,7 +530,13 @@ export async function openStork({ tab } = {}) {
     const startSetup = () => {
         view.editing = true;
         view.touched = false;
-        runAnalysis();
+        view.edits = {};
+        view.stale = false;
+        // a chat already set up: the form shows what Stork keeps now, the cards are not read again
+        if (currentState().setupDone) {
+            view.analysis = null;
+            render();
+        } else runAnalysis();
     };
 
     // buttons shared with the infoblock: pencils, calendar, retry, the switch, the view settings
@@ -525,7 +549,12 @@ export async function openStork({ tab } = {}) {
         render();
     });
     // Setup
-    $root.on('input change', '.stk-in, .stk-story', () => { view.touched = true; });
+    // every field she changes is remembered: only these are hers, the rest follow the story
+    const edited = el => {
+        view.touched = true;
+        (view.edits ??= {})[el.dataset.k] = el.type === 'checkbox' ? el.checked : el.value;
+    };
+    $root.on('input change', '.stk-in, .stk-story', function () { edited(this); });
     $root.on('input', '.stk-age', function () {
         view.manualAge[this.dataset.person] = this.value;
     });
@@ -534,14 +563,19 @@ export async function openStork({ tab } = {}) {
     $root.on('click', '.stk-random-day', function () {
         const $card = $(this).closest('.stk-card');
         const length = Number($card.find('[data-k="cycleLength"]').val()) || 28;
-        $card.find('[data-k="cycleDay"]').val(1 + Math.floor(Math.random() * length));
+        const field = $card.find('[data-k="cycleDay"]').val(1 + Math.floor(Math.random() * length))[0];
+        if (field) edited(field);
     });
     $root.on('click', '.stk-setup-save', () => {
+        // a reply was read while the form was open: first the newest time and cycle, with her changes on top
+        if (view.stale) render();
+        const wasOn = currentState().setupDone;
         updateCurrentState(state => applySetup($root, state, view));
         view.editing = false;
+        view.edits = {};
         view.tab = 'today';
         render();
-        notifyDone('Stork включён в этом чате', { icon: 'fa-dove', timeOut: 2500 });
+        notifyDone(wasOn ? 'Сохранено' : 'Stork включён в этом чате', { icon: wasOn ? 'fa-check' : 'fa-dove', timeOut: 2500 });
     });
     $root.on('click', '.stk-edit-setup, .stk-setup-now', startSetup);
     // Manual fixes
@@ -614,6 +648,16 @@ export async function openStork({ tab } = {}) {
 
     // a background update (a reply was read) must not wipe a form she is typing in
     const unsubscribe = onStateChange(() => {
+        // the setup form stays as she is filling it; the newest time and cycle come in when she saves
+        if (view.editing) {
+            // a reading started or a setting changed: nothing in the form is behind
+            if (formStamp(currentState()) === view.formStamp) return;
+            view.stale = true;
+            if (!$root.find('.stk-stale').length) {
+                $root.find('.stk-panel').prepend(`<div class="stk-hint stk-stale">${icon('fa-feather-pointed')}Stork прочитал новый ответ: время и дата обновятся при сохранении, твои правки останутся.</div>`);
+            }
+            return;
+        }
         if ($root[0].contains(document.activeElement) && document.activeElement.closest?.('.stk-edit')) return;
         render();
     });

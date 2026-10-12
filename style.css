@@ -2411,8 +2411,7 @@ div.stk-log-row {
     border-inline: 1px solid var(--stk-line);
 }
 
-.stk-sb-date,
-.stk-sb-part {
+.stk-sb-date {
     color: var(--stk-muted);
 }
 
@@ -2457,7 +2456,8 @@ div.stk-log-row {
     border-bottom-color: color-mix(in srgb, var(--stk-warm) 60%, transparent);
 }
 
-#stork_bar .stk-retry {
+#stork_bar .stk-retry,
+#stork_bar .stk-notag {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -2473,10 +2473,9 @@ div.stk-log-row {
     cursor: pointer;
 }
 
-/* narrower: short words, no part of the day; then signs without names; then the time alone in the middle */
+/* narrower: short words; then signs without names; then the time alone in the middle */
 @container (max-width: 560px) {
-    .stk-sb-long,
-    .stk-sb-part {
+    .stk-sb-long {
         display: none;
     }
 
@@ -2574,6 +2573,48 @@ div.stk-log-row {
 .stk-clock-time {
     font-size: 1.35em;
     font-variant-numeric: tabular-nums;
+}
+
+/* The date next to the clock: it reads as text, a tap sets it by hand */
+.stk-date-btn {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 6px;
+    padding: 2px 6px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+}
+
+.stk-date-btn .stk-ic {
+    color: var(--stk-muted);
+    font-size: 0.8em;
+}
+
+.stk-date-btn:hover {
+    background: var(--stk-glass-hover);
+}
+
+.stk-clock.stk-edit {
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-start;
+}
+
+.stk-date-in {
+    width: auto;
+    min-width: 0;
+    flex: 0 1 170px;
+    margin: 0;
+}
+
+/* the two buttons stay together: next to the date, or under it on a phone */
+.stk-date-acts {
+    display: flex;
+    gap: 6px;
 }
 
 /* ═══ The latest event in one line (the infoblock's «Сейчас») ═══ */

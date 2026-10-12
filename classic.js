@@ -4,11 +4,11 @@
  * both use come from common.js, the buttons from handleAction in ui.js.
  */
 import { careOf, FEMALE_CONTRACEPTION, femaleState, laborProgress, pillState, pregnancyInfo } from './biology.js';
-import { absMinute, clockText, dateLabel, liveNow, shortDate, storyDate, timeLabel, withLive } from './engine.js';
+import { absMinute, clockText, dateLabel, dateWithWeekday, liveNow, storyDate, withLive } from './engine.js';
 import {
-    ACT_LABEL, agoWord, avatarUrl, babyWeight, capitalize, claimCard, clamp01, cycleFields, esc, femaleLevels, femaleTraits, icon, initials, KIND_ICON, knowsPregnancy,
+    ACT_LABEL, agoWord, avatarUrl, babyWeight, capitalize, claimCard, clamp01, cycleFields, cycleOpen, esc, femaleLevels, femaleTraits, icon, initials, KIND_ICON, knowsPregnancy,
     levelWord, maleLevels, monthGrid, nameOf, nextInCycle, personFields, pickBar, pregnancyLibidoWhy, readingLine, recentEvents, riskyLately, upcomingRows,
-    pregnancyFacts, spermPanel, upcomingWhen, years,
+    pregnancyFacts, spermPanel, storyIsoDate, upcomingWhen, years,
 } from './common.js';
 
 // #region Rings around the avatars
@@ -166,11 +166,28 @@ export function sharedCard(state) {
     </div>`;
 }
 
+/**
+ * The clock on top: the time and the date with its weekday (the clock itself says whether it is morning or night).
+ * A tap on the date sets it by hand: only the calendar's dates move, the cycle keeps its days.
+ */
+function clockHtml(state, view) {
+    const time = `<b class="stk-clock-time">${clockText(state.clock.minutes)}</b>`;
+    if (view.editDate) {
+        return `<div class="stk-clock stk-edit">${time}
+            <input class="text_pole stk-date-in" data-f="date" type="date" value="${esc(storyIsoDate(state))}" aria-label="Дата в истории">
+            <span class="stk-date-acts">
+                <button type="button" class="stk-btn is-primary" data-stk-act="save-date">${icon('fa-check')}Сохранить</button>
+                <button type="button" class="stk-btn is-ghost" data-stk-act="cancel-date">Отмена</button>
+            </span>
+        </div>`;
+    }
+    return `<div class="stk-clock"><div>${time}<button type="button" class="stk-date-btn" data-stk-act="edit-date" title="Поменять дату">${esc(dateWithWeekday(state, state.clock.day, { long: true, withYear: true }))}${icon('fa-pen')}</button></div></div>`;
+}
+
 /** Both of them side by side (one under the other on a phone), then what they share. */
 export function renderNow(state, view = {}) {
-    const weekday = storyDate(state)?.toLocaleDateString('ru-RU', { weekday: 'long' }) ?? '';
     return `
-        <div class="stk-clock"><div><b class="stk-clock-time">${clockText(state.clock.minutes)}</b><span>${esc(shortDate(state, state.clock.day, true))}</span></div><span class="stk-muted">${esc([weekday, timeLabel(state.clock.minutes), state.dateSure ? '' : 'дата пока примерная'].filter(Boolean).join(' · '))}</span></div>
+        ${clockHtml(state, view)}
         ${readingLine()}
         ${claimCard(state)}
         <div class="stk-duo">
@@ -224,7 +241,7 @@ export function calendarCore(state, view, { upcomingDates = true } = {}) {
 
 export function renderCalendar(state, view) {
     const f = state.people.user.female;
-    const editable = !f.pregnancy && !f.postpartum;
+    const editable = cycleOpen(state.people.user);
     // the strip of the cycle lives in the infoblock; here the month grid says the same, bigger
     return `
         ${calendarCore(state, view)}

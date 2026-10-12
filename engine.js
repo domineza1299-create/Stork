@@ -83,6 +83,8 @@ export function createState({ userName = '', charName = '', startDate = null, st
         live: {},
         // true once the story itself named a date: before that the calendar date is only a guess
         dateSure: false,
+        // how many days the story's date runs ahead of Stork's (behind if negative), last time she was asked
+        dateHintOffset: null,
     };
 }
 
@@ -92,6 +94,7 @@ export function upgradeState(state) {
     // 0.15 kept the story so far inside every state; now each reply keeps only its own line (see lastLine)
     delete state.timeline;
     state.dateSure ??= false;
+    state.dateHintOffset ??= null;
     for (const person of Object.values(state.people ?? {})) {
         const m = person.male;
         if (m && !Array.isArray(m.orgasms)) m.orgasms = m.lastOrgasmMinute !== null && m.lastOrgasmMinute !== undefined ? [m.lastOrgasmMinute] : [];
@@ -110,8 +113,8 @@ function partnerOf(state, key) {
     return other.sex === 'male' ? other : null;
 }
 
-function note(state, person, text, { model = true, kind = 'event' } = {}) {
-    const entry = { day: state.clock.day, minutes: state.clock.minutes, who: person?.key ?? null, text, kind };
+function note(state, person, text, { model = true, kind = 'event', ...extra } = {}) {
+    const entry = { day: state.clock.day, minutes: state.clock.minutes, who: person?.key ?? null, text, kind, ...extra };
     state.log.push(entry);
     if (state.log.length > MAX_LOG) state.log.splice(0, state.log.length - MAX_LOG);
     if (model) state.pending.push({ who: person?.key ?? null, text, day: state.clock.day });
@@ -189,7 +192,8 @@ function processPregnancyDay(state, person, rng) {
     if (p.spottingDay === day) note(state, person, `${name}: лёгкие мажущие выделения не в срок, она не придаёт им значения`);
 
     // Missed period: she notices on day 1, 3 and 7 of the delay
-    const expected = p.lmp + f.cycleLength + (f.cycleShift ?? 0);
+    // counted from the cycle she sees: bleeding she took for a period (marked by her or by the story) moves it later
+    const expected = Math.max(p.lmp, f.cycleStart) + f.cycleLength + (f.cycleShift ?? 0);
     const late = day - expected + 1;
     if (!knows && [1, 3, 7].includes(late) && !f.lateNoticed.includes(late)) {
         f.lateNoticed.push(late);
@@ -373,7 +377,8 @@ export function applyEvent(state, event, rng = Math.random) {
             // the story plainly shows her period: the cycle follows the story, not the count
             const woman = Object.values(state.people).find(p => p.sex === 'female');
             const f = woman?.female;
-            if (!f || f.pregnancy || f.postpartum) break;
+            // a pregnancy she does not know of: bleeding she takes for a period moves the cycle she sees, the pregnancy stays
+            if (!f || f.postpartum || f.pregnancy?.knownBy.includes(woman.key)) break;
             const now = cycleInfo(f, day);
             if (now.phase === 'menstruation') break;
             // The cycle was set by her or by the story lately: a period in its first half is far more likely a slip
@@ -1119,6 +1124,13 @@ export function dateLabel(state, day = state.clock.day, options = { day: 'numeri
     return date ? date.toLocaleDateString('ru-RU', options) : `день ${day + 1}`;
 }
 
+/** «ср, 4 мар» (long: «среда, 4 мар»): the short date with its weekday; «день 5» when there is no date. */
+export function dateWithWeekday(state, day = state.clock.day, { long = false, withYear = false } = {}) {
+    const date = storyDate(state, day);
+    const short = shortDate(state, day, withYear);
+    return date ? `${date.toLocaleDateString('ru-RU', { weekday: long ? 'long' : 'short' })}, ${short}` : short;
+}
+
 /** The part of the day in words, with the same boundaries as Mnema (5555990): both blocks name it alike. */
 export function timeLabel(minutes) {
     const h = Math.floor(minutes / 60) % 24;
@@ -1187,6 +1199,7 @@ export function processReply(previousState, replyText, rng = Math.random, scene 
     const clock = tag.clock ?? extractClock(replyText);
     const skip = scene?.scene_after_skip === true || (tag.eventsEnd ?? []).length > 0;
     advanceTime(state, storyMinutes(state, { clock, minutes: tag.minutes, date: scene?.date, part: scene?.part_of_day, skip }), rng);
+    dateHint(state, scene?.date);
     // ...and what came after the time skip happens at the new moment
     for (const event of tag.eventsEnd ?? []) applyEvent(state, event, rng);
     if (scene) {
@@ -1196,8 +1209,12 @@ export function processReply(previousState, replyText, rng = Math.random, scene 
         // this reply's line of the story so far: the analysis of later replies gathers them from the chat
         const line = typeof scene.summary === 'string' ? scene.summary.trim().replace(/\s+/g, ' ').slice(0, 160) : '';
         if (line) state.lastLine = { at: absMinute(state.clock), text: line };
-        // the world of the story, once: the care of a pregnancy follows it (a doctor or a midwife)
-        if (!state.eraSet && (scene.era === 'past' || scene.era === 'modern')) state.era = scene.era === 'past' ? 'traditional' : 'modern';
+        // the world of the story, once (when the cards did not tell it): the care of a pregnancy follows it
+        // (a doctor or a midwife). Kept from then on, so the visits do not switch; she can change it in the setup form
+        if (!state.eraSet && (scene.era === 'past' || scene.era === 'modern')) {
+            state.era = scene.era === 'past' ? 'traditional' : 'modern';
+            state.eraSet = true;
+        }
     }
     // He was recovering and the story time ran out: tell once
     const man = state.people.char;
@@ -1214,6 +1231,25 @@ export function partOf(minutes) {
     const h = Math.floor(minutes / 60);
     return h < 5 ? 'night' : h < 12 ? 'morning' : h < 17 ? 'day' : h < 22 ? 'evening' : 'night';
 }
+/**
+ * The story named a date for now that Stork's calendar does not have (it is sure of its own date and the story did
+ * not move there by a time skip): she is asked once per difference, nothing moves by itself. The log entry carries
+ * the date the story named for its day, for the button «Переставить».
+ */
+function dateHint(state, date) {
+    const named = dayOfDate(state, date);
+    if (named === null) return;
+    const offset = named - state.clock.day;
+    if (offset === 0) {
+        state.dateHintOffset = null;
+        return;
+    }
+    if (state.dateHintOffset === offset) return;
+    state.dateHintOffset = offset;
+    const label = day => dateLabel(state, day, { day: 'numeric', month: 'long' });
+    note(state, null, `В истории ${label(named)}, а у Stork ${label(state.clock.day)}`, { model: false, kind: 'date_hint', date });
+}
+
 /** Story day of an ISO date, by the chat's start date. */
 function dayOfDate(state, iso) {
     if (!state.startDate || !/^\d{4}-\d{2}-\d{2}$/.test(String(iso ?? ''))) return null;

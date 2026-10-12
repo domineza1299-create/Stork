@@ -8,8 +8,8 @@ import { cleanRpText, DIAGNOSES, SCENE_LIFESTYLE_TYPES as LIFESTYLE_TYPES } from
 export { sceneToTag } from './engine.js';
 export { errorText } from './connection.js';
 
-// Room for the notes about both people; models with reasoning need more
-const SCENE_MAX_TOKENS = 1200;
+// A ceiling, not a cost: a plain model writes a few hundred; a thinking model spends its thoughts from the same budget
+const SCENE_MAX_TOKENS = 2500;
 /** Only the newest part of long messages matters for what just happened. */
 const MAX_MESSAGE_CHARS = 5000;
 const MAX_EARLIER_CHARS = 1500;

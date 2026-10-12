@@ -5,11 +5,11 @@
  */
 import { saveSettingsDebounced } from '../../../../script.js';
 import { careOf, cycleInfo, FEMALE_CONTRACEPTION, femaleState, laborProgress, pillState, pregnancyInfo } from './biology.js';
-import { absMinute, acceptPregnancyClaim, clockText, editPregnancyClaim, liveNow, maleSnapshot, recoveryLeft, rejectPregnancyClaim, shortDate, timeLabel, withLive } from './engine.js';
-import { activeIn, changed, currentState, readStatus, refreshStatus, retryRead, settings, updateCurrentState, VIEWS } from './store.js';
-import { applyPersonEdit, setPeriodStart } from './setup.js';
+import { absMinute, acceptPregnancyClaim, clockText, dateWithWeekday, editPregnancyClaim, liveNow, maleSnapshot, recoveryLeft, rejectPregnancyClaim, shortDate, withLive } from './engine.js';
+import { activeIn, changed, currentState, missingTags, readStatus, refreshStatus, rereadLast, retryRead, settings, updateCurrentState, VIEWS } from './store.js';
+import { applyPersonEdit, setPeriodStart, setStoryDate } from './setup.js';
 import {
-    agoWord, avatarUrl, babyWeight, capitalize, claimCard, clamp01, cycleFields, cycleStrip, esc, femaleLevels, femaleTraits, icon, initials, irregularityWord,
+    agoWord, avatarUrl, babyWeight, capitalize, claimCard, clamp01, cycleFields, cycleOpen, cycleStrip, esc, femaleLevels, femaleTraits, icon, initials, irregularityWord,
     KIND_ICON, knowsPregnancy, levelWord, maleLevels, nameOf, nextInCycle, personFields, pregnancyLibidoWhy, riskyLately,
     pregnancyFacts, spermGrade, spermPanel, years,
 } from './common.js';
@@ -131,6 +131,39 @@ function statusOf(state, person) {
     return { text: word, short: vigor > 0.85 ? 'бодр' : word, tone: vigor > 0.65 ? 'accent' : 'calm' };
 }
 
+// #region The bot left no tag (the tag mode)
+
+const NO_TAG = 'Бот не поставил метку Stork: время и события из этого ответа не записаны. Нажми, чтобы перейти на отдельный анализ';
+const replies = n => (n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? 'ответа' : 'ответов');
+
+/**
+ * Stork stands still while the bot forgets its tag: say so, with a way out. «Переключить» moves to the analysis
+ * of each reply and reads the latest one at once, so nothing of it is lost.
+ */
+export function offerAnalyzer(count = missingTags()) {
+    // short: a notification shows three lines, the button is the question
+    const text = count > 1
+        ? `${count} ${replies(count)} подряд без метки: время и события не записываются.`
+        : 'Время и события из этого ответа не записаны.';
+    notify(text, {
+        title: count > 1 ? 'Бот не ставит метку Stork' : 'Бот не поставил метку Stork',
+        icon: 'fa-tag',
+        tone: 'warm',
+        timeOut: 15000,
+        action: 'Включить анализ',
+        onClick: () => {
+            settings().readMode = 'analyzer';
+            saveSettingsDebounced();
+            refreshStatus();
+            changed();
+            rereadLast();
+            notifyDone('Теперь Stork читает каждый ответ отдельным анализом', { icon: 'fa-book-open-reader', timeOut: 4000 });
+        },
+    });
+}
+
+// #endregion
+
 /**
  * The line above the input: she on the left, the story clock in the middle, he on the right. Square, one line
  * on any screen: on a narrow one the words get shorter, then the names and the date step back (CSS container queries).
@@ -149,9 +182,10 @@ function statusLineHtml(state, rs) {
     const [hh, mm] = clockText(state.clock.minutes).split(':');
     const mark = rs.failed
         ? `<button type="button" class="stk-retry" title="Анализ не прошёл: ${esc(rs.failed.error)}. Нажми, чтобы повторить" aria-label="Повторить анализ"><i class="fa-solid fa-rotate-right"></i></button>`
-        : rs.index !== null ? '<i class="fa-solid fa-feather-pointed stk-sb-reading" title="Читаю последний ответ" aria-hidden="true"></i>' : '';
+        : rs.index !== null ? '<i class="fa-solid fa-feather-pointed stk-sb-reading" title="Читаю последний ответ" aria-hidden="true"></i>'
+            : missingTags() ? `<button type="button" class="stk-notag" title="${NO_TAG}" aria-label="${NO_TAG}"><i class="fa-solid fa-tag"></i></button>` : '';
     return `${side(state.people.user, 'user')}
-        <span class="stk-sb-mid">${mark}<span class="stk-sb-date">${esc(shortDate(state))}</span><time class="stk-sb-clock">${hh}<i>:</i>${mm}</time><span class="stk-sb-part">${esc(timeLabel(state.clock.minutes))}</span></span>
+        <span class="stk-sb-mid">${mark}<span class="stk-sb-date">${esc(dateWithWeekday(state))}</span><time class="stk-sb-clock">${hh}<i>:</i>${mm}</time></span>
         ${side(state.people.char, 'char')}`;
 }
 
@@ -166,10 +200,11 @@ export function blockHeadHtml(state, open, reading) {
     const sc = statusOf(state, c);
     const failed = readStatus().failed;
     const mark = reading ? `<span class="stk-ib-mark is-reading" title="Читаю последний ответ">${icon('fa-feather-pointed')}</span>`
-        : failed ? `<button type="button" class="stk-ib-mark is-failed" data-stk-act="retry" title="Анализ не прошёл: ${esc(failed.error)}. Повторить">${icon('fa-rotate-right')}</button>` : '';
+        : failed ? `<button type="button" class="stk-ib-mark is-failed" data-stk-act="retry" title="Анализ не прошёл: ${esc(failed.error)}. Повторить">${icon('fa-rotate-right')}</button>`
+            : missingTags() ? `<button type="button" class="stk-ib-mark is-failed" data-stk-act="notag" title="${NO_TAG}">${icon('fa-tag')}</button>` : '';
     return `<div class="stk-ib-head" data-stk-act="block-toggle" role="button" tabindex="0" aria-expanded="${open}" title="${open ? 'Свернуть' : 'Развернуть'}">
         <div class="stk-ib-side">${avatarHtml('user', nameOf(u), 'sm')}<div class="stk-ib-who"><b>${esc(nameOf(u))}</b><span title="${esc(su.text)}">${dot(su.tone)}<span>${esc(su.short)}</span></span></div></div>
-        <div class="stk-ib-mid"><b>${mark}${clockText(state.clock.minutes)}</b><span>${esc(shortDate(state, state.clock.day, true))}${chevron()}</span></div>
+        <div class="stk-ib-mid"><b>${mark}${clockText(state.clock.minutes)}</b><span>${esc(dateWithWeekday(state, state.clock.day, { withYear: true }))}${chevron()}</span></div>
         <div class="stk-ib-side is-right"><div class="stk-ib-who"><b>${esc(nameOf(c))}</b><span title="${esc(sc.text)}"><span>${esc(sc.short)}</span>${dot(sc.tone)}</span></div>${avatarHtml('char', nameOf(c), 'sm')}</div>
     </div>`;
 }
@@ -216,6 +251,11 @@ export function renderStatusBar() {
             if (event.target.closest('.stk-retry')) {
                 event.stopPropagation();
                 retryRead();
+                return;
+            }
+            if (event.target.closest('.stk-notag')) {
+                event.stopPropagation();
+                offerAnalyzer();
                 return;
             }
             openStork();
@@ -362,7 +402,7 @@ function maleCard(state, person, view = {}) {
  * Under it, only when it matters: closeness without protection in her fertile days.
  */
 function sharedLine(state) {
-    const last = [...state.log].reverse().find(e => e.kind !== 'roll');
+    const last = [...state.log].reverse().find(e => !['roll', 'date_hint'].includes(e.kind));
     const iconName = !last ? 'fa-circle-info' : last.kind === 'intimacy' ? 'fa-heart' : KIND_ICON[last.kind] ?? 'fa-circle-dot';
     const risky = riskyLately(state);
     return `<div class="stk-shared-line" data-stk-act="open-window" data-tab="journal" role="button" tabindex="0" title="Последнее событие. Нажми — весь журнал">
@@ -421,6 +461,17 @@ export function handleAction(target, view, rerender) {
             }
             return true;
         }
+        case 'edit-date': view.editDate = true; break;
+        case 'cancel-date': view.editDate = false; break;
+        case 'save-date': {
+            const iso = values().date;
+            let done = false;
+            updateCurrentState(state => { done = setStoryDate(state, iso); });
+            view.editDate = false;
+            if (done) notifyDone(`Дата: ${dateWithWeekday(currentState(), undefined, { long: true, withYear: true })}`, { icon: 'fa-calendar-day' });
+            else notifyWarn('Дата не распознана', { timeOut: 2500 });
+            break;
+        }
         case 'edit-person': view.editPerson = view.editPerson === target.dataset.key ? null : target.dataset.key; break;
         case 'cancel-edit': view.editPerson = null; break;
         case 'save-person':
@@ -465,6 +516,7 @@ export function handleAction(target, view, rerender) {
             break;
         }
         case 'retry': retryRead(); break;
+        case 'notag': offerAnalyzer(); return true;
         case 'tab': view.tab = target.dataset.tab; view.editPerson = null; break;
         case 'toggle-ext':
             settings().enabled = !settings().enabled;
@@ -510,7 +562,7 @@ export function renderCalendar(state, view) {
     const woman = state.people.user;
     const f = woman.female;
     const day = state.clock.day;
-    const editable = !f.pregnancy && !f.postpartum;
+    const editable = cycleOpen(woman);
     const info = editable ? cycleInfo(f, day) : null;
     const suppressed = editable && pillState(f, day).suppressed;
     // the strip of her cycle on top (only here: the window has the month for it), then the same calendar as in the window

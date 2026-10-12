@@ -5,7 +5,7 @@
  */
 import { getContext } from '../../../extensions.js';
 import { careOf, cycleInfo, FEMALE_CONDITIONS, FEMALE_CONTRACEPTION, FEMALE_HABITS, MALE_FERTILITY, pillState } from './biology.js';
-import { dateLabel, liveNow, maleSnapshot, recoveryLeft, withLive } from './engine.js';
+import { dateLabel, liveNow, maleSnapshot, recoveryLeft, storyDate, withLive } from './engine.js';
 import { readStatus } from './store.js';
 
 // Persona avatar lives in personas.js; loaded lazily so a missing module never breaks Stork
@@ -35,12 +35,24 @@ export const levelWord = (value, female = false) => (value > 0.8 ? (female ? 'в
 export const joinWhy = (...parts) => parts.filter(Boolean).join('; ');
 /** Hours in words: «~5 ч», «~2 дн.» */
 export const hoursWord = h => (h >= 36 ? `~${Math.round(h / 24)} дн.` : `~${Math.max(1, Math.round(h))} ч`);
+/** ISO date (yyyy-mm-dd) of the current story day, for a date field; today's real one when the story has none. */
+export function storyIsoDate(state) {
+    const date = storyDate(state) ?? new Date();
+    const pad = n => String(n).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
 /** «сегодня», «вчера», «5 дн. назад» */
 export const agoWord = days => (days === 0 ? 'сегодня' : days === 1 ? 'вчера' : `${days} дн. назад`);
 /** The baby's weight: grams, kilograms, or «меньше 1 г» */
 export const babyWeight = grams => (grams >= 1000 ? `${(grams / 1000).toFixed(1)} кг` : grams < 1 ? 'меньше 1 г' : `${grams} г`);
 
 export const knowsPregnancy = person => !!person.female.pregnancy?.knownBy.includes(person.key);
+/**
+ * Her cycle is shown and can be edited: not after a birth, not in a pregnancy she knows of.
+ * A pregnancy she does not know of looks like an ordinary (late) cycle, or the screen would give it away.
+ */
+export const cycleOpen = woman => !woman.female.postpartum && !knowsPregnancy(woman);
 
 /** What comes next in her cycle, in words. */
 export function nextInCycle(s, suppressed) {
@@ -56,13 +68,13 @@ export function nextInCycle(s, suppressed) {
 export function riskyLately(state) {
     const f = state.people.user.female;
     const lastAct = state.acts.at(-1);
-    if (!lastAct || f.pregnancy || f.postpartum) return false;
+    if (!lastAct || !cycleOpen(state.people.user)) return false;
     const day = state.clock.day;
     return cycleInfo(f, day).fertile && !pillState(f, day).suppressed && (lastAct.protection === 'none' || lastAct.condomBroke) && day - lastAct.day <= 5;
 }
 
 /** The latest story events worth showing (no dice, no plain «близость»), newest first. */
-export const recentEvents = (state, count) => [...state.log].reverse().filter(e => !['roll', 'intimacy'].includes(e.kind)).slice(0, count);
+export const recentEvents = (state, count) => [...state.log].reverse().filter(e => !['roll', 'intimacy', 'date_hint'].includes(e.kind)).slice(0, count);
 
 // #endregion
 
@@ -333,13 +345,15 @@ export function upcomingRows(state, woman) {
             if (visitDay >= day && !p.visitsDone.includes(visit.week)) rows.push([visitDay, care.icon, visit.label]);
         }
         rows.push([p.lmp + 280, 'fa-baby', 'предполагаемая дата родов']);
-    } else if (!f.postpartum && !f.pregnancy) {
+    } else if (cycleOpen(woman)) {
         const s = cycleInfo(f, day);
         const start = f.cycleStart;
         const suppressed = pillState(f, day).suppressed;
         if (!suppressed && s.relative <= -5) rows.push([start + s.ovulation - 6, 'fa-heart', 'начало фертильных дней']);
         if (!suppressed && s.relative < 0) rows.push([start + s.ovulation - 1, 'fa-egg', 'овуляция']);
-        rows.push([start + s.length, 'fa-droplet', suppressed ? 'кровотечение отмены' : 'следующие месячные']);
+        // a late period has no date ahead: the delay itself is the row
+        if (s.late) rows.push([day, 'fa-droplet', `месячные запаздывают на ${s.cycleDay - s.length} дн.`]);
+        else rows.push([start + s.length, 'fa-droplet', suppressed ? 'кровотечение отмены' : 'следующие месячные']);
     }
     return rows.filter(([d]) => d >= day).sort((a, b) => a[0] - b[0]).slice(0, 4);
 }
@@ -359,19 +373,28 @@ export function monthGrid(state, view, today) {
     const testDays = new Set(state.rolls.filter(r => r.kind === 'test').map(r => r.day));
     const firstWeekday = (month.getDay() + 6) % 7;
     const daysInMonth = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
-    const editable = !f.pregnancy && !f.postpartum;
+    const editable = cycleOpen(woman);
     const cells = Array.from({ length: firstWeekday }, () => '<span class="is-empty"></span>');
+    // the cycle a day falls in: the current one runs up to today even past its usual length (a delay),
+    // the forecast goes on after it; earlier cycles are counted back by her usual length
+    const now = cycleInfo(f, day);
+    const nextStart = f.cycleStart + Math.max(now.length, now.cycleDay);
+    const cycleAt = storyDay => {
+        if (storyDay >= f.cycleStart && storyDay < nextStart) return cycleInfo(f, storyDay);
+        const from = storyDay < f.cycleStart ? f.cycleStart : nextStart;
+        const k = Math.floor((storyDay - from) / f.cycleLength);
+        return cycleInfo({ ...f, cycleStart: from + k * f.cycleLength, cycleShift: 0 }, storyDay);
+    };
 
     for (let d = 1; d <= daysInMonth; d++) {
         const storyDay = dayOf(new Date(month.getFullYear(), month.getMonth(), d));
         const classes = [];
-        // a known pregnancy is counted from her last period, the way its weeks are: no cycle forecast over it
+        // a known pregnancy is counted from her last period, the way its weeks are: no cycle forecast over it.
+        // One she does not know of keeps the ordinary cycle colours
         const pregnantThen = f.pregnancy && knowsPregnancy(woman) && storyDay >= f.pregnancy.lmp;
         if (pregnantThen) classes.push('is-preg');
-        else if (!f.postpartum && !(f.pregnancy && storyDay >= f.pregnancy.conceptionDay)) {
-            const length = f.cycleLength;
-            const k = Math.floor((storyDay - f.cycleStart) / length);
-            const at = cycleInfo({ ...f, cycleStart: f.cycleStart + k * length, cycleShift: k === 0 ? f.cycleShift : 0 }, storyDay);
+        else if (!f.postpartum) {
+            const at = cycleAt(storyDay);
             classes.push(`is-${PHASE_TONE[at.phase]}`);
             if (at.fertile && !pillState(f, storyDay).suppressed) classes.push('is-window');
             if (at.relative === 0 && !pillState(f, storyDay).suppressed) classes.push('is-ovulation');
@@ -395,8 +418,7 @@ export function monthGrid(state, view, today) {
 
 /** The picked day: «Здесь начались месячные» or cancel. */
 export function pickBar(state, view) {
-    const f = state.people.user.female;
-    if (view.pickDay === null || view.pickDay === undefined || f.pregnancy || f.postpartum) return '';
+    if (view.pickDay === null || view.pickDay === undefined || !cycleOpen(state.people.user)) return '';
     return `<div class="stk-pick">
                 <span>${icon('fa-droplet')}${esc(capitalize(dateLabel(state, view.pickDay, { day: 'numeric', month: 'long' })))}</span>
                 <button type="button" class="stk-btn is-primary" data-stk-act="cal-period">Здесь начались месячные</button>
@@ -440,7 +462,7 @@ export function personFields(state, key, { long = false } = {}) {
     const age = `<label class="stk-field"><span>Возраст</span><input class="text_pole" data-f="age" type="number" min="18" max="90" value="${p.age}"></label>`;
     if (key === 'user') {
         const f = p.female;
-        const cycleEditable = !f.pregnancy && !f.postpartum;
+        const cycleEditable = cycleOpen(p);
         const info = cycleEditable ? cycleInfo(f, state.clock.day) : null;
         return `<div class="stk-grid">
                 ${age}

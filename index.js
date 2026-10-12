@@ -6,14 +6,14 @@ import { trace } from './diag.js';
 import { installLogCapture, logEvent } from './log.js';
 import { ensureProfileChoice, forgetReplyCounts } from './connection.js';
 import {
-    activeIn, changed, currentState, currentView, getGenerationState, initSettings, MODULE, onReread, onRetry, onStateChange, processMessage,
+    activeIn, changed, currentState, currentView, getGenerationState, initSettings, missingTags, MODULE, onReread, onRetry, onStateChange, processMessage,
     processUserMessage, readStatus, refreshStatus, sameReply, setGenerationState, setReadFailed, setReading, setStatus, settings, similarSig,
     otherClock, skipBefore, stateBefore, statusText, storyLines, storyHash, storySig, storyText, updateCurrentState, VIEWS,
 } from './store.js';
 import { buildStatus, timelineText } from './engine.js';
 import { analyzeCards, readCards } from './cards.js';
 import { hasMinor, setupFromAnalysis } from './setup.js';
-import { renderStatusBar } from './ui.js';
+import { offerAnalyzer, renderStatusBar } from './ui.js';
 import { announce, openStork } from './window.js';
 import { notify, notifyDone, notifyWarn } from './notify.js';
 import { renderBlocks, resetBlock, scheduleBlocks, watchChat } from './block.js';
@@ -152,7 +152,11 @@ async function readReplyNow(index, { force = false, strict = false, reason = '' 
         refreshStatus();
         if (!result) return;
         announce(result.events);
-        if (!result.tag.found) offerHints(index);
+        if (!result.tag.found) {
+            offerHints(index);
+            // twice in a row: said once, with a way out; the mark at the clock stays meanwhile
+            if (missingTags() === 2) offerAnalyzer(2);
+        }
         return;
     }
 
