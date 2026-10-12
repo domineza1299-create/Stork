@@ -5,14 +5,15 @@
  */
 import { saveSettingsDebounced } from '../../../../script.js';
 import { cycleInfo, DOCTOR_VISITS, FEMALE_CONTRACEPTION, femaleState, laborProgress, pillState, pregnancyInfo } from './biology.js';
-import { absMinute, dateLabel, liveNow, maleSnapshot, recoveryLeft, storyDate, timeLabel, withLive } from './engine.js';
+import { absMinute, acceptPregnancyClaim, dateLabel, editPregnancyClaim, liveNow, maleSnapshot, recoveryLeft, rejectPregnancyClaim, timeLabel, withLive } from './engine.js';
 import { activeIn, changed, currentState, readStatus, refreshStatus, retryRead, settings, updateCurrentState, VIEWS } from './store.js';
 import { applyPersonEdit, setPeriodStart } from './setup.js';
 import {
-    ACT_LABEL, agoWord, avatarUrl, babyWeight, capitalize, clamp01, cycleFields, cycleStrip, esc, femaleLevels, femaleTraits, icon, initials, irregularityWord,
-    KIND_ICON, knowsPregnancy, levelWord, maleLevels, monthGrid, nameOf, nextInCycle, personFields, pickBar, pregnancyLibidoWhy, recentEvents, riskyLately,
-    upcomingRows, upcomingWhen, years,
+    ACT_LABEL, agoWord, avatarUrl, babyWeight, capitalize, claimCard, clamp01, cycleFields, cycleStrip, esc, femaleLevels, femaleTraits, icon, initials, irregularityWord,
+    KIND_ICON, knowsPregnancy, levelWord, maleLevels, nameOf, nextInCycle, personFields, pregnancyLibidoWhy, recentEvents, riskyLately,
+    spermGrade, spermPanel, upcomingRows, upcomingWhen, years,
 } from './common.js';
+import { calendarCore } from './classic.js';
 import { downloadProblemLog, openStork } from './window.js';
 import { notify, notifyDone, notifyWarn } from './notify.js';
 
@@ -24,7 +25,7 @@ const FOLD_DEFAULT = {
     user: true, char: true, shared: true,
     'user-fert': false, 'user-more': false, 'char-sperm': false, 'char-more': false,
     'shared-next': true, 'shared-recent': false,
-    'cal-cycle': true, 'cal-month': true, 'cal-next': false, 'cal-mine': false,
+    'cal-cycle': true, 'cal-mine': false,
     'preg-term': true, 'preg-baby': true, 'preg-mom': false, 'preg-doc': false,
 };
 let folds = null;
@@ -359,16 +360,9 @@ function maleCard(state, person, view = {}) {
         </div>
         ${L.left > 0 ? li('fa-hourglass-half', `восстанавливается после оргазма: ещё ~${L.left} мин по времени истории`, 'is-warm') : ''}
         ${storyNote(state, key)}
-        ${subFold(`${key}-sperm`, 'fa-dna', 'Сперма', `${s.countNow}% · запас ${Math.round(s.reserve * 100)}%`, `
-            <div class="stk-bars">
-                ${bar('Количество', s.countNow / 100, 'pink', `${s.countNow}%`)}
-                ${bar('Подвижность', s.motility / 100, 'pink', `${s.motility}%`)}
-                ${bar('Запас', s.reserve, 'accent', `${Math.round(s.reserve * 100)}%`)}
-            </div>
-            ${L.countWhy ? li('fa-circle-info', esc(L.countWhy), 'is-muted') : ''}
-            ${li('fa-battery-half', esc(`запас ${L.reserveWhy}`), 'is-muted')}
-            ${li('fa-dna', esc(L.fertilityLine))}
-            ${s.vasectomy ? li('fa-scissors', `вазэктомия: ${esc(s.vasectomy)}`) : ''}`)}
+        ${subFold(`${key}-sperm`, 'fa-dna', 'Сперма', `плодовитость ${spermGrade(s).word} · запас ${Math.round(s.reserve * 100)}%`, `
+            ${spermPanel(state, person, L)}
+            ${li('fa-dna', esc(L.fertilityLine), 'is-muted')}`)}
         ${subFold(`${key}-more`, 'fa-heart-pulse', 'Самочувствие', L.freshLabels.join(', '), `
             ${whyRow('Бодрость', L.vigorWhy)}
             ${whyRow('Влечение', L.libidoWhy)}
@@ -402,8 +396,8 @@ export function renderNow(state, view = {}) {
     const parts = settings().blockParts ?? {};
     const people = [parts.user !== false && femaleCard(state, state.people.user, view), parts.char !== false && maleCard(state, state.people.char, view)].filter(Boolean);
     const shared = parts.shared !== false ? sharedCard(state) : '';
-    if (!people.length && !shared) return li('fa-eye-slash', 'Все плашки скрыты. Вернуть — в окне Stork, вкладка «Настройки».', 'is-muted');
-    return `${shared}${people.length ? `<div class="stk-pair${people.length === 1 ? ' is-single' : ''}">${people.join('')}</div>` : ''}`;
+    if (!people.length && !shared) return `${claimCard(state)}${li('fa-eye-slash', 'Все плашки скрыты. Вернуть — в окне Stork, вкладка «Настройки».', 'is-muted')}`;
+    return `${claimCard(state)}${shared}${people.length ? `<div class="stk-pair${people.length === 1 ? ' is-single' : ''}">${people.join('')}</div>` : ''}`;
 }
 
 // #endregion
@@ -465,6 +459,26 @@ export function handleAction(target, view, rerender) {
             else notifyWarn('Этот день отметить нельзя', { timeOut: 2500 });
             break;
         }
+        case 'claim-accept':
+            updateCurrentState(state => acceptPregnancyClaim(state));
+            notifyDone('Беременность принята', { icon: 'fa-person-pregnant', tone: 'preg' });
+            break;
+        case 'claim-reject': {
+            let term = false;
+            updateCurrentState(state => { term = state.pregnancyClaim?.kind === 'term'; rejectPregnancyClaim(state); });
+            notify(term ? 'Срок возвращён прежний' : 'Отклонено: Stork не считает это беременностью', { icon: 'fa-rotate-left', tone: 'calm', timeOut: 4000 });
+            break;
+        }
+        case 'claim-term': {
+            const v = values();
+            if (!(Number(v.weeks) > 0)) {
+                notifyWarn('Укажи срок в неделях', { timeOut: 2500 });
+                return true;
+            }
+            updateCurrentState(state => editPregnancyClaim(state, v.weeks, v.days));
+            notifyDone('Срок поправлен', { icon: 'fa-calendar-check', tone: 'preg' });
+            break;
+        }
         case 'retry': retryRead(); break;
         case 'tab': view.tab = target.dataset.tab; view.editPerson = null; break;
         case 'toggle-ext':
@@ -512,29 +526,15 @@ export function renderCalendar(state, view) {
     const f = woman.female;
     const day = state.clock.day;
     const editable = !f.pregnancy && !f.postpartum;
-    const { month, grid } = monthGrid(state, view, storyDate(state) ?? new Date());
     const info = editable ? cycleInfo(f, day) : null;
     const suppressed = editable && pillState(f, day).suppressed;
-    const next = upcomingRows(state, woman);
-    const nav = d => `<button type="button" class="stk-pen" data-stk-act="cal-month" data-d="${d}" aria-label="${d < 0 ? 'Предыдущий' : 'Следующий'} месяц">${icon(d < 0 ? 'fa-chevron-left' : 'fa-chevron-right')}</button>`;
+    // the strip of her cycle on top (only here: the window has the month for it), then the same calendar as in the window
     return `
         ${editable ? panel('cal-cycle', { icon: 'fa-arrows-spin', tone: PHASE_DOT[info.phase] === 'calm' ? 'preg' : PHASE_DOT[info.phase], title: 'Цикл', sub: `${esc(nameOf(woman))} · день ${info.cycleDay} из ${info.length} · ${esc(suppressed && ['ovulation', 'follicular'].includes(info.phase) ? 'овуляции нет' : info.phaseLabel)}` }, `
             <div class="stk-cycle-big">${cycleStrip(f, day)}</div>
             ${li('fa-forward', esc(nextInCycle(info, suppressed)))}`) : ''}
-        ${panel('cal-month', { icon: 'fa-calendar-days', tone: 'accent', title: esc(capitalize(month.toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' }))), tools: `${nav(-1)}${nav(1)}` }, `
-            ${grid}
-            ${pickBar(state, view)}
-            ${editable ? li('fa-hand-pointer', 'нажми на прошедший день, чтобы отметить начало месячных', 'is-muted') : ''}
-            <div class="stk-legend">
-                <span><i class="is-period"></i>месячные</span>
-                <span><i class="is-window"></i>фертильные</span>
-                <span><i class="is-ovulation"></i>овуляция</span>
-                <span><i class="is-warm"></i>ПМС</span>
-                ${f.pregnancy ? '<span><i class="is-preg"></i>беременность</span>' : ''}
-                <span>${icon('fa-heart')}близость</span>
-                <span>${icon('fa-vial')}тест</span>
-            </div>`)}
-        ${panel('cal-next', { icon: 'fa-calendar-check', tone: 'pink', title: 'Ближайшие даты', sub: next.length ? esc(`${upcomingWhen(state, next[0][0], true)} · ${next[0][2]}`) : 'пока ничего' }, upcomingLines(state, next) || li('fa-circle-info', 'пока ничего', 'is-muted'))}
+        <div class="stk-ib-cal">${calendarCore(state, view)}</div>
+        ${editable ? li('fa-hand-pointer', 'нажми на прошедший день, чтобы отметить начало месячных', 'is-muted') : ''}
         ${editable ? panel('cal-mine', { icon: 'fa-sliders', tone: 'calm', title: 'Мой цикл', sub: `${f.cycleLength} дн., месячные ${f.periodLength} дн., ${irregularityWord(f)}` }, `
         <div class="stk-edit" data-key="user">
             ${cycleFields(f)}
@@ -554,6 +554,7 @@ export function renderPregnancy(state) {
     const info = pregnancyInfo(p, state.clock.day);
     const due = dateLabel(state, info.dueDay, { day: 'numeric', month: 'long', year: 'numeric' });
     return `
+        ${claimCard(state)}
         ${panel('preg-term', { avatar: avatarHtml('user', nameOf(woman)), tone: 'preg', title: `${info.week} нед. ${info.weekDay} дн.`, sub: `${info.trimester}-й триместр · до родов ${Math.max(0, info.daysToDue)} дн.` }, `
             <div class="stk-bars">${bar('Срок', info.week / 40, 'preg', `${Math.min(100, Math.round(info.week / 40 * 100))}%`)}</div>
             ${li('fa-calendar-check', `предполагаемая дата родов: ${esc(due)}`)}`)}

@@ -58,6 +58,8 @@ function stateLines() {
         const l = st.live?.[key];
         if (l) lines.push(`заметка (${key}): ${l.mood ?? 'нет'} / ${cut(l.note ?? 'нет', 200)} (записана в минуту ${l.at})`);
     }
+    const claim = st.pregnancyClaim;
+    if (claim) lines.push(`беременность из истории: ${claim.status}${claim.kind === 'term' ? ' (срок)' : ''}, ${claim.weeks} нед. ${claim.days ?? 0} дн.${claim.guessed ? ', срок примерный' : ''}${claim.edited ? ', срок поправлен вручную' : ''}, день ${claim.day}${claim.quote ? ` · «${cut(claim.quote, 120)}»` : ''}`);
     if (st.pending?.length) lines.push(`ждёт модели: ${st.pending.map(e => e.text).join('; ')}`);
     lines.push('журнал истории (последнее):');
     for (const e of st.log.slice(-8)) lines.push(`  день ${e.day} [${e.kind}] ${e.text}`);

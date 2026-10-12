@@ -943,7 +943,6 @@ stork {
     }
 }
 
-
 /* ═══ Tones: one colour per meaning, everywhere ═══ */
 .t-pink { --tone: var(--stk-pink); }
 .t-accent { --tone: var(--stk-accent); }
@@ -1662,7 +1661,6 @@ stork {
     background: color-mix(in srgb, var(--stk-pink) 8%, var(--stk-glass-hover));
 }
 
-
 @media (prefers-reduced-motion: reduce) {
     .stk-pn.is-anim.is-open > .stk-pn-body,
     .stk-sf.is-anim.is-open > .stk-sf-body,
@@ -1748,7 +1746,6 @@ stork {
 .stk-ib .stk-cycle-big .stk-cycle .is-today {
     transform: scaleY(1.45);
 }
-
 
 /* ═══════════ The Stork window: the classic look (rings around avatars, legends) ═══════════ */
 
@@ -1882,57 +1879,11 @@ stork {
     overflow-wrap: anywhere;
 }
 
-.stk-leg small,
-.stk-sperm small {
+.stk-leg small {
     color: var(--stk-muted);
     font-size: 0.82em;
     line-height: 1.35;
     overflow-wrap: anywhere;
-}
-
-/* Sperm: three small rings with a word each */
-.stk-sperm {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 8px;
-}
-
-.stk-sperm > div {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 4px;
-    padding: 8px 6px;
-    border-radius: 10px;
-    background: var(--stk-glass);
-    text-align: center;
-    min-width: 0;
-}
-
-.stk-sperm > div > div {
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-}
-
-.stk-mini-ring {
-    position: relative;
-    width: 52px;
-    aspect-ratio: 1;
-}
-
-.stk-mini-ring svg {
-    width: 100%;
-    height: 100%;
-}
-
-.stk-mini-ring b {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 0.78em;
 }
 
 /* What the story shows about the person right now */
@@ -1973,7 +1924,7 @@ stork {
     }
 }
 
-/* in a half-width card: rings over the legend, sperm one per row */
+/* in a half-width card: rings over the legend */
 @container (max-width: 380px) {
     .stk-person {
         grid-template-columns: minmax(0, 1fr);
@@ -1982,20 +1933,6 @@ stork {
 
     .stk-legend-col {
         width: 100%;
-    }
-
-    .stk-sperm {
-        grid-template-columns: minmax(0, 1fr);
-    }
-
-    .stk-sperm > div {
-        flex-direction: row;
-        text-align: left;
-    }
-
-    .stk-mini-ring {
-        width: 44px;
-        flex: none;
     }
 }
 
@@ -2012,20 +1949,6 @@ stork {
 
     .stk-rings.is-lg {
         width: 112px;
-    }
-
-    .stk-sperm {
-        grid-template-columns: minmax(0, 1fr);
-    }
-
-    .stk-sperm > div {
-        flex-direction: row;
-        text-align: left;
-    }
-
-    .stk-mini-ring {
-        width: 44px;
-        flex: none;
     }
 
     .stk-stats {
@@ -2316,3 +2239,232 @@ div.stk-log-row {
         display: none;
     }
 }
+
+/* ═══ Sperm: three test tubes and the conclusion beside them ═══ */
+.stk-semen {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px 16px;
+    padding: 10px 12px;
+    border-radius: 12px;
+    border: 1px solid var(--stk-line);
+    background:
+        radial-gradient(120% 140% at 0% 100%, color-mix(in srgb, var(--stk-pink) 10%, transparent), transparent 60%),
+        var(--stk-glass);
+}
+
+.stk-vials {
+    display: flex;
+    gap: 4px;
+    flex: none;
+}
+
+.stk-vial {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 5px;
+    width: 64px;
+}
+
+.stk-vial > b {
+    font-size: 0.85em;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: color-mix(in srgb, var(--tone) 70%, var(--stk-text));
+}
+
+.stk-vial > small {
+    color: var(--stk-muted);
+    font-size: 0.7em;
+    line-height: 1.1;
+    white-space: nowrap;
+}
+
+/* the tube: glass with a rim, filled from the bottom to the value */
+.stk-vial-tube {
+    position: relative;
+    width: 18px;
+    height: 58px;
+    border-radius: 3px 3px 10px 10px;
+    background: color-mix(in srgb, var(--stk-text) 6%, transparent);
+    box-shadow: inset 0 0 0 1.5px var(--stk-line-strong);
+    overflow: hidden;
+}
+
+.stk-vial-tube::before {
+    content: '';
+    position: absolute;
+    inset: 0 0 auto;
+    height: 3px;
+    background: var(--stk-line-strong);
+    z-index: 2;
+}
+
+.stk-vial-tube > i {
+    position: absolute;
+    inset: auto 0 0;
+    height: var(--v);
+    background: linear-gradient(to top, var(--tone), color-mix(in srgb, var(--tone) 55%, transparent));
+    transition: height 0.6s ease;
+}
+
+/* the surface of the liquid */
+.stk-vial-tube > i::before {
+    content: '';
+    position: absolute;
+    inset: 0 0 auto;
+    height: 2px;
+    background: color-mix(in srgb, #fff 45%, var(--tone));
+    opacity: 0.8;
+}
+
+/* a glint along the glass */
+.stk-vial-tube::after {
+    content: '';
+    position: absolute;
+    top: 6px;
+    bottom: 8px;
+    left: 3px;
+    width: 3px;
+    border-radius: 2px;
+    background: rgb(255 255 255 / 0.2);
+    z-index: 1;
+}
+
+.stk-semen-text {
+    flex: 1 1 180px;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.stk-semen-grade {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 4px 8px;
+}
+
+.stk-semen-grade > span {
+    color: var(--stk-muted);
+    font-size: 0.72em;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.stk-semen-grade > b {
+    font-size: 1.05em;
+    color: color-mix(in srgb, var(--tone) 80%, var(--stk-text));
+}
+
+.stk-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.stk-chips > span {
+    padding: 1px 9px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--stk-warm) 15%, transparent);
+    color: color-mix(in srgb, var(--stk-warm) 85%, var(--stk-text));
+    font-size: 0.76em;
+    line-height: 1.6;
+}
+
+.stk-semen-note {
+    margin: 0;
+    font-size: 0.88em;
+    line-height: 1.45;
+    color: color-mix(in srgb, var(--stk-text) 88%, transparent);
+}
+
+.stk-semen-note .stk-ic {
+    margin-right: 6px;
+    color: var(--stk-pink);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .stk-vial-tube > i {
+        transition: none;
+    }
+}
+
+/* ═══ A pregnancy the story stated, waiting for her answer ═══ */
+.stk-claim {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px 14px;
+    border-radius: var(--stk-radius);
+    border: 1px solid color-mix(in srgb, var(--stk-preg) 55%, transparent);
+    background: linear-gradient(135deg, color-mix(in srgb, var(--stk-preg) 16%, transparent), color-mix(in srgb, var(--stk-pink) 7%, transparent));
+}
+
+.stk-claim-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.stk-claim-head > .stk-ic {
+    color: var(--stk-preg);
+}
+
+.stk-claim-head > span {
+    margin-left: auto;
+    padding: 1px 9px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--stk-preg) 25%, transparent);
+    font-size: 0.74em;
+    white-space: nowrap;
+}
+
+.stk-claim q {
+    display: block;
+    padding: 6px 10px;
+    border-left: 2px solid color-mix(in srgb, var(--stk-preg) 70%, transparent);
+    border-radius: 0 8px 8px 0;
+    background: var(--stk-glass);
+    color: var(--stk-muted);
+    font-size: 0.9em;
+    quotes: '«' '»';
+}
+
+.stk-claim-text b {
+    color: color-mix(in srgb, var(--stk-preg) 70%, var(--stk-text));
+}
+
+.stk-claim-term {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.9em;
+}
+
+.stk-claim-term input.text_pole {
+    width: 4.2em;
+    margin: 0;
+    padding: 3px 6px;
+    text-align: center;
+}
+
+.stk-claim .stk-actions {
+    margin: 0;
+}
+
+/* ═══ The calendar inside the infoblock: the window's calendar, with the infoblock's spacing ═══ */
+.stk-ib-cal {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.stk-ib .stk-claim {
+    margin-bottom: 8px;
+}
+

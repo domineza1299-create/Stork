@@ -156,6 +156,116 @@ export function maleLevels(state, person) {
 
 // #endregion
 
+// #region Sperm: one compact panel for both looks
+
+/** How likely he is to make her pregnant now, in one word: count and motility together, the reserve inside the count. */
+export function spermGrade(s) {
+    if (s.vasectomy === 'защищает') return { word: 'нет', tone: 'calm', value: 0 };
+    const value = clamp01(s.countNow / 100) * Math.sqrt(clamp01(s.motility / 100));
+    if (value >= 0.75) return { word: 'высокая', tone: 'pink', value };
+    if (value >= 0.5) return { word: 'обычная', tone: 'accent', value };
+    if (value >= 0.25) return { word: 'снижена', tone: 'warm', value };
+    return { word: 'низкая', tone: 'period', value };
+}
+
+const LIST = items => (items.length > 1 ? `${items.slice(0, -1).join(', ')} и ${items.at(-1)}` : items[0] ?? '');
+const weeksWord = days => {
+    const w = Math.max(1, Math.ceil(days / 7));
+    return `${w} ${w % 10 === 1 && w % 100 !== 11 ? 'неделю' : [2, 3, 4].includes(w % 10) && ![12, 13, 14].includes(w % 100) ? 'недели' : 'недель'}`;
+};
+
+/**
+ * A conclusion about his sperm from the numbers alone: what is affected now, what only later. Used while the
+ * scene analysis has said nothing about it (the tag mode, or a quiet stretch of the story).
+ */
+export function spermConclusion(state, person, L) {
+    const s = L.s;
+    if (s.vasectomy === 'защищает') return 'После вазэктомии сперматозоидов в эякуляте нет: зачатие от него невозможно, на влечение и эрекцию это не влияет.';
+    if (s.vasectomy) return `Вазэктомия ещё не действует: в семенных путях остаются сперматозоиды, ${s.vasectomy.replace('ещё не защищает, ', '')} — до этого предохраняться нужно как обычно.`;
+    const parts = [];
+    const fresh = [...new Set(s.recent.filter(e => e.daysAgo <= 1 && ['alcohol', 'stress', 'no_sleep', 'fever', 'cannabis'].includes(e.type)).map(e => e.label))];
+    if (fresh.length) parts.push(`${capitalize(LIST(fresh))} сразу бьют по эрекции и выносливости, а на самой сперме скажутся только через 2–3 месяца: столько она созревает.`);
+    const delayed = [...s.reasons].sort((a, b) => b.recoversInDays - a.recoversInDays)[0];
+    if (delayed && delayed.daysAgo >= 7) {
+        parts.push(`Сейчас аукается ${delayed.label} ${delayed.daysAgo} дн. назад: сперматозоидов меньше и они медленнее, норма вернётся примерно через ${weeksWord(delayed.recoversInDays)}.`);
+    }
+    if (s.reserve < 0.6) {
+        parts.push(`Запас после недавней разрядки ещё не восстановился: в эякуляте меньше сперматозоидов${s.reserveFullInHours ? `, полностью — через ${hoursWord(s.reserveFullInHours)}` : ''}.`);
+    } else if (s.daysSinceLast !== null && s.daysSinceLast >= 4 && s.reserve >= 0.95) {
+        parts.push(`${s.daysSinceLast} дн. без разрядки: запас полный, сперматозоидов больше обычного — шанс зачатия сейчас выше среднего.`);
+    }
+    if (MALE_FERTILITY[person.male.fertility]?.factor < 1 && parts.length < 2) parts.push(`Фертильность от природы ${MALE_FERTILITY[person.male.fertility].label}: зачатие возможно, но обычно требует больше времени.`);
+    if (!parts.length) return 'Количество и подвижность в норме для его возраста, запас полный: по его части ничто не мешает зачатию.';
+    return parts.slice(0, 2).join(' ');
+}
+
+/** One test tube: the level is the value, the number on top, a short word under it. */
+function vial(label, value, text, tone, why) {
+    const v = Math.round(clamp01(value) * 100);
+    return `<div class="stk-vial t-${tone}" style="--v:${v}%" title="${esc(`${label}: ${text}${why ? ` — ${why}` : ''}`)}">
+        <b>${esc(text)}</b><span class="stk-vial-tube"><i></i></span><small>${esc(label)}</small></div>`;
+}
+
+/**
+ * Sperm in one compact panel: three tubes (count, motility, reserve) and one conclusion in words beside them —
+ * from the scene analysis when it has one, otherwise from the numbers.
+ */
+export function spermPanel(state, person, L) {
+    const s = L.s;
+    const grade = spermGrade(s);
+    const live = liveNow(state, person.key);
+    const fromStory = !!live.spermNote;
+    const text = live.spermNote ?? spermConclusion(state, person, L);
+    // what weighs on him lately, as plain words: no «сегодня:» in front, the day is in the hint
+    const factors = [...new Map(s.recent.filter(e => e.daysAgo <= 3).map(e => [e.label, e])).values()];
+    const chips = factors.map(e => `<span title="${esc(agoWord(e.daysAgo))}">${esc(e.label)}</span>`).join('');
+    return `<div class="stk-semen">
+        <div class="stk-vials" aria-label="${esc(`количество ${s.countNow}%, подвижность ${s.motility}%, запас ${Math.round(s.reserve * 100)}%`)}">
+            ${vial('количество', s.countNow / 100, `${s.countNow}%`, 'pink', L.countWhy || 'в норме')}
+            ${vial('подвижность', s.motility / 100, `${s.motility}%`, 'preg', L.motilityWhy)}
+            ${vial('запас', s.reserve, `${Math.round(s.reserve * 100)}%`, 'accent', L.reserveWhy)}
+        </div>
+        <div class="stk-semen-text">
+            <div class="stk-semen-grade"><span>Плодовитость</span><b class="t-${grade.tone}">${esc(grade.word)}</b></div>
+            ${chips ? `<div class="stk-chips">${chips}</div>` : ''}
+            <p class="stk-semen-note${fromStory ? ' is-story' : ''}">${fromStory ? icon('fa-feather-pointed') : ''}${esc(text)}</p>
+        </div>
+    </div>`;
+}
+
+// #endregion
+
+// #region A pregnancy the story stated: she accepts, fixes the term or rejects it
+
+/** The card that asks her, or '' when nothing waits. Same in the window and in the infoblock. */
+export function claimCard(state) {
+    const c = state.pregnancyClaim;
+    if (c?.status !== 'pending') return '';
+    const woman = state.people.user;
+    const term = c.kind === 'term';
+    const termText = `${c.weeks} нед.${c.days ? ` ${c.days} дн.` : ''}`;
+    const text = term
+        ? `В истории другой срок, и Stork уже записал его: <b>${esc(termText)}</b> — оставить так?`
+        : `Stork записал: ${esc(nameOf(woman))} беременна, срок <b>${esc(termText)}</b>${c.guessed ? ' (примерно, по последней близости: в тексте срока нет)' : ''} — всё верно?`;
+    return `<div class="stk-claim stk-edit" data-key="claim">
+        <div class="stk-claim-head">${icon(term ? 'fa-calendar-check' : 'fa-person-pregnant')}<b>${term ? 'Срок из истории' : 'Беременность из истории'}</b><span>ждёт ответа</span></div>
+        ${c.quote ? `<q>${esc(c.quote)}</q>` : ''}
+        <div class="stk-claim-text">${text}</div>
+        <div class="stk-claim-term">
+            <span>Срок</span>
+            <input class="text_pole" data-f="weeks" type="number" min="1" max="42" value="${c.weeks}" aria-label="недель"><span>нед.</span>
+            <input class="text_pole" data-f="days" type="number" min="0" max="6" value="${c.days ?? 0}" aria-label="дней"><span>дн.</span>
+            <button type="button" class="stk-btn is-ghost" data-stk-act="claim-term">${icon('fa-pen')}Поправить</button>
+        </div>
+        <div class="stk-actions">
+            <button type="button" class="stk-btn is-primary" data-stk-act="claim-accept">${icon('fa-check')}Принять</button>
+            <button type="button" class="stk-btn is-ghost" data-stk-act="claim-reject">${icon('fa-xmark')}${term ? 'Вернуть прежний срок' : 'Отклонить: не беременна'}</button>
+        </div>
+    </div>`;
+}
+
+// #endregion
+
 // #region Reading the story
 
 /** «читаю последний ответ», or the failed analysis with a retry button. */

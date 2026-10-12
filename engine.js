@@ -442,6 +442,9 @@ export function applyEvent(state, event, rng = Math.random) {
             note(state, woman, `УЗИ: ${p.babies > 1 ? 'двойня' : 'один малыш'}, срок ${week} нед.${p.sexKnown ? `, пол: ${p.sexes.join(' и ')}` : ', пол пока не виден'}`);
             break;
         }
+        case 'pregnancy_claim':
+            claimPregnancy(state, event, rng);
+            break;
         case 'told': {
             // he learns about her pregnancy: she tells him, he sees the test, the doctor says it with him there
             const woman = Object.values(state.people).find(p => p.sex === 'female');
@@ -497,13 +500,129 @@ export function applyEvent(state, event, rng = Math.random) {
 
 // #endregion
 
+// #region A pregnancy the story states
+
+/** A claim the story makes again while she has not decided yet, or soon after she rejected it, changes nothing. */
+const CLAIM_REJECT_DAYS = 30;
+/** A known pregnancy is re-dated by the story only when the term it names is this far off. */
+const CLAIM_TERM_SLACK_DAYS = 10;
+const termDays = (weeks, days) => Math.round((Number(weeks) || 0) * 7 + (Number(days) || 0));
+
+/** Moves a pregnancy so that today it is `total` days from the last period; its own dates move with it. */
+export function setPregnancyTerm(p, day, total) {
+    const shift = (day - total) - p.lmp;
+    if (!shift) return;
+    for (const key of ['lmp', 'conceptionDay', 'kicksDay', 'spottingDay']) if (typeof p[key] === 'number') p[key] += shift;
+}
+
+/** No term in the story: from the latest closeness that could have led to it, otherwise six weeks. */
+function guessTermDays(state, woman, day) {
+    const act = [...state.acts].reverse().find(a => a.woman === woman.key && (a.protection !== 'condom' || a.condomBroke) && day - a.day >= 7 && day - a.day <= 280);
+    return act ? day - act.day + 14 : 42;
+}
+
+/**
+ * The story says she is pregnant (her own message counts: she decides): Stork writes it in right away, dated by
+ * the term the story names, and keeps what was there before, so she can accept it, fix the term, or reject it
+ * (a false alarm, a lie in the story) and get the old state back.
+ * @param {{weeks?: number, days?: number, quote?: string, who?: string}} claim
+ */
+export function claimPregnancy(state, claim, rng = Math.random) {
+    const woman = Object.values(state.people).find(p => p.sex === 'female');
+    const f = woman?.female;
+    if (!f || f.pregnancy?.labor) return false;
+    const day = state.clock.day;
+    const prior = state.pregnancyClaim;
+    if (prior?.status === 'rejected' && day - prior.decidedDay < CLAIM_REJECT_DAYS) return false;
+    const named = Number(claim.weeks) > 0 || Number(claim.days) > 0;
+    const total = named ? Math.min(42 * 7, Math.max(14, termDays(claim.weeks, claim.days))) : null;
+    const quote = typeof claim.quote === 'string' ? claim.quote.trim().slice(0, 160) : '';
+    const name = woman.name || 'Она';
+    const p = f.pregnancy;
+
+    if (p && p.knownBy.includes(woman.key)) {
+        // already known: only a pending claim follows the story, or a term far from the tracker's
+        const now = day - p.lmp;
+        if (!named || Math.abs(now - total) < CLAIM_TERM_SLACK_DAYS) return false;
+        if (prior?.status === 'pending') {
+            // she set the term herself: the story does not move it while she decides
+            if (prior.edited) return false;
+            setPregnancyTerm(p, day, total);
+            Object.assign(prior, { weeks: Math.floor(total / 7), days: total % 7, guessed: false, quote: quote || prior.quote });
+            return true;
+        }
+        state.pregnancyClaim = { status: 'pending', kind: 'term', day, weeks: Math.floor(total / 7), days: total % 7, guessed: false, quote, prev: cloneState(p), prevPostpartum: f.postpartum ?? null };
+        setPregnancyTerm(p, day, total);
+        note(state, woman, `${name}: срок по истории ${Math.floor(total / 7)} нед. — проверь в Stork`, { model: false, kind: 'claim' });
+        return true;
+    }
+
+    const prev = p ? cloneState(p) : null;
+    const days = total ?? guessTermDays(state, woman, day);
+    if (p) {
+        // the dice had already said yes: she learns it now, at the term the story names
+        if (named) setPregnancyTerm(p, day, days);
+    } else {
+        f.pregnancy = createPregnancy({ lmp: day - days, conceptionDay: day - days + 14, twins: false, births: f.births, rng });
+        f.pregnancy.fromStory = true;
+    }
+    if (!f.pregnancy.knownBy.includes(woman.key)) f.pregnancy.knownBy.push(woman.key);
+    state.pregnancyClaim = {
+        status: 'pending', kind: 'pregnancy', day, weeks: Math.floor(days / 7), days: days % 7, guessed: !named, quote,
+        prev, prevPostpartum: f.postpartum ?? null,
+    };
+    f.postpartum = null;
+    note(state, woman, `${name}: беременность по истории, ${named ? '' : 'примерно '}${Math.floor(days / 7)} нед. — проверь в Stork`, { model: false, kind: 'claim' });
+    return true;
+}
+
+/** She agrees with what Stork wrote in: the question goes away, the pregnancy stays. */
+export function acceptPregnancyClaim(state) {
+    const c = state.pregnancyClaim;
+    if (c?.status !== 'pending') return false;
+    c.status = 'accepted';
+    c.decidedDay = state.clock.day;
+    delete c.prev;
+    return true;
+}
+
+/** Not a pregnancy (a false alarm, a lie, a mistake of the analysis): everything goes back to how it was. */
+export function rejectPregnancyClaim(state) {
+    const c = state.pregnancyClaim;
+    if (c?.status !== 'pending') return false;
+    const woman = Object.values(state.people).find(p => p.sex === 'female');
+    if (woman) {
+        woman.female.pregnancy = c.prev ?? null;
+        woman.female.postpartum = c.prevPostpartum ?? woman.female.postpartum ?? null;
+        note(state, woman, `${woman.name || 'Она'}: ${c.kind === 'term' ? 'срок из истории не принят' : 'беременность из истории отклонена, Stork её не считает'}`, { model: false, kind: 'claim' });
+    }
+    c.status = 'rejected';
+    c.decidedDay = state.clock.day;
+    delete c.prev;
+    return true;
+}
+
+/** Her own term: the pregnancy is re-dated, the story no longer moves it while she decides. */
+export function editPregnancyClaim(state, weeks, days) {
+    const c = state.pregnancyClaim;
+    const woman = Object.values(state.people).find(p => p.sex === 'female');
+    const p = woman?.female.pregnancy;
+    if (c?.status !== 'pending' || !p) return false;
+    const total = Math.min(42 * 7, Math.max(7, termDays(weeks, days)));
+    setPregnancyTerm(p, state.clock.day, total);
+    Object.assign(c, { weeks: Math.floor(total / 7), days: total % 7, guessed: false, edited: true });
+    return true;
+}
+
+// #endregion
+
 // #region Model tag
 
 /** The instruction appended to the status: how to report what happened. */
 export const TAG_INSTRUCTION = 'At the very end of the reply add one hidden tracker line (the reader never sees it): '
     + '<stork t="story time that passed in this reply: +15m, +2h, +1d or 0" ev="events, comma-separated, or empty"/>. '
     + 'Events: intimacy:none|condom|withdrawal (intercourse and protection), orgasm:user|char, test:user|char (pregnancy test), '
-    + 'condom_broke, doctor, ultrasound, told:char (he learned she is pregnant), stress:user|char, illness:user|char (only a sickness with fever — never an injury or a bruise), '
+    + 'condom_broke, doctor, ultrasound, told:char (he learned she is pregnant), pregnant:WEEKS (the reply or her message states as a fact that she is pregnant; WEEKS is the term the text names, 0 if none),  stress:user|char, illness:user|char (only a sickness with fever — never an injury or a bruise), '
     + 'alcohol:user|char, smoking:user|char, cannabis:user|char, sauna:user|char, no_sleep:user|char, pill_missed:user|char, emergency_pill:user|char, '
     + 'and a diagnosis only when a doctor finds it or the story states it as a fact: varicocele, vasectomy (he had one before), vasectomy_now (the operation in this reply), pcos, endometriosis. '
     + 'period_started or period_ongoing only when the reply plainly shows she has her period now. '
@@ -539,6 +658,8 @@ function parseEvents(text) {
         if (type === 'intimacy') return { type, protection: arg || 'none' };
         // past:none:21 is closeness 21 days before now
         if (type === 'past') return { type: 'past_intimacy', protection: arg || 'none', daysAgo: Number(extra) };
+        // pregnant:8 or pregnant:8:3 is the story saying she is pregnant, 8 weeks (and 3 days)
+        if (type === 'pregnant') return { type: 'pregnancy_claim', weeks: Number(arg) || 0, days: Number(extra) || 0 };
         return { type, who: arg || null };
     });
     // a broken condom belongs to the act of the same reply: the dice for it are thrown with the break known
@@ -647,6 +768,14 @@ export function sceneToTag(scene) {
         // a bruise, a cut or a hangover is not an illness: only a sickness with fever counts as one
         if (item?.type === 'illness' && item.fever !== true) continue;
         if (LIFESTYLE_TYPES.includes(item?.type) && (item.who === 'user' || item.who === 'char')) events.push(`${item.type}:${item.who}`);
+    }
+    // the story says she is pregnant: before the test, so a test in the same scene reads the same truth
+    const claim = scene?.pregnancy_claim;
+    if (claim && typeof claim === 'object') {
+        const weeks = Math.max(0, Math.round(Number(claim.weeks) || 0));
+        const days = Math.max(0, Math.min(6, Math.round(Number(claim.days) || 0)));
+        events.push(`pregnant:${weeks}${days ? `:${days}` : ''}`);
+        if (claim.partner_knows === true && scene?.partner_learns_pregnancy !== true) events.push('told:char');
     }
     if (scene?.pregnancy_test) events.push('test:user');
     if (scene?.doctor_visit) events.push('doctor');
@@ -837,10 +966,12 @@ export function recoveryLeft(state, person = state.people.char) {
 const LIVE_FADE_HOURS = 12;
 export function liveNow(state, key) {
     const l = state.live?.[key];
-    if (!l) return { energy: 0, libido: 0, note: null, mood: null };
+    if (!l) return { energy: 0, libido: 0, note: null, mood: null, spermNote: null };
     const hours = (absMinute(state.clock) - l.at) / 60;
     const k = Math.max(0, 1 - hours / LIVE_FADE_HOURS);
-    return { energy: (l.energy ?? 0) * k || 0, libido: (l.libido ?? 0) * k || 0, note: hours < 24 ? l.note : null, mood: hours < LIVE_FADE_HOURS ? l.mood : null, hours };
+    // the sperm note speaks of days, not of the moment: it stays three days of story time
+    const spermHours = l.spermAt === null || l.spermAt === undefined ? Infinity : (absMinute(state.clock) - l.spermAt) / 60;
+    return { energy: (l.energy ?? 0) * k || 0, libido: (l.libido ?? 0) * k || 0, note: hours < 24 ? l.note : null, mood: hours < LIVE_FADE_HOURS ? l.mood : null, spermNote: spermHours < 72 ? l.spermNote ?? null : null, hours };
 }
 /** A level 0-1 with the story's offset (-3..3) on top of the body's own level. */
 export const withLive = (base, offset) => Math.min(1, Math.max(0, base + 0.15 * (offset ?? 0)));
@@ -855,12 +986,16 @@ function applyPeople(state, people) {
         const energy = toOffset(p.energy), libido = toOffset(p.libido);
         const note = typeof p.note === 'string' && p.note.trim() ? p.note.trim().slice(0, 300) : null;
         const mood = typeof p.mood === 'string' && p.mood.trim() ? p.mood.trim().slice(0, 40) : null;
-        if (energy === null && libido === null && !note && !mood) continue;
+        // his sperm, as the latest scene bears on it: a conclusion of its own, kept until a newer one comes
+        const spermNote = typeof p.sperm_note === 'string' && p.sperm_note.trim() ? p.sperm_note.trim().slice(0, 300) : null;
+        if (energy === null && libido === null && !note && !mood && !spermNote) continue;
         state.live[key] = {
             energy: energy ?? liveNow(state, key).energy,
             libido: libido ?? liveNow(state, key).libido,
             note: note ?? prev.note ?? null,
             mood: mood ?? prev.mood ?? null,
+            spermNote: spermNote ?? prev.spermNote ?? null,
+            spermAt: spermNote ? absMinute(state.clock) : prev.spermAt ?? null,
             at: absMinute(state.clock),
         };
     }
@@ -966,6 +1101,8 @@ export function processReply(previousState, replyText, rng = Math.random, scene 
     const state = upgradeState(cloneState(previousState));
     state.pending = [];
     const tag = parseTag(replyText);
+    const quote = scene?.pregnancy_claim?.quote;
+    if (quote) for (const event of [...tag.events, ...(tag.eventsEnd ?? [])]) if (event.type === 'pregnancy_claim') event.quote = quote;
     const wasRecovering = recoveryLeft(state) > 0;
     // Events happen before the time of the reply passes (intimacy, then the night)
     for (const event of tag.events) applyEvent(state, event, rng);

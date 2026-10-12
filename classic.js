@@ -3,12 +3,12 @@
  * The infoblock in the chat has its own compact look in ui.js; the words, the numbers and the editors
  * both use come from common.js, the buttons from handleAction in ui.js.
  */
-import { cycleInfo, DOCTOR_VISITS, FEMALE_CONTRACEPTION, femaleState, laborProgress, pillState, pregnancyInfo } from './biology.js';
+import { DOCTOR_VISITS, FEMALE_CONTRACEPTION, femaleState, laborProgress, pillState, pregnancyInfo } from './biology.js';
 import { absMinute, dateLabel, liveNow, storyDate, timeLabel, withLive } from './engine.js';
 import {
-    ACT_LABEL, agoWord, avatarUrl, babyWeight, capitalize, clamp01, cycleFields, cycleStrip, esc, femaleLevels, femaleTraits, icon, initials, KIND_ICON, knowsPregnancy,
+    ACT_LABEL, agoWord, avatarUrl, babyWeight, capitalize, claimCard, clamp01, cycleFields, esc, femaleLevels, femaleTraits, icon, initials, KIND_ICON, knowsPregnancy,
     levelWord, maleLevels, monthGrid, nameOf, nextInCycle, personFields, pickBar, pregnancyLibidoWhy, readingLine, recentEvents, riskyLately, upcomingRows,
-    upcomingWhen, years,
+    spermPanel, upcomingWhen, years,
 } from './common.js';
 
 // #region Rings around the avatars
@@ -37,11 +37,6 @@ function ringsHtml(rings, key, name, size = 'lg') {
 /** One line of the legend next to the rings: colour, name, value, and why. */
 function legendRow(tone, label, value, why) {
     return `<div class="stk-leg"><i class="is-${tone}"></i><div><span><b>${esc(label)}</b> ${esc(value)}</span>${why ? `<small>${esc(why)}</small>` : ''}</div></div>`;
-}
-/** Small ring with a value inside, for the three sperm numbers. */
-function miniRing(tone, value, text) {
-    const v = Math.round(clamp01(value) * 100);
-    return `<div class="stk-mini-ring"><svg viewBox="0 0 40 40" aria-hidden="true"><circle class="stk-ring-bg" cx="20" cy="20" r="16" stroke-width="4"/><circle class="stk-ring-v is-${tone}" cx="20" cy="20" r="16" stroke-width="4" pathLength="100" stroke-dasharray="${v} 100" transform="rotate(-90 20 20)"/></svg><b>${esc(text)}</b></div>`;
 }
 
 /** How the story shows this person now: note and mood from the analysis of the latest replies. */
@@ -128,7 +123,6 @@ export function maleCard(state, person, view = {}) {
     if (view.editPerson === person.key) return personEditor(state, person.key);
     const L = maleLevels(state, person);
     const s = L.s;
-    const fresh = [...new Set(s.recent.filter(e => e.daysAgo <= 1).map(e => `${e.daysAgo ? 'вчера' : 'сегодня'}: ${e.label}`))];
     return `<div class="stk-card">
         <div class="stk-card-title">${icon('fa-mars')}${esc(nameOf(person))}<span class="stk-muted">${years(person.age)}</span>${pencil(person.key)}</div>
         <div class="stk-person">
@@ -142,13 +136,7 @@ export function maleCard(state, person, view = {}) {
         ${L.left > 0 ? `<div class="stk-row stk-recover">${icon('fa-hourglass-half')}восстанавливается после оргазма: ещё ~${L.left} мин по времени истории</div>` : ''}
         ${storyNote(state, person.key)}
         <div class="stk-sub">Сперма</div>
-        <div class="stk-sperm">
-            <div>${miniRing('pink', s.countNow / 100, `${s.countNow}%`)}<div><b>Количество</b><small>${esc(L.countWhy || 'в норме')}</small></div></div>
-            <div>${miniRing('pink', s.motility / 100, `${s.motility}%`)}<div><b>Подвижность</b><small>${esc(L.motilityWhy)}</small></div></div>
-            <div>${miniRing('accent', s.reserve, `${Math.round(s.reserve * 100)}%`)}<div><b>Запас</b><small>${esc(L.reserveWhy)}</small></div></div>
-        </div>
-        ${fresh.length ? `<div class="stk-row">${icon('fa-wine-glass')}${esc(fresh.join(', '))}</div>` : ''}
-        ${s.vasectomy ? `<div class="stk-row">${icon('fa-scissors')}вазэктомия: ${esc(s.vasectomy)}</div>` : ''}
+        ${spermPanel(state, person, L)}
         ${s.couvade ? `<div class="stk-row">${icon('fa-face-tired')}сопереживает беременности: хуже спит, подташнивает</div>` : ''}
         <div class="stk-row stk-muted">${icon('fa-dna')}${esc(L.fertilityLine)}</div>
     </div>`;
@@ -184,6 +172,7 @@ export function renderNow(state, view = {}) {
     return `
         <div class="stk-clock"><b>${esc(capitalize(dateLabel(state)))}</b><span class="stk-muted">${hh}:${mm} · ${esc(timeLabel(state.clock.minutes))}${state.dateSure ? '' : ' · дата пока примерная'}</span></div>
         ${readingLine()}
+        ${claimCard(state)}
         <div class="stk-duo">
             ${femaleCard(state, state.people.user, view)}
             ${maleCard(state, state.people.char, view)}
@@ -200,16 +189,15 @@ export function renderToday(state, view) {
 
 // #region Calendar
 
-export function renderCalendar(state, view) {
+/**
+ * The month as a calendar: the next dates, the month with its arrows, the legend. The same in the window and in
+ * the infoblock, so both show the one clear calendar.
+ */
+export function calendarCore(state, view) {
     const woman = state.people.user;
     const f = woman.female;
-    const editable = !f.pregnancy && !f.postpartum;
     const { month, grid } = monthGrid(state, view, storyDate(state) ?? new Date());
     return `
-        ${editable ? `<div class="stk-card">
-            <div class="stk-card-title">${icon('fa-arrows-spin')}Цикл ${esc(nameOf(woman))}<span class="stk-muted">день ${cycleInfo(f, state.clock.day).cycleDay}</span></div>
-            ${cycleStrip(f, state.clock.day, { titles: true })}
-        </div>` : ''}
         <div class="stk-card">
             <div class="stk-card-title">${icon('fa-calendar-check')}Ближайшие даты</div>
             ${upcoming(state, woman) || '<div class="stk-muted">пока ничего</div>'}
@@ -224,12 +212,20 @@ export function renderCalendar(state, view) {
             <span><i class="is-period"></i>месячные</span>
             <span><i class="is-window"></i>фертильные дни</span>
             <span><i class="is-ovulation"></i>овуляция</span>
-                <span><i class="is-warm"></i>ПМС</span>
-            <span><i class="is-preg"></i>беременность</span>
+            <span><i class="is-warm"></i>ПМС</span>
+            ${f.pregnancy || f.postpartum ? '<span><i class="is-preg"></i>беременность</span>' : ''}
             <span>${icon('fa-heart')}близость</span>
             <span>${icon('fa-vial')}тест</span>
         </div>
-        ${pickBar(state, view)}
+        ${pickBar(state, view)}`;
+}
+
+export function renderCalendar(state, view) {
+    const f = state.people.user.female;
+    const editable = !f.pregnancy && !f.postpartum;
+    // the strip of the cycle lives in the infoblock; here the month grid says the same, bigger
+    return `
+        ${calendarCore(state, view)}
         ${editable ? `<div class="stk-card stk-edit" data-key="user">
             <div class="stk-card-title">${icon('fa-sliders')}Мой цикл</div>
             ${cycleFields(f)}
@@ -244,12 +240,13 @@ export function renderCalendar(state, view) {
 export function renderPregnancy(state) {
     const woman = [state.people.user, state.people.char].find(p => p.sex === 'female' && p.female.pregnancy && knowsPregnancy(p));
     if (!woman) {
-        return `<div class="stk-empty">${icon('fa-baby', 'stk-ic-xl')}<div>Беременности пока нет. Или о ней ещё никто не знает: сделай тест.</div></div>`;
+        return `${claimCard(state)}<div class="stk-empty">${icon('fa-baby', 'stk-ic-xl')}<div>Беременности пока нет. Или о ней ещё никто не знает: сделай тест.</div></div>`;
     }
     const p = woman.female.pregnancy;
     const info = pregnancyInfo(p, state.clock.day);
     const due = dateLabel(state, info.dueDay, { day: 'numeric', month: 'long', year: 'numeric' });
     return `
+        ${claimCard(state)}
         <div class="stk-card">
             <div class="stk-card-title">${icon('fa-person-pregnant')}${esc(nameOf(woman))}</div>
             <div class="stk-big">${info.week} нед. ${info.weekDay} дн.<span class="stk-muted">${info.trimester}-й триместр · до родов ${Math.max(0, info.daysToDue)} дн. (${esc(due)})</span></div>
