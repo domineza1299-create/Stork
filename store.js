@@ -34,6 +34,8 @@ const defaultSettings = {
     showRolls: false,
     // 'analyzer': Stork reads each reply through a connection; 'tag': the story model leaves a hidden tag (free)
     readMode: 'analyzer',
+    // how many earlier replies the analysis remembers, one short line each (about 25 tokens a line)
+    memoryReplies: 20,
     // a Connection Manager profile id, or 'current' for the main connection; '' = not chosen yet (the first profile is taken)
     readProfile: '',
     // the log keeps whole prompts too (big, and has the story's text)
@@ -106,6 +108,20 @@ export function stateBefore(index) {
         if (snapshot) return upgradeState(snapshot.state);
     }
     return baseState();
+}
+
+/**
+ * The lines of the story so far before chat message `index`: one per read reply, the newest `limit` of them,
+ * oldest first. Walks the chat back through the swipes that are shown now.
+ */
+export function storyLines(index, limit = 20) {
+    const chat = getContext().chat ?? [];
+    const lines = [];
+    for (let i = Math.min(index, chat.length) - 1; i >= 0 && lines.length < limit; i--) {
+        const line = snapshotOf(chat[i])?.state?.lastLine;
+        if (line?.text) lines.push(line);
+    }
+    return lines.reverse();
 }
 
 /** The state after the whole chat: what the next reply builds on. */

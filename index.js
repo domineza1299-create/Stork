@@ -8,9 +8,9 @@ import { ensureProfileChoice, forgetReplyCounts } from './connection.js';
 import {
     activeIn, changed, currentState, currentView, getGenerationState, initSettings, MODULE, onReread, onRetry, onStateChange, processMessage,
     processUserMessage, readStatus, refreshStatus, sameReply, setGenerationState, setReadFailed, setReading, setStatus, settings, similarSig,
-    otherClock, skipBefore, stateBefore, statusText, storyHash, storySig, storyText, updateCurrentState, VIEWS,
+    otherClock, skipBefore, stateBefore, statusText, storyLines, storyHash, storySig, storyText, updateCurrentState, VIEWS,
 } from './store.js';
-import { buildStatus } from './engine.js';
+import { buildStatus, timelineText } from './engine.js';
 import { analyzeCards, readCards } from './cards.js';
 import { hasMinor, setupFromAnalysis } from './setup.js';
 import { renderStatusBar } from './ui.js';
@@ -177,6 +177,7 @@ async function readReplyNow(index, { force = false, strict = false, reason = '' 
             charName: before.people.char.name,
             dateText: `${dateLabel(before)}, ${String(Math.floor(before.clock.minutes / 60)).padStart(2, '0')}:${String(before.clock.minutes % 60).padStart(2, '0')} (${timeLabel(before.clock.minutes)})`,
             status: buildStatus(before, { detailed: true, withTag: false, guide: false }),
+            timeline: timelineText(before, storyLines(index, Number(settings().memoryReplies) || 20)),
             earlier,
             userMessage: userAt !== null ? chat[userAt].mes : '',
             reply: message.mes,

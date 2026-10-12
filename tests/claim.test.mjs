@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { pregnancyInfo } from '../biology.js';
 import {
-    acceptPregnancyClaim, advanceTime, buildStatus, createState, editPregnancyClaim, MINUTES_PER_DAY, processReply, rejectPregnancyClaim, sceneToTag,
+    acceptPregnancyClaim, advanceTime, buildStatus, createState, editPregnancyClaim, MINUTES_PER_DAY, processReply, rejectPregnancyClaim, sceneToTag, timelineText,
 } from '../engine.js';
 
 function couple() {
@@ -88,5 +88,66 @@ describe('a pregnancy the story states', () => {
     it('the tag of the role-play model can say it too', () => {
         const state = processReply(couple(), 'Она положила руку на живот. <stork t="+5m" ev="pregnant:12"/>', () => 0.5).state;
         assert.equal(week(state), 12);
+    });
+});
+
+describe('time and memory of the story', () => {
+    it('does not turn the day for a date or a time of day the scene only mentions', () => {
+        let state = couple();
+        state.clock.minutes = 13 * 60;
+        const day = state.clock.day;
+        state = read(state, { minutes: 10, part_of_day: 'morning' });
+        assert.equal(state.clock.day, day, '«morning» said at 13:00 in a ten-minute scene is not the next morning');
+        state = read(state, { minutes: 5, date: '2026-01-25' });
+        assert.equal(state.clock.day, day, 'a date mentioned in passing does not move the calendar');
+        state = read(state, { minutes: 600, part_of_day: 'morning', scene_after_skip: true });
+        assert.equal(state.clock.day, day + 1, 'a real skip to the next morning does');
+    });
+
+    it('each reply keeps only its own line of the story, and the lines read with their story time', () => {
+        let state = read(couple(), { minutes: 60, summary: 'утром пили кофе на кухне' });
+        const first = state.lastLine;
+        assert.equal(first.text, 'утром пили кофе на кухне');
+        state = read(state, { minutes: 30 });
+        assert.equal(state.lastLine, null, 'a reply without a summary has no line, the earlier one is not copied');
+        assert.equal(state.timeline, undefined, 'nothing grows inside the state');
+        const text = timelineText(state, [first, { at: first.at + 1440, text: 'на следующий день гуляли' }]);
+        assert.match(text, /^\S+ \d+ \S+ \d{2}:\d{2} — утром пили кофе на кухне\n\S+ \d+ \S+ \d{2}:\d{2} — на следующий день гуляли$/);
+    });
+
+    it('a midwife instead of a doctor in an old-world story', () => {
+        let state = couple();
+        state = read(state, { minutes: 5, era: 'past', pregnancy_claim: { weeks: 7 } });
+        assert.equal(state.era, 'traditional');
+        advanceTime(state, 8 * MINUTES_PER_DAY, () => 0.9);
+        assert.ok(state.log.some(e => /повитуху/.test(e.text)), 'the visit is the midwife');
+        assert.ok(!state.log.some(e => /врач/.test(e.text)));
+        state = read(state, { minutes: 5, ultrasound: true });
+        assert.equal(state.people.user.female.pregnancy.sexKnown, false, 'no ultrasound to see the sex');
+    });
+});
+
+describe('the body keeps its course between replies', () => {
+    it('does not move the cycle for a period the story mentions in the first half of it', () => {
+        let state = couple();
+        const f = state.people.user.female;
+        f.cycleStart = state.clock.day - 7;
+        f.syncedDay = state.clock.day - 7;
+        state = read(state, { minutes: 5, period: 'ongoing' });
+        assert.equal(state.people.user.female.cycleStart, f.cycleStart, 'day 8 of a cycle she set a week ago: the cycle stays');
+        assert.ok(state.log.some(e => e.kind === 'period_hint'), 'she is asked instead');
+        const late = couple();
+        late.people.user.female.cycleStart = late.clock.day - 7;
+        const moved = read(late, { minutes: 5, period: 'started' });
+        assert.equal(moved.people.user.female.cycleStart, moved.clock.day, 'never confirmed: the story is trusted');
+    });
+
+    it('keeps what the story establishes about the pregnancy and tells both models', () => {
+        let state = read(couple(), { minutes: 5, pregnancy_claim: { weeks: 7 } });
+        state = read(state, { minutes: 5, pregnancy_facts: ['сильный токсикоз по утрам'] });
+        state = read(state, { minutes: 5, pregnancy_facts: ['Сильный токсикоз по утрам!', 'повитуха сказала: дитя крупное'] });
+        const facts = state.people.user.female.pregnancy.facts.map(f => f.text);
+        assert.deepEqual(facts, ['сильный токсикоз по утрам', 'повитуха сказала: дитя крупное'], 'the same fact once');
+        assert.match(buildStatus(state, { detailed: false }), /Established in the story: сильный токсикоз по утрам \(week 7\)/);
     });
 });

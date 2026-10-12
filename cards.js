@@ -64,7 +64,7 @@ Return JSON exactly in this shape:
   "char": { "age": number|null, "fertility": "normal"|"low"|"sterile"|null, "smoker": boolean, "drinker": boolean, "varicocele": boolean, "vasectomy": boolean },
   "user": { "age": number|null, "smoker": boolean, "drinker": boolean, "pregnant": boolean, "pregnancy_weeks": number|null, "children": number, "contraception": "none"|"pill"|"ring"|"patch"|"injection"|"implant"|"iud"|"copper_iud"|null, "cycle_length": number|null, "cycle_day": number|null, "flow": "light"|"normal"|"heavy"|null, "pms_severe": boolean, "painful_periods": boolean, "pcos": boolean, "endometriosis": boolean },
   "start": { "time": "HH:MM"|null, "date": "YYYY-MM-DD"|null, "date_guessed": boolean, "place": "a short place name in Russian"|null },
-  "story": { "relationship": "a short phrase in Russian", "trying_for_baby": boolean, "summary": "1-2 sentences in Russian about what matters for the tracker in this story" }
+  "story": { "relationship": "a short phrase in Russian", "trying_for_baby": boolean, "summary": "1-2 sentences in Russian about what matters for the tracker in this story", "era": "modern"|"past" }
 }
 Rules:
 - Ages: only a number the texts give or clearly imply (a student, "in her thirties" — the middle of the range); null otherwise.

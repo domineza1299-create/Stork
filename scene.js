@@ -19,8 +19,11 @@ const SYSTEM_PROMPT = `You track a role-play story for a reproductive health tra
 For how each of them is now, think like an attentive doctor: draw conclusions from the tracker's body data together with the scene.
 Reply with one JSON object and nothing else.`;
 
-export function buildScenePrompt({ userName, charName, dateText, status, earlier, userMessage, reply, skipCounted = false }) {
-    return `Story time before these messages: ${dateText}.${skipCounted ? `
+export function buildScenePrompt({ userName, charName, dateText, status, timeline = '', earlier, userMessage, reply, skipCounted = false }) {
+    return `${timeline ? `STORY SO FAR (what happened lately, by story time; the newest line is right before these messages):
+${timeline}
+
+` : ''}Story time before these messages: ${dateText}. The scene goes on from there: a new day begins only if these messages move to it.${skipCounted ? `
 The time skip the user message opens with is ALREADY COUNTED: the time above is after it. "minutes" is only the time that passes after that, in the reply; the scene is set after the skip.` : ''}
 {{user}} = ${userName} (woman), {{char}} = ${charName} (man).
 ${status ? `
@@ -40,9 +43,11 @@ Return JSON:
 {
   "minutes": how many minutes of story time these messages take, from the user message to the end of the reply. Time moves in a continuous scene too: estimate it from what is done and said (a few lines of talk 2-5, washing up or a shower 10-20, getting dressed 5-10, a meal 20-40, a drive across town 20-40, a night about 480, "the next morning" about 720, "a week later" 10080). 0 only if it all is one single instant,
   "clock": "HH:MM" time of day at the END of these messages if the text states it as the time now (a header like 22:40, a clock or phone screen read in the scene), otherwise null. A header copied unchanged from the earlier reply is not the time now: then null,
-  "date": "YYYY-MM-DD" only if these messages name the calendar date (a header, a letter, a phone screen, "on the 15th of March"), otherwise null,
+  "date": "YYYY-MM-DD" only if these messages name the date the scene is in NOW (a header, "today is the 15th of March"); a date that is only mentioned (a plan, a letter, a memory, "tomorrow") is not it: then null,
   "part_of_day": "morning" | "day" | "evening" | "night" — the time of day these messages end in, if the text makes it clear (light, meals, "at dawn", "late at night"), otherwise null,
   "scene_after_skip": true | false,
+  "summary": "what happened in these messages, one line in Russian, up to 20 words, facts only: where, who, what was done, and anything about the body (closeness, her period, nausea, a check-up, an injury). It is kept as the story so far",
+  "era": "modern" | "past" — the world of the story: "past" for old times, a village of the old days, fantasy without modern medicine; "modern" otherwise,
   "intimacy": null or { "protection": "none" | "condom" | "pill_only", "finished_inside": true | false, "condom_broke": true | false },
   "past_intimacy": [ { "days_ago": number, "protection": "none" | "condom" | "pill_only", "finished_inside": true | false } ],
   "orgasm": [ "user" and/or "char" ],
@@ -52,6 +57,7 @@ Return JSON:
   "doctor_visit": true | false,
   "ultrasound": true | false,
   "partner_learns_pregnancy": true | false,
+  "pregnancy_facts": [ "new facts about her pregnancy these messages establish, each up to 12 words in Russian" ],
   "pregnancy_claim": null or { "weeks": number or null, "days": number or null, "partner_knows": true | false, "quote": "the words that say it, up to 15 words, as written" },
   "diagnoses": [ any of ${DIAGNOSES.map(d => `"${d}"`).join(', ')} ],
   "period": "started" | "ongoing" | null,
@@ -68,6 +74,7 @@ Rules:
 - "scene_after_skip": true when the messages first jump forward in time and the scene with everything in it (closeness, drinking, a test, a doctor, an injury) comes after the jump ("four months later… he pours a whiskey"); false when things happen first and the time passes after them (they made love, then slept till morning), or when there is no jump.
 - "illness" only for a sickness with a raised temperature (flu, an infection, a cold with fever) — then "fever": true. Injuries, bruises, cuts, pain, a hangover or tiredness are NOT an illness: put an injury into "injury", tiredness into "energy".
 - "pregnancy_claim": when these messages, the USER MESSAGE included, state as a fact that {{user}} is pregnant: she says or thinks it as something she knows, a positive test, a doctor confirms it, the narration says so. The user writes {{user}} herself, so her own words count even if the tracker says she is not pregnant. "weeks"/"days": the term the text names (months → weeks: 2 months ≈ 8 weeks; "two weeks of delay" ≈ 6 weeks), null if no term. "partner_knows": true if {{char}} knows in these messages. null when it is only a fear, a guess, a joke, a plan, a dream, a question, or nothing like that.
+- "pregnancy_facts": only while the tracker says she is pregnant and knows it: what these messages establish about this pregnancy that is worth remembering for its whole course — a symptom that stays (strong nausea, swelling), a complication or a threat, what a doctor or a midwife said, twins, a decision (to keep it, to hide it). Not a passing feeling of this scene, not what the tracker already says. Empty if nothing new.
 - "partner_learns_pregnancy": true only when {{char}} learns in these messages that {{user}} is pregnant (she tells him, he sees a positive test, a doctor says it with him there); false if he already knew, if it is only a guess or a fear, or if nothing like that happened.
 - "past_intimacy": intercourse between {{user}} and {{char}} the messages speak of as already past and not shown in the story before ("three weeks ago we slept together", "they have been sleeping together since spring": the latest time), with how many days before the END of these messages it was; finished_inside true unless said otherwise; protection "none" unless said. Empty if nothing like that.
 - "period": "started" if her period begins in these messages, "ongoing" if they plainly show she has it now (she says so, blood, pads, he knows it is her period); null if it is only a guess, PMS, or not shown.

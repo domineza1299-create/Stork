@@ -3,12 +3,12 @@
  * The infoblock in the chat has its own compact look in ui.js; the words, the numbers and the editors
  * both use come from common.js, the buttons from handleAction in ui.js.
  */
-import { DOCTOR_VISITS, FEMALE_CONTRACEPTION, femaleState, laborProgress, pillState, pregnancyInfo } from './biology.js';
+import { careOf, FEMALE_CONTRACEPTION, femaleState, laborProgress, pillState, pregnancyInfo } from './biology.js';
 import { absMinute, clockText, dateLabel, liveNow, shortDate, storyDate, timeLabel, withLive } from './engine.js';
 import {
     ACT_LABEL, agoWord, avatarUrl, babyWeight, capitalize, claimCard, clamp01, cycleFields, esc, femaleLevels, femaleTraits, icon, initials, KIND_ICON, knowsPregnancy,
     levelWord, maleLevels, monthGrid, nameOf, nextInCycle, personFields, pickBar, pregnancyLibidoWhy, readingLine, recentEvents, riskyLately, upcomingRows,
-    spermPanel, upcomingWhen, years,
+    pregnancyFacts, spermPanel, upcomingWhen, years,
 } from './common.js';
 
 // #region Rings around the avatars
@@ -193,15 +193,17 @@ export function renderToday(state, view) {
  * The month as a calendar: the next dates, the month with its arrows, the legend. The same in the window and in
  * the infoblock, so both show the one clear calendar.
  */
-export function calendarCore(state, view) {
+export function calendarCore(state, view, { upcomingDates = true } = {}) {
     const woman = state.people.user;
     const f = woman.female;
     const { month, grid } = monthGrid(state, view, storyDate(state) ?? new Date());
+    // a known pregnancy: the cycle colours are gone from the month, so they leave the legend too
+    const pregnant = !!f.pregnancy && knowsPregnancy(woman);
     return `
-        <div class="stk-card">
+        ${upcomingDates ? `<div class="stk-card">
             <div class="stk-card-title">${icon('fa-calendar-check')}Ближайшие даты</div>
             ${upcoming(state, woman) || '<div class="stk-muted">пока ничего</div>'}
-        </div>
+        </div>` : ''}
         <div class="stk-cal-head">
             <button type="button" class="stk-btn is-ghost" data-stk-act="cal-month" data-d="-1" aria-label="Предыдущий месяц">${icon('fa-chevron-left')}</button>
             <b>${esc(capitalize(month.toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' })))}</b>
@@ -209,13 +211,13 @@ export function calendarCore(state, view) {
         </div>
         ${grid}
         <div class="stk-legend">
-            <span><i class="is-period"></i>месячные</span>
+            ${pregnant ? '' : `<span><i class="is-period"></i>месячные</span>
             <span><i class="is-window"></i>фертильные дни</span>
             <span><i class="is-ovulation"></i>овуляция</span>
-            <span><i class="is-warm"></i>ПМС</span>
-            ${f.pregnancy || f.postpartum ? '<span><i class="is-preg"></i>беременность</span>' : ''}
+            <span><i class="is-warm"></i>ПМС</span>`}
+            ${pregnant || f.postpartum ? '<span><i class="is-preg"></i>беременность</span>' : ''}
             <span>${icon('fa-heart')}близость</span>
-            <span>${icon('fa-vial')}тест</span>
+            ${careOf(state).canSeeSex ? `<span>${icon('fa-vial')}тест</span>` : ''}
         </div>
         ${pickBar(state, view)}`;
 }
@@ -245,6 +247,7 @@ export function renderPregnancy(state) {
     const p = woman.female.pregnancy;
     const info = pregnancyInfo(p, state.clock.day);
     const due = dateLabel(state, info.dueDay, { day: 'numeric', month: 'long', year: 'numeric' });
+    const care = careOf(state);
     return `
         ${claimCard(state)}
         <div class="stk-card">
@@ -260,7 +263,7 @@ export function renderPregnancy(state) {
                 <div><b>${esc(info.baby.compare)}</b><span>размером с</span></div>
             </div>
             <div class="stk-row">${icon('fa-wand-sparkles')}${esc(info.baby.develops)}</div>
-            <div class="stk-row">${icon('fa-venus-mars')}${p.sexKnown ? esc(p.sexes.join(' и ')) : 'пол пока неизвестен, узнать на УЗИ с 18 недель'}</div>
+            <div class="stk-row">${icon('fa-venus-mars')}${p.sexKnown ? esc(p.sexes.join(' и ')) : esc(care.sexUnknown)}</div>
             ${info.kicksFelt ? `<div class="stk-row">${icon('fa-shoe-prints')}толкается</div>` : ''}
         </div>
         <div class="stk-card">
@@ -268,10 +271,11 @@ export function renderPregnancy(state) {
             <div class="stk-row">живот: ${esc(info.belly)}, +${info.weightGain} кг</div>
             ${info.symptoms.length ? `<div class="stk-row">${esc(info.symptoms.join(', '))}</div>` : ''}
             <div class="stk-row">тянет на ${esc(p.cravings.join(' и '))}, не выносит ${esc(p.aversions.join(', '))}</div>
+            ${pregnancyFacts(p)}
         </div>
         <div class="stk-card">
-            <div class="stk-card-title">${icon('fa-user-doctor')}Врач</div>
-            ${DOCTOR_VISITS.map(v => `<div class="stk-row ${p.visitsDone.includes(v.week) ? '' : 'stk-muted'}">${icon(p.visitsDone.includes(v.week) ? 'fa-circle-check' : 'fa-circle')}${v.week} нед.: ${esc(v.label)}</div>`).join('')}
+            <div class="stk-card-title">${icon(care.icon)}${care.title}</div>
+            ${care.visits.map(v => `<div class="stk-row ${p.visitsDone.includes(v.week) ? '' : 'stk-muted'}">${icon(p.visitsDone.includes(v.week) ? 'fa-circle-check' : 'fa-circle')}${v.week} нед.: ${esc(v.label)}</div>`).join('')}
         </div>`;
 }
 

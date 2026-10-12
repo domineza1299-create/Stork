@@ -4,12 +4,12 @@
  */
 import { saveSettingsDebounced } from '../../../../script.js';
 import { callGenericPopup, POPUP_TYPE } from '../../../popup.js';
-import { cycleInfo, FEMALE_CONDITIONS, FEMALE_CONTRACEPTION, MALE_FERTILITY, PERIOD_FLOW, STORY_MODES } from './biology.js';
+import { cycleInfo, ERAS, FEMALE_CONDITIONS, FEMALE_CONTRACEPTION, MALE_FERTILITY, PERIOD_FLOW, STORY_MODES } from './biology.js';
 import { analyzeCards, guessAge, readCards } from './cards.js';
 import { connectionManagerOn, CURRENT, describeChoice, ensureProfileChoice, errorText, getProfiles, requestModel } from './connection.js';
 import { advanceTime, applyEvent, dateLabel, MINUTES_PER_DAY, parseClock, storyDate } from './engine.js';
 import { currentState, currentView, onStateChange, refreshStatus, rereadLast, settings, updateCurrentState, VIEWS } from './store.js';
-import { ADULT_AGE, applySetupForm } from './setup.js';
+import { ADULT_AGE, applySetupForm, setPeriodStart } from './setup.js';
 import { capitalize, esc, icon, nameOf, years } from './common.js';
 import { eventLook, notify, notifyDone, notifyWarn } from './notify.js';
 import { downloadReport } from './diag.js';
@@ -48,7 +48,11 @@ export function announce(events) {
         seen.add(event.text);
         const name = event.who ? people[event.who]?.name : '';
         const own = !!name && event.text.startsWith(`${name}: `);
-        notify(capitalize(own ? event.text.slice(name.length + 2) : event.text), { ...eventLook(event), title: own ? name : 'Stork', timeOut: 7000, onClick: () => openStork() });
+        // the story spoke of a period the cycle does not expect: she decides, with one tap
+        const shift = event.kind === 'period_hint'
+            ? { timeOut: 15000, action: 'Сдвинуть цикл', onClick: () => { updateCurrentState(state => setPeriodStart(state, event.day)); notifyDone('Цикл сдвинут: месячные с этого дня', { icon: 'fa-droplet', tone: 'period' }); } }
+            : { timeOut: 7000, onClick: () => openStork() };
+        notify(capitalize(own ? event.text.slice(name.length + 2) : event.text), { ...eventLook(event), title: own ? name : 'Stork', ...shift });
     }
 }
 
@@ -212,6 +216,11 @@ function renderSetup(state, view) {
                         ${Object.entries(STORY_MODES).map(([k, v]) => `<option value="${k}" ${(state.storyMode ?? 'realistic') === k ? 'selected' : ''}>${v.label}</option>`).join('')}
                     </select>
                 </label>
+                <label class="stk-field"><span>Мир истории</span>
+                    <select class="text_pole stk-story" data-k="era">
+                        ${Object.entries(ERAS).map(([k, v]) => `<option value="${k}" ${(pre?.story?.era === 'past' && !state.eraSet ? 'traditional' : state.era ?? 'modern') === k ? 'selected' : ''}>${v}</option>`).join('')}
+                    </select>
+                </label>
             </div>
         </div>
         ${minors.length
@@ -220,7 +229,7 @@ function renderSetup(state, view) {
 }
 
 const SETUP_FIELDS = ['cycleLength', 'periodLength', 'cycleDay', 'irregularity', 'flow', 'contraception', 'pmsSevere', 'painfulPeriods', 'pcos', 'endometriosis',
-    'userSmoker', 'userDrinker', 'fertility', 'smoker', 'drinker', 'startDate', 'time', 'storyMode'];
+    'userSmoker', 'userDrinker', 'fertility', 'smoker', 'drinker', 'startDate', 'time', 'storyMode', 'era'];
 
 /** Reads the setup form (and the names and ages from the cards) into the state. */
 function applySetup($root, state, view) {
@@ -291,6 +300,9 @@ function profileSelect(compact = false) {
     </select>`;
 }
 
+/** How deep the analysis remembers the story: replies, one short line each. */
+const MEMORY_OPTIONS = [10, 20, 40, 80, 150];
+
 /** How Stork reads the role-play: a separate request per reply through a chosen profile, or a hidden tag from the story model. */
 function readingCard() {
     const s = settings();
@@ -315,6 +327,12 @@ function readingCard() {
                     </div>
                 </div>
                 <div class="stk-hint ${used.startsWith('ОШИБКА') ? 'is-warn' : ''}">${icon(used.startsWith('ОШИБКА') ? 'fa-triangle-exclamation' : 'fa-plug')}Запросы идут: ${esc(used)}</div>
+                <label class="stk-field"><span>Память анализа: сколько прошлых ответов помнить</span>
+                    <select class="text_pole stk-set" data-k="memoryReplies">
+                        ${MEMORY_OPTIONS.map(n => `<option value="${n}" ${Number(s.memoryReplies ?? 20) === n ? 'selected' : ''}>${n} ответов · ≈${Math.round(n * 25 / 100) * 100 || 100} токенов</option>`).join('')}
+                    </select>
+                </label>
+                <div class="stk-hint">${icon('fa-clock-rotate-left')}От каждого ответа в память идёт одна строка «когда и что было», не весь текст. Так анализ помнит прошлые дни и не путает время. Больше ответов — дольше память, но дороже каждый запрос.</div>
                 ${!connectionManagerOn() ? `<div class="stk-hint is-warn">${icon('fa-triangle-exclamation')}Connection Manager выключен: профилей нет, доступно только основное подключение.</div>` : ''}
                 <div class="stk-hint">${icon('fa-coins')}Ровно один короткий запрос после каждого нового ответа бота, около 1-2 тысяч токенов (плюс один раз чтение карточек, когда Stork включается в чате). Свайп назад, правки других расширений и картинки запросов не тратят. Дешевле всего выбрать недорогую модель отдельным профилем.</div>`
                 : `<div class="stk-hint">${icon('fa-circle-info')}РП-модель в конце ответа ставит скрытую строчку. Бесплатно, но модель иногда забывает: тогда Stork предложит отметить сам.</div>`}
@@ -546,7 +564,7 @@ export async function openStork({ tab } = {}) {
         }
         saveSettingsDebounced();
         // the connection and the log change nothing in the story: no chat save, only a redraw
-        if (['readProfile', 'debugPrompts'].includes(this.dataset.k)) {
+        if (['readProfile', 'debugPrompts', 'memoryReplies'].includes(this.dataset.k)) {
             if (!view.touched) render();
             return;
         }

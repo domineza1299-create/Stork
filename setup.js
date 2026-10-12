@@ -86,6 +86,8 @@ export function setupFromAnalysis(state, analysis, cards, rng = Math.random) {
     // unknown day of the cycle: a random one, as the setup form does
     const cycleDay = clampInt(u.cycle_day, 1, f.cycleLength, 1 + Math.floor(rng() * f.cycleLength));
     f.cycleStart = day - (cycleDay - 1);
+    // only a day the cards state is a confirmed cycle: a random one gives way to the story's first period
+    f.syncedDay = u.cycle_day ? day : null;
     f.cycleShift = 0;
     f.contraception = CONTRACEPTIONS.includes(u.contraception) ? u.contraception : 'none';
     f.flow = ['light', 'normal', 'heavy'].includes(u.flow) ? u.flow : 'normal';
@@ -113,6 +115,11 @@ export function setupFromAnalysis(state, analysis, cards, rng = Math.random) {
     const time = parseClock(start.time);
     if (time !== null) state.clock.minutes = time;
     if (a.story?.summary) state.storySummary = a.story.summary;
+    // the world of the story: a doctor or a midwife looks after a pregnancy
+    if (a.story?.era === 'past' || a.story?.era === 'modern') {
+        state.era = a.story.era === 'past' ? 'traditional' : 'modern';
+        state.eraSet = true;
+    }
     state.setupDone = true;
     state.autoSetup = true;
     return state;
@@ -139,6 +146,7 @@ export function applySetupForm(state, v, analysis = null, rng = Math.random) {
     f.cycleLength = clampInt(v.cycleLength, 21, 35, 28);
     f.periodLength = clampInt(v.periodLength, 3, 7, 5);
     f.cycleStart = day - (clampInt(v.cycleDay, 1, f.cycleLength, 1) - 1);
+    f.syncedDay = day;
     f.cycleShift = 0;
     f.irregularity = clampInt(v.irregularity, 0, 7, 0);
     const contraception = CONTRACEPTIONS.includes(v.contraception) ? v.contraception : 'none';
@@ -163,6 +171,14 @@ export function applySetupForm(state, v, analysis = null, rng = Math.random) {
     if (ISO_DATE.test(String(v.startDate ?? ''))) anchorStartDate(state, v.startDate);
     state.clock.minutes = parseClock(v.time) ?? state.clock.minutes;
     state.storyMode = v.storyMode ?? 'realistic';
+    // the world of the story: from her choice in the form, otherwise from the cards
+    if (v.era === 'traditional' || v.era === 'modern') {
+        state.era = v.era;
+        state.eraSet = true;
+    } else if (analysis?.story?.era === 'past' || analysis?.story?.era === 'modern') {
+        state.era = analysis.story.era === 'past' ? 'traditional' : 'modern';
+        state.eraSet = true;
+    }
     if (analysis?.story?.summary) state.storySummary = analysis.story.summary;
     state.setupDone = true;
     state.chatOff = false;
@@ -191,6 +207,7 @@ export function applyPersonEdit(state, key, v) {
         if (v.cycleDay !== undefined && v.cycleDay !== '' && CYCLE_EDITABLE(f)) {
             const cycleDay = clampInt(v.cycleDay, 1, f.cycleLength, 1);
             f.cycleStart = day - (cycleDay - 1);
+    f.syncedDay = day;
             f.cycleShift = 0;
             f.rolledCycle = null;
             f.lateNoticed = [];
@@ -214,6 +231,7 @@ export function setPeriodStart(state, storyDay) {
     const f = state.people.user?.female;
     if (!f || !CYCLE_EDITABLE(f) || storyDay > state.clock.day || state.clock.day - storyDay > 60) return false;
     f.cycleStart = storyDay;
+    f.syncedDay = state.clock.day;
     f.cycleShift = 0;
     f.rolledCycle = null;
     f.lateNoticed = [];

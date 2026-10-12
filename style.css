@@ -2576,3 +2576,60 @@ div.stk-log-row {
     font-variant-numeric: tabular-nums;
 }
 
+/* ═══ The latest event in one line (the infoblock's «Сейчас») ═══ */
+.stk-shared-line {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    padding: 7px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--stk-line);
+    background: var(--stk-glass);
+    font-size: 0.92em;
+    cursor: pointer;
+}
+
+.stk-shared-line:hover {
+    background: var(--stk-glass-hover);
+}
+
+.stk-shared-line > .stk-ic {
+    color: var(--stk-pink);
+}
+
+.stk-shared-line > span {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.stk-shared-line > em {
+    flex: none;
+    color: var(--stk-muted);
+    font-size: 0.85em;
+}
+
+/* ═══ What the story established about the pregnancy ═══ */
+.stk-facts {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 4px;
+}
+
+.stk-fact {
+    display: grid;
+    grid-template-columns: 4.2em minmax(0, 1fr);
+    gap: 8px;
+    font-size: 0.9em;
+}
+
+.stk-fact > b {
+    color: color-mix(in srgb, var(--stk-preg) 75%, var(--stk-text));
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+

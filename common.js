@@ -4,7 +4,7 @@
  * changes in one place. Only the layout around them differs between the two looks.
  */
 import { getContext } from '../../../extensions.js';
-import { cycleInfo, DOCTOR_VISITS, FEMALE_CONDITIONS, FEMALE_CONTRACEPTION, FEMALE_HABITS, MALE_FERTILITY, pillState } from './biology.js';
+import { careOf, cycleInfo, FEMALE_CONDITIONS, FEMALE_CONTRACEPTION, FEMALE_HABITS, MALE_FERTILITY, pillState } from './biology.js';
 import { dateLabel, liveNow, maleSnapshot, recoveryLeft, withLive } from './engine.js';
 import { readStatus } from './store.js';
 
@@ -235,6 +235,13 @@ export function spermPanel(state, person, L) {
 
 // #endregion
 
+/** What the story established about this pregnancy, by week: the same list in the window and the infoblock. */
+export function pregnancyFacts(p) {
+    if (!p?.facts?.length) return '';
+    return `<div class="stk-facts"><div class="stk-sub">${icon('fa-feather-pointed')}Из истории</div>
+        ${p.facts.map(f => `<div class="stk-fact"><b>${f.week} нед.</b><span>${esc(f.text)}</span></div>`).join('')}</div>`;
+}
+
 // #region A pregnancy the story stated: she accepts, fixes the term or rejects it
 
 /** The card that asks her, or '' when nothing waits. Same in the window and in the infoblock. */
@@ -320,9 +327,10 @@ export function upcomingRows(state, woman) {
     const rows = [];
     if (f.pregnancy && knowsPregnancy(woman)) {
         const p = f.pregnancy;
-        for (const visit of DOCTOR_VISITS) {
+        const care = careOf(state);
+        for (const visit of care.visits) {
             const visitDay = p.lmp + visit.week * 7;
-            if (visitDay >= day && !p.visitsDone.includes(visit.week)) rows.push([visitDay, 'fa-user-doctor', visit.label]);
+            if (visitDay >= day && !p.visitsDone.includes(visit.week)) rows.push([visitDay, care.icon, visit.label]);
         }
         rows.push([p.lmp + 280, 'fa-baby', 'предполагаемая дата родов']);
     } else if (!f.postpartum && !f.pregnancy) {
@@ -357,7 +365,8 @@ export function monthGrid(state, view, today) {
     for (let d = 1; d <= daysInMonth; d++) {
         const storyDay = dayOf(new Date(month.getFullYear(), month.getMonth(), d));
         const classes = [];
-        const pregnantThen = f.pregnancy && knowsPregnancy(woman) && storyDay >= f.pregnancy.conceptionDay;
+        // a known pregnancy is counted from her last period, the way its weeks are: no cycle forecast over it
+        const pregnantThen = f.pregnancy && knowsPregnancy(woman) && storyDay >= f.pregnancy.lmp;
         if (pregnantThen) classes.push('is-preg');
         else if (!f.postpartum && !(f.pregnancy && storyDay >= f.pregnancy.conceptionDay)) {
             const length = f.cycleLength;

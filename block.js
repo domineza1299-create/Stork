@@ -1,12 +1,12 @@
 /*
  * The infoblock inside the chat: under (or above, or in the middle of) the latest reply.
  * Folded — one symmetric line: she on the left, he on the right, the date and time between them.
- * Open — tabs «Сейчас», «Календарь», «Беременность»; every panel inside folds on its own.
+ * Open — tabs «Сейчас» (a pregnancy opens it) and «Календарь»; every panel inside folds on its own.
  * Other extensions re-render the reply text and wipe foreign nodes: the block comes back in the same tick.
  */
 import { getContext } from '../../../extensions.js';
 import { activeIn, currentState, readStatus, settings } from './store.js';
-import { applyAutoFolds, blockHeadHtml, handleAction, onKeyActivate, renderCalendar, renderNow, renderPregnancy } from './ui.js';
+import { applyAutoFolds, blockHeadHtml, handleAction, onKeyActivate, renderCalendar, renderNow } from './ui.js';
 
 const OPEN_KEY = 'stork_block_open';
 /** The one infoblock and its view: tab, editing, picked day — survive re-renders. */
@@ -113,11 +113,10 @@ function place(mesEl, el) {
 // #region Render
 
 function bodyHtml(state) {
-    const f = state.people.user.female;
-    const pregnant = !!f.pregnancy?.knownBy?.includes('user');
-    const tabs = [['now', 'fa-sun', 'Сейчас'], ['calendar', 'fa-calendar-days', 'Календарь'], ...(pregnant ? [['baby', 'fa-baby', 'Беременность']] : [])];
+    // a pregnancy has no tab of its own: it opens «Сейчас», first thing
+    const tabs = [['now', 'fa-sun', 'Сейчас'], ['calendar', 'fa-calendar-days', 'Календарь']];
     if (!tabs.some(([id]) => id === view.tab)) view.tab = 'now';
-    const panel = view.tab === 'calendar' ? renderCalendar(state, view) : view.tab === 'baby' ? renderPregnancy(state) : renderNow(state, view);
+    const panel = view.tab === 'calendar' ? renderCalendar(state, view) : renderNow(state, view);
     return `<nav class="stk-tabs">${tabs.map(([id, ic, label]) => `<button type="button" class="stk-tab${view.tab === id ? ' is-on' : ''}" data-stk-act="tab" data-tab="${id}"><i class="fa-solid ${ic} stk-ic"></i><span>${label}</span></button>`).join('')}</nav>
         <div class="stk-panel">${panel}</div>
         <div class="stk-ib-foot">

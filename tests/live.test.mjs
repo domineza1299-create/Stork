@@ -72,7 +72,7 @@ describe('story time, not real time', () => {
 
     it('jumps forward to a later date and never goes back', () => {
         let state = read(couple(), { minutes: 0, date: '2024-03-15' });
-        state = read(state, { date: '2024-03-18', clock: '09:30' });
+        state = read(state, { minutes: 3 * 1440, date: '2024-03-18', clock: '09:30' });
         assert.equal(state.clock.day, 3);
         assert.equal(state.clock.minutes, at(9, 30));
         state = read(state, { date: '2024-03-10' });

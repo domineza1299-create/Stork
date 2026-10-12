@@ -3,7 +3,7 @@
  * Pure functions over a plain JSON state, so it is saved with chat messages and tested in Node.
  */
 import {
-    ACT_PROTECTION, createPregnancy, cycleInfo, cycleReturnDay, DOCTOR_VISITS, EMERGENCY_PILL_FACTOR, EMERGENCY_PILL_WINDOW_DAYS, falseContractionsToday,
+    ACT_PROTECTION, careOf, createPregnancy, cycleInfo, cycleReturnDay, EMERGENCY_PILL_FACTOR, EMERGENCY_PILL_WINDOW_DAYS, falseContractionsToday,
     femaleConditionFactor, FEMALE_CONDITIONS, FEMALE_HABITS, femaleState, laborChance, laborProgress, LIFESTYLE, maleState, pillState, POSTPARTUM_RECOVERY_DAYS, pregnancyInfo,
     rollCondomBreak, rollConception, rollCycles, rollTest, startLabor, stressDelay, ultrasoundShowsSex,
 } from './biology.js';
@@ -89,6 +89,8 @@ export function createState({ userName = '', charName = '', startDate = null, st
 /** Older saved states: fill in what newer versions expect. */
 export function upgradeState(state) {
     state.live ??= {};
+    // 0.15 kept the story so far inside every state; now each reply keeps only its own line (see lastLine)
+    delete state.timeline;
     state.dateSure ??= false;
     for (const person of Object.values(state.people ?? {})) {
         const m = person.male;
@@ -196,10 +198,11 @@ function processPregnancyDay(state, person, rng) {
 
     if (day === p.kicksDay) note(state, person, knows ? `${name}: впервые почувствовала шевеления малыша` : `${name}: странное трепетание в животе`);
 
-    for (const visit of DOCTOR_VISITS) {
+    const care = careOf(state);
+    for (const visit of care.visits) {
         if (knows && info.week >= visit.week && !p.visitsDone.includes(visit.week)) {
             p.visitsDone.push(visit.week);
-            note(state, person, `${name}: пора к врачу, ${visit.label}`, { kind: 'doctor' });
+            note(state, person, `${name}: ${care.due(visit.label)}`, { kind: 'doctor' });
         }
     }
 
@@ -370,8 +373,19 @@ export function applyEvent(state, event, rng = Math.random) {
             // the story plainly shows her period: the cycle follows the story, not the count
             const woman = Object.values(state.people).find(p => p.sex === 'female');
             const f = woman?.female;
-            if (!f || f.pregnancy || f.postpartum || cycleInfo(f, day).phase === 'menstruation') break;
+            if (!f || f.pregnancy || f.postpartum) break;
+            const now = cycleInfo(f, day);
+            if (now.phase === 'menstruation') break;
+            // The cycle was set by her or by the story lately: a period in its first half is far more likely a slip
+            // of the story or of the analysis (a memory, a fear, last month) than the body. The cycle stays, she is
+            // asked instead. Long unconfirmed (a skip of months, never set): the story's period wins at once.
+            const confirmed = typeof f.syncedDay === 'number' && day - f.syncedDay < 2 * f.cycleLength;
+            if (confirmed && now.cycleDay < Math.max(15, now.length - 10)) {
+                note(state, woman, `${woman.name || 'Она'}: в истории месячные, а по циклу день ${now.cycleDay} — цикл не сдвинут`, { model: false, kind: 'period_hint' });
+                break;
+            }
             f.cycleStart = event.type === 'period_started' ? day : day - 1;
+            f.syncedDay = day;
             f.cycleShift = 0;
             f.rolledCycle = null;
             f.delayedCycle = null;
@@ -393,7 +407,7 @@ export function applyEvent(state, event, rng = Math.random) {
             const woman = Object.values(state.people).find(p => p.sex === 'female');
             const p = woman?.female.pregnancy;
             if (p && !p.knownBy.includes(woman.key)) p.knownBy.push(woman.key);
-            note(state, woman, 'визит к врачу', { model: false });
+            note(state, woman, careOf(state).visited, { model: false });
             break;
         }
         case 'orgasm':
@@ -437,6 +451,11 @@ export function applyEvent(state, event, rng = Math.random) {
             if (!p) break;
             if (!p.knownBy.includes(woman.key)) p.knownBy.push(woman.key);
             const week = pregnancyInfo(p, day).week;
+            // no ultrasound in old times: the midwife's hands tell the term, never the sex
+            if (!careOf(state).canSeeSex) {
+                note(state, woman, `повитуха осмотрела живот: срок около ${week} нед.`);
+                break;
+            }
             const seen = !p.sexKnown && ultrasoundShowsSex(week, rng);
             if (seen) p.sexKnown = true;
             note(state, woman, `УЗИ: ${p.babies > 1 ? 'двойня' : 'один малыш'}, срок ${week} нед.${p.sexKnown ? `, пол: ${p.sexes.join(' и ')}` : ', пол пока не виден'}`);
@@ -928,6 +947,8 @@ function femaleLineRaw(state, person, detailed) {
             if (p.babies > 1) parts.push('Twins.');
             if (p.sexKnown) parts.push(`Sex: ${p.sexes.join(' and ')}.`);
         }
+        // what the story itself has established about this pregnancy: kept, whatever the detail level
+        if (p.facts?.length) parts.push(`Established in the story: ${p.facts.map(f => `${f.text} (week ${f.week})`).join('; ')}.`);
         return parts.join(' ');
     }
     const st = femaleState(f, day);
@@ -1008,6 +1029,42 @@ function applyPeople(state, people) {
         };
     }
 }
+/**
+ * The story so far for the analysis prompt: one line per earlier reply with its story time, «пт 16 янв 10:45 — …».
+ * Each reply keeps only its own line (state.lastLine), so a deep memory costs nothing in the chat file,
+ * and a swipe or a deleted message takes its line away with it.
+ * @param {{at: number, text: string}[]} lines oldest first
+ */
+export function timelineText(state, lines = []) {
+    return lines.map(e => {
+        const day = Math.floor(e.at / MINUTES_PER_DAY);
+        const date = storyDate(state, day);
+        const when = date ? `${date.toLocaleDateString('ru-RU', { weekday: 'short' })} ${shortDate(state, day)}` : `день ${day + 1}`;
+        return `${when} ${clockText(e.at % MINUTES_PER_DAY)} — ${e.text}`;
+    }).join('\n');
+}
+
+/**
+ * What the story establishes about her pregnancy (a strong nausea, what the midwife said, a threat, twins by the
+ * doctor's word) is kept with the pregnancy itself: it goes back to both models and shows in the window, so the
+ * course of the pregnancy is remembered however long ago it was told. Short, unique, the newest dozen.
+ */
+const MAX_PREGNANCY_FACTS = 12;
+function addPregnancyFacts(state, facts) {
+    const woman = Object.values(state.people).find(p => p.sex === 'female');
+    const p = woman?.female.pregnancy;
+    if (!p || !p.knownBy.includes(woman.key) || !Array.isArray(facts)) return;
+    p.facts ??= [];
+    const key = text => text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+    const week = pregnancyInfo(p, state.clock.day).week;
+    for (const raw of facts) {
+        const text = typeof raw === 'string' ? raw.trim().replace(/\s+/g, ' ').slice(0, 120) : '';
+        if (!text || p.facts.some(f => key(f.text) === key(text))) continue;
+        p.facts.push({ week, text });
+    }
+    if (p.facts.length > MAX_PREGNANCY_FACTS) p.facts.splice(0, p.facts.length - MAX_PREGNANCY_FACTS);
+}
+
 /** Injuries are noted, not turned into an illness: a bruise does not give a fever. */
 function applyInjuries(state, injuries) {
     for (const item of injuries ?? []) {
@@ -1120,6 +1177,7 @@ export function buildStatus(state, { detailed = true, neutral = false, withTag =
 export function processReply(previousState, replyText, rng = Math.random, scene = null) {
     const state = upgradeState(cloneState(previousState));
     state.pending = [];
+    state.lastLine = null;
     const tag = parseTag(replyText);
     const quote = scene?.pregnancy_claim?.quote;
     if (quote) for (const event of [...tag.events, ...(tag.eventsEnd ?? [])]) if (event.type === 'pregnancy_claim') event.quote = quote;
@@ -1127,12 +1185,19 @@ export function processReply(previousState, replyText, rng = Math.random, scene 
     // Events happen before the time of the reply passes (intimacy, then the night)
     for (const event of tag.events) applyEvent(state, event, rng);
     const clock = tag.clock ?? extractClock(replyText);
-    advanceTime(state, storyMinutes(state, { clock, minutes: tag.minutes, date: scene?.date, part: scene?.part_of_day }), rng);
+    const skip = scene?.scene_after_skip === true || (tag.eventsEnd ?? []).length > 0;
+    advanceTime(state, storyMinutes(state, { clock, minutes: tag.minutes, date: scene?.date, part: scene?.part_of_day, skip }), rng);
     // ...and what came after the time skip happens at the new moment
     for (const event of tag.eventsEnd ?? []) applyEvent(state, event, rng);
     if (scene) {
         applyPeople(state, scene.people);
         applyInjuries(state, scene.injury);
+        addPregnancyFacts(state, scene.pregnancy_facts);
+        // this reply's line of the story so far: the analysis of later replies gathers them from the chat
+        const line = typeof scene.summary === 'string' ? scene.summary.trim().replace(/\s+/g, ' ').slice(0, 160) : '';
+        if (line) state.lastLine = { at: absMinute(state.clock), text: line };
+        // the world of the story, once: the care of a pregnancy follows it (a doctor or a midwife)
+        if (!state.eraSet && (scene.era === 'past' || scene.era === 'modern')) state.era = scene.era === 'past' ? 'traditional' : 'modern';
     }
     // He was recovering and the story time ran out: tell once
     const man = state.people.char;
@@ -1159,21 +1224,28 @@ function dayOfDate(state, iso) {
  * then the guessed duration. Time never goes back. The first date the story names anchors the calendar
  * (before it the date was only a guess, often today's real one).
  */
-export function storyMinutes(state, { clock = null, minutes = 0, date = null, part = null } = {}) {
+export function storyMinutes(state, { clock = null, minutes = 0, date = null, part = null, skip = false } = {}) {
     const validDate = /^\d{4}-\d{2}-\d{2}$/.test(String(date ?? '')) ? date : null;
     const anchoring = validDate && (!state.dateSure || !state.startDate);
+    // A new day needs the story to move there: a time skip, or the analysis counting hours. A date or a time of day
+    // alone (a letter, a plan, «tomorrow morning» said aloud) is not a reason to turn the calendar.
+    const longScene = skip || minutes >= 3 * 60;
+    const sameDay = advance => longScene || state.clock.minutes + advance < MINUTES_PER_DAY;
     if (validDate && !anchoring) {
         const target = dayOfDate(state, validDate);
-        if (target !== null && target > state.clock.day) {
+        if (target !== null && target > state.clock.day && (skip || minutes >= 6 * 60)) {
             const at = clock ?? (part && PART_MINUTES[part]) ?? state.clock.minutes;
             return (target - state.clock.day) * MINUTES_PER_DAY + at - state.clock.minutes;
         }
     }
     let advance = minutes;
-    if (clock !== null) advance = minutesToClock(state.clock.minutes, clock, minutes);
-    // the story says it is evening now while the clock says morning: move to that part of the day
-    else if (part && PART_MINUTES[part] !== undefined && partOf(state.clock.minutes + minutes) !== part) {
-        advance = minutesToClock(state.clock.minutes, PART_MINUTES[part], minutes);
+    if (clock !== null) {
+        const byClock = minutesToClock(state.clock.minutes, clock, minutes);
+        if (sameDay(byClock)) advance = byClock;
+    } else if (part && PART_MINUTES[part] !== undefined && partOf(state.clock.minutes + minutes) !== part) {
+        // the story says it is evening now while the clock says morning: move to that part of the day
+        const byPart = minutesToClock(state.clock.minutes, PART_MINUTES[part], minutes);
+        if (sameDay(byPart)) advance = byPart;
     }
     if (anchoring) {
         // re-anchor: the moment these messages end in («four months later… 26 April») is that date;

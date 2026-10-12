@@ -572,6 +572,39 @@ export const DOCTOR_VISITS = [
     { week: 32, label: 'третий скрининг, положение малыша' },
 ];
 
+/**
+ * Who looks after a pregnancy depends on the world of the story. modern: a doctor, tests, ultrasound.
+ * traditional (old times, an old-Slavic village, fantasy): a midwife, signs and hands, the sex is learned at birth.
+ */
+export const CARE = {
+    modern: {
+        title: 'Врач',
+        icon: 'fa-user-doctor',
+        visits: DOCTOR_VISITS,
+        due: label => `пора к врачу, ${label}`,
+        visited: 'визит к врачу',
+        sexUnknown: 'пол пока неизвестен, узнать на УЗИ с 18 недель',
+        canSeeSex: true,
+    },
+    traditional: {
+        title: 'Повитуха',
+        icon: 'fa-hand-holding-heart',
+        visits: [
+            { week: 8, label: 'повитуха смотрит её и по приметам подтверждает, что она в тягости' },
+            { week: 16, label: 'повитуха щупает живот, считает срок, даёт травы от дурноты' },
+            { week: 28, label: 'повитуха проверяет, как лежит дитя, наставляет беречься' },
+            { week: 36, label: 'повитуха готовит её к родам: баня, чистое полотно, кто будет рядом' },
+        ],
+        due: label => `пора позвать повитуху: ${label}`,
+        visited: 'приходила повитуха',
+        sexUnknown: 'кто родится, узнают только при родах',
+        canSeeSex: false,
+    },
+};
+export const ERAS = { modern: 'современный мир', traditional: 'старина или фэнтези: повитуха вместо врача' };
+/** The care of this story: modern unless the world is set in old times. */
+export const careOf = state => CARE[state?.era === 'traditional' ? 'traditional' : 'modern'];
+
 // #endregion
 
 // #region Labor

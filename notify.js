@@ -116,7 +116,8 @@ export function notify(text, { icon = 'fa-dove', tone = 'pink', title = 'Stork',
         if (!cancelled && Math.abs(dx) > SWIPE_AWAY_PX) return close(dx);
         toast.style.transform = '';
         toast.style.opacity = '';
-        if (!cancelled && Math.abs(dx) < 6) return onClick ? run() : close();
+        // with an action button only the button acts: a tap on the card just closes it
+        if (!cancelled && Math.abs(dx) < 6) return onClick && !action ? run() : close();
         resume();
     };
     toast.addEventListener('pointerup', () => release(false));
@@ -133,6 +134,7 @@ export const notifyWarn = (text, options = {}) => notify(text, { icon: 'fa-trian
 export function eventLook(event) {
     const t = String(event?.text ?? '');
     if (event?.kind === 'labor') return { icon: 'fa-baby', tone: 'preg' };
+    if (event?.kind === 'period_hint') return { icon: 'fa-droplet', tone: 'warm' };
     if (event?.kind === 'doctor') return { icon: 'fa-user-doctor', tone: 'accent' };
     if (event?.kind === 'injury') return { icon: 'fa-bandage', tone: 'warm' };
     if (event?.kind === 'recovered') return { icon: 'fa-battery-full', tone: 'accent' };

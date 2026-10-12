@@ -4,14 +4,14 @@
  * The words, the numbers and the editors come from common.js; the window itself is window.js.
  */
 import { saveSettingsDebounced } from '../../../../script.js';
-import { cycleInfo, DOCTOR_VISITS, FEMALE_CONTRACEPTION, femaleState, laborProgress, pillState, pregnancyInfo } from './biology.js';
-import { absMinute, acceptPregnancyClaim, clockText, dateLabel, editPregnancyClaim, liveNow, maleSnapshot, recoveryLeft, rejectPregnancyClaim, shortDate, timeLabel, withLive } from './engine.js';
+import { careOf, cycleInfo, FEMALE_CONTRACEPTION, femaleState, laborProgress, pillState, pregnancyInfo } from './biology.js';
+import { absMinute, acceptPregnancyClaim, clockText, editPregnancyClaim, liveNow, maleSnapshot, recoveryLeft, rejectPregnancyClaim, shortDate, timeLabel, withLive } from './engine.js';
 import { activeIn, changed, currentState, readStatus, refreshStatus, retryRead, settings, updateCurrentState, VIEWS } from './store.js';
 import { applyPersonEdit, setPeriodStart } from './setup.js';
 import {
-    ACT_LABEL, agoWord, avatarUrl, babyWeight, capitalize, claimCard, clamp01, cycleFields, cycleStrip, esc, femaleLevels, femaleTraits, icon, initials, irregularityWord,
-    KIND_ICON, knowsPregnancy, levelWord, maleLevels, nameOf, nextInCycle, personFields, pregnancyLibidoWhy, recentEvents, riskyLately,
-    spermGrade, spermPanel, upcomingRows, upcomingWhen, years,
+    agoWord, avatarUrl, babyWeight, capitalize, claimCard, clamp01, cycleFields, cycleStrip, esc, femaleLevels, femaleTraits, icon, initials, irregularityWord,
+    KIND_ICON, knowsPregnancy, levelWord, maleLevels, nameOf, nextInCycle, personFields, pregnancyLibidoWhy, riskyLately,
+    pregnancyFacts, spermGrade, spermPanel, years,
 } from './common.js';
 import { calendarCore } from './classic.js';
 import { downloadProblemLog, openStork } from './window.js';
@@ -24,9 +24,8 @@ const FOLD_KEY = 'stork_folds';
 const FOLD_DEFAULT = {
     user: true, char: true, shared: true,
     'user-fert': false, 'user-more': false, 'char-sperm': false, 'char-more': false,
-    'shared-next': true, 'shared-recent': false,
     'cal-cycle': true, 'cal-mine': false,
-    'preg-term': true, 'preg-baby': true, 'preg-mom': false, 'preg-doc': false,
+    'preg-baby': true, 'preg-mom': false, 'preg-doc': false,
 };
 let folds = null;
 function readFolds() {
@@ -94,9 +93,6 @@ function avatarHtml(key, name, size = '') {
     const url = avatarUrl(key);
     return `<span class="stk-av${size ? ` is-${size}` : ''}">${url ? `<img src="${esc(url)}" alt="" loading="lazy">` : `<b>${esc(initials(name))}</b>`}</span>`;
 }
-
-/** The next dates that matter, as lines. */
-const upcomingLines = (state, rows) => rows.map(([d, ic, text]) => li(ic, `<b>${esc(upcomingWhen(state, d))}</b> <span class="stk-muted">${esc(text)}</span>`)).join('');
 
 // #endregion
 
@@ -288,25 +284,15 @@ function femaleCard(state, person, view = {}) {
         const live = liveNow(state, key);
         const libido = withLive(info.libido, live.libido);
         const energy = withLive([0, 0.45, 0.7, 0.45][info.trimester], live.energy);
-        const p = f.pregnancy;
+        // the baby, her body and the doctor are in the panels above: here only how she is now
         return panel(key, personHead(state, person, { tools }), `
             <div class="stk-bars">
                 ${bar('Энергия', energy, 'accent', levelWord(energy, true))}
                 ${bar('Влечение', libido, 'pink', levelWord(libido))}
-                ${bar('Срок', info.week / 40, 'preg', `${info.week} из 40 нед.`)}
+                ${bar('Срок', info.week / 40, 'preg', `${info.week} нед.`)}
             </div>
-            ${note}
-            ${subFold(`${key}-fert`, 'fa-seedling', 'Малыш', `размером с ${info.baby.compare}`, `
-                ${li('fa-wand-sparkles', esc(info.baby.develops))}
-                ${li('fa-ruler-vertical', `${info.baby.length} см, ${babyWeight(info.baby.weight)}`)}
-                ${info.kicksFelt ? li('fa-shoe-prints', 'толкается') : ''}
-                ${li('fa-venus-mars', p.sexKnown ? esc(p.sexes.join(' и ')) : 'пол пока неизвестен')}
-                ${li('fa-calendar-check', `${info.trimester}-й триместр · до родов ${Math.max(0, info.daysToDue)} дн.`)}`)}
-            ${subFold(`${key}-more`, 'fa-heart-pulse', 'Самочувствие', info.symptoms[0] ?? '', `
-                ${info.symptoms.length > 1 ? li('fa-notes-medical', esc(info.symptoms.slice(1).join(', '))) : ''}
-                ${li('fa-person-pregnant', `живот: ${esc(info.belly)}, +${info.weightGain} кг`)}
-                ${li('fa-utensils', `тянет на ${esc(p.cravings.join(' и '))}, не выносит ${esc(p.aversions.join(', '))}`)}
-                ${whyRow('Влечение', pregnancyLibidoWhy(info))}`)}`);
+            ${li('fa-calendar-check', `${info.trimester}-й триместр · роды ${esc(shortDate(state, info.dueDay, true))}, через ${Math.max(0, info.daysToDue)} дн.`)}
+            ${note}`);
     }
     if (f.postpartum) {
         const since = day - f.postpartum.birthDay;
@@ -371,34 +357,32 @@ function maleCard(state, person, view = {}) {
             ${s.couvade ? li('fa-face-tired', 'сопереживает беременности: хуже спит, подташнивает') : ''}`)}`);
 }
 
-/** What is shared between them: closeness, what it means, what comes next, what happened lately. */
-function sharedCard(state) {
-    const lastAct = state.acts.at(-1);
-    const sub = lastAct ? `близость ${agoWord(state.clock.day - lastAct.day)} · ${ACT_LABEL[lastAct.protection] ?? lastAct.protection}` : 'близости пока не было';
-    const rows = [];
-    if (lastAct?.condomBroke) rows.push(li('fa-triangle-exclamation', 'в последний раз порвался презерватив', 'is-warm'));
+/**
+ * What is shared between them, as one line: the latest thing that happened (a tap opens the journal).
+ * Under it, only when it matters: closeness without protection in her fertile days.
+ */
+function sharedLine(state) {
+    const last = [...state.log].reverse().find(e => e.kind !== 'roll');
+    const iconName = !last ? 'fa-circle-info' : last.kind === 'intimacy' ? 'fa-heart' : KIND_ICON[last.kind] ?? 'fa-circle-dot';
     const risky = riskyLately(state);
-    if (risky) rows.push(li('fa-seedling', 'была близость без защиты в фертильные дни — беременность возможна', 'is-pink'));
-    const next = upcomingRows(state, state.people.user);
-    const recent = recentEvents(state, 4);
-    const recentBody = recent.map(e => li(KIND_ICON[e.kind] ?? 'fa-circle-dot', `<span class="stk-muted">${esc(dateLabel(state, e.day, { day: 'numeric', month: 'short' }))}</span> ${esc(e.text)}`)).join('');
-    return panel('shared', { icon: 'fa-people-arrows', tone: risky ? 'pink' : 'accent', title: 'Вместе', sub: esc(sub) }, `
-        ${rows.join('')}
-        ${next.length ? subFold('shared-next', 'fa-calendar-check', 'Ближайшее', `${upcomingWhen(state, next[0][0], true)} · ${next[0][2]}`, upcomingLines(state, next)) : ''}
-        ${recent.length ? subFold('shared-recent', 'fa-clock-rotate-left', 'Недавно', `${recent.length} ${recent.length === 1 ? 'событие' : recent.length < 5 ? 'события' : 'событий'}`, recentBody) : ''}
-        ${!rows.length && !next.length && !recent.length ? li('fa-circle-info', 'пока ничего', 'is-muted') : ''}`);
+    return `<div class="stk-shared-line" data-stk-act="open-window" data-tab="journal" role="button" tabindex="0" title="Последнее событие. Нажми — весь журнал">
+            ${icon(iconName)}<span>${esc(last ? capitalize(last.text) : 'пока ничего не произошло')}</span>${last ? `<em>${esc(agoWord(state.clock.day - last.day))}</em>` : ''}
+        </div>
+        ${risky ? li('fa-seedling', 'была близость без защиты в фертильные дни — беременность возможна', 'is-pink') : ''}`;
 }
 
 /**
- * The «Сейчас» tab of the infoblock: what they share on top, then both of them
+ * The «Сейчас» tab of the infoblock: the latest event on top, a pregnancy if there is one, then both of them
  * (side by side when there is room, one under the other on a phone). Only the panels she chose.
  */
 export function renderNow(state, view = {}) {
     const parts = settings().blockParts ?? {};
     const people = [parts.user !== false && femaleCard(state, state.people.user, view), parts.char !== false && maleCard(state, state.people.char, view)].filter(Boolean);
-    const shared = parts.shared !== false ? sharedCard(state) : '';
-    if (!people.length && !shared) return `${claimCard(state)}${li('fa-eye-slash', 'Все плашки скрыты. Вернуть — в окне Stork, вкладка «Настройки».', 'is-muted')}`;
-    return `${claimCard(state)}${shared}${people.length ? `<div class="stk-pair${people.length === 1 ? ' is-single' : ''}">${people.join('')}</div>` : ''}`;
+    const shared = parts.shared !== false ? sharedLine(state) : '';
+    // a known pregnancy comes first: the baby, how she carries, the doctor or the midwife
+    const pregnancy = pregnancyPanels(state);
+    if (!people.length && !shared && !pregnancy) return `${claimCard(state)}${li('fa-eye-slash', 'Все плашки скрыты. Вернуть — в окне Stork, вкладка «Настройки».', 'is-muted')}`;
+    return `${claimCard(state)}${shared}${pregnancy}${people.length ? `<div class="stk-pair${people.length === 1 ? ' is-single' : ''}">${people.join('')}</div>` : ''}`;
 }
 
 // #endregion
@@ -534,7 +518,7 @@ export function renderCalendar(state, view) {
         ${editable ? panel('cal-cycle', { icon: 'fa-arrows-spin', tone: PHASE_DOT[info.phase] === 'calm' ? 'preg' : PHASE_DOT[info.phase], title: 'Цикл', sub: `${esc(nameOf(woman))} · день ${info.cycleDay} из ${info.length} · ${esc(suppressed && ['ovulation', 'follicular'].includes(info.phase) ? 'овуляции нет' : info.phaseLabel)}` }, `
             <div class="stk-cycle-big">${cycleStrip(f, day)}</div>
             ${li('fa-forward', esc(nextInCycle(info, suppressed)))}`) : ''}
-        <div class="stk-ib-cal">${calendarCore(state, view)}</div>
+        <div class="stk-ib-cal">${calendarCore(state, view, { upcomingDates: false })}</div>
         ${editable ? li('fa-hand-pointer', 'нажми на прошедший день, чтобы отметить начало месячных', 'is-muted') : ''}
         ${editable ? panel('cal-mine', { icon: 'fa-sliders', tone: 'calm', title: 'Мой цикл', sub: `${f.cycleLength} дн., месячные ${f.periodLength} дн., ${irregularityWord(f)}` }, `
         <div class="stk-edit" data-key="user">
@@ -546,33 +530,29 @@ export function renderCalendar(state, view) {
 
 // #region Pregnancy
 
-export function renderPregnancy(state) {
+export function pregnancyPanels(state) {
     const woman = [state.people.user, state.people.char].find(p => p.sex === 'female' && p.female.pregnancy && knowsPregnancy(p));
-    if (!woman) {
-        return `<div class="stk-empty">${icon('fa-baby', 'stk-ic-xl')}<div>Беременности пока нет. Или о ней ещё никто не знает: сделай тест.</div></div>`;
-    }
+    if (!woman) return '';
     const p = woman.female.pregnancy;
     const info = pregnancyInfo(p, state.clock.day);
-    const due = dateLabel(state, info.dueDay, { day: 'numeric', month: 'long', year: 'numeric' });
+    const care = careOf(state);
     return `
-        ${claimCard(state)}
-        ${panel('preg-term', { avatar: avatarHtml('user', nameOf(woman)), tone: 'preg', title: `${info.week} нед. ${info.weekDay} дн.`, sub: `${info.trimester}-й триместр · до родов ${Math.max(0, info.daysToDue)} дн.` }, `
-            <div class="stk-bars">${bar('Срок', info.week / 40, 'preg', `${Math.min(100, Math.round(info.week / 40 * 100))}%`)}</div>
-            ${li('fa-calendar-check', `предполагаемая дата родов: ${esc(due)}`)}`)}
-        ${panel('preg-baby', { icon: 'fa-seedling', tone: 'pink', title: p.babies > 1 ? 'Малыши' : 'Малыш', sub: esc(`размером с ${info.baby.compare}`) }, `
+        ${panel('preg-baby', { icon: 'fa-seedling', tone: 'pink', title: p.babies > 1 ? 'Малыши' : 'Малыш', sub: esc(`${info.week} нед. ${info.weekDay} дн. · размером с ${info.baby.compare}`) }, `
             <div class="stk-stats">
                 <div><b>${info.baby.length} см</b><span>рост</span></div>
                 <div><b>${babyWeight(info.baby.weight)}</b><span>вес</span></div>
                 <div><b>${esc(info.baby.compare)}</b><span>размером с</span></div>
             </div>
-            ${li('fa-wand-sparkles', esc(info.baby.develops))}
-            ${li('fa-venus-mars', p.sexKnown ? esc(p.sexes.join(' и ')) : 'пол пока неизвестен, узнать на УЗИ с 18 недель')}
+            ${li('fa-wand-sparkles', esc(care.canSeeSex ? info.baby.develops : info.baby.develops.replace(/,?\s*видно пол на УЗИ/, '')))}
+            ${li('fa-venus-mars', p.sexKnown ? esc(p.sexes.join(' и ')) : esc(care.sexUnknown))}
             ${info.kicksFelt ? li('fa-shoe-prints', 'толкается') : ''}`)}
-        ${panel('preg-mom', { icon: 'fa-heart-pulse', tone: 'preg', title: 'Мама', sub: esc(`живот: ${info.belly}, +${info.weightGain} кг`) }, `
+        ${panel('preg-mom', { icon: 'fa-heart-pulse', tone: 'preg', title: 'Мама', sub: esc(`живот: ${info.belly}, +${info.weightGain} кг${p.facts?.length ? ` · из истории: ${p.facts.length}` : ''}`) }, `
             ${info.symptoms.length ? li('fa-notes-medical', esc(info.symptoms.join(', '))) : ''}
-            ${li('fa-utensils', `тянет на ${esc(p.cravings.join(' и '))}, не выносит ${esc(p.aversions.join(', '))}`)}`)}
-        ${panel('preg-doc', { icon: 'fa-user-doctor', tone: 'accent', title: 'Врач', sub: `${p.visitsDone.length} из ${DOCTOR_VISITS.length} визитов` },
-            DOCTOR_VISITS.map(v => li(p.visitsDone.includes(v.week) ? 'fa-circle-check' : 'fa-circle', `<b>${v.week} нед.</b> ${esc(v.label)}`, p.visitsDone.includes(v.week) ? '' : 'is-muted')).join(''))}`;
+            ${li('fa-utensils', `тянет на ${esc(p.cravings.join(' и '))}, не выносит ${esc(p.aversions.join(', '))}`)}
+            ${whyRow('Влечение', pregnancyLibidoWhy(info))}
+            ${pregnancyFacts(p)}`)}
+        ${panel('preg-doc', { icon: care.icon, tone: 'accent', title: care.title, sub: `${p.visitsDone.length} из ${care.visits.length}` },
+            care.visits.map(v => li(p.visitsDone.includes(v.week) ? 'fa-circle-check' : 'fa-circle', `<b>${v.week} нед.</b> ${esc(v.label)}`, p.visitsDone.includes(v.week) ? '' : 'is-muted')).join(''))}`;
 }
 
 // #endregion
