@@ -35,6 +35,16 @@ describe('setting a chat up by itself', () => {
         assert.equal(guessed.dateSure, false);
     });
 
+    it('reads «null» from the analysis as unknown, not as zero', () => {
+        const analysis = { user: { age: 26, cycle_length: null, cycle_day: null, pregnant: true, pregnancy_weeks: null }, char: { age: 30 } };
+        const state = setupFromAnalysis(createState(), analysis, cards, () => 0.5);
+        const f = state.people.user.female;
+        assert.equal(f.cycleLength, 28, 'not squeezed to the 21-day minimum');
+        assert.equal(f.pregnancy.lmp, state.clock.day - 8 * 7, 'an unknown term is 8 weeks, not 4');
+        const fresh = setupFromAnalysis(createState(), { ...analysis, user: { age: 26, cycle_day: null } }, cards, () => 0.5);
+        assert.equal(fresh.clock.day - fresh.people.user.female.cycleStart + 1, 15, 'a random day, not always day 1');
+    });
+
     it('starts a pregnancy the cards describe, and refuses minors', () => {
         const state = setupFromAnalysis(createState(), { user: { pregnant: true, pregnancy_weeks: 20 } }, cards);
         assert.ok(state.people.user.female.pregnancy);
@@ -42,6 +52,34 @@ describe('setting a chat up by itself', () => {
         assert.equal(hasMinor({ user: { age: 16 } }, cards), true);
         assert.equal(hasMinor(null, { ...cards, charText: 'Ему 17 лет.' }), true);
         assert.equal(hasMinor(null, cards), false);
+    });
+});
+
+describe('the setup form in the window', async () => {
+    const { applySetupForm } = await import('../setup.js');
+    it('reads the form into the state, with the pregnancy the cards describe', () => {
+        const state = createState();
+        state.people.user.female.contraception = 'pill';
+        applySetupForm(state, {
+            userName: 'Нина', charName: 'Лёша', userAge: 27, charAge: undefined,
+            cycleLength: '30', periodLength: '', cycleDay: '9', irregularity: '2', flow: 'light', contraception: 'ring', endometriosis: true,
+            fertility: 'low', smoker: true, startDate: '2026-05-10', time: '07:45', storyMode: 'story',
+        }, { user: { pregnant: true, pregnancy_weeks: 12, children: 1 }, story: { summary: 'итог' } }, () => 0.5);
+        const f = state.people.user.female;
+        assert.equal(state.people.user.age, 27);
+        assert.equal(state.people.char.age, 28, 'no age anywhere: the default');
+        assert.equal(f.cycleLength, 30);
+        assert.equal(f.periodLength, 5, 'an empty field keeps the default');
+        assert.equal(f.contraception, 'ring');
+        assert.equal(f.pillStoppedDay, 0, 'stopping the pill is remembered');
+        assert.equal(f.births, 1);
+        assert.equal(f.pregnancy.lmp, -12 * 7);
+        assert.equal(state.people.char.male.fertility, 'low');
+        assert.equal(state.startDate, '2026-05-10');
+        assert.equal(state.clock.minutes, 7 * 60 + 45);
+        assert.equal(state.storyMode, 'story');
+        assert.equal(state.storySummary, 'итог');
+        assert.equal(state.setupDone, true);
     });
 });
 

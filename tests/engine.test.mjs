@@ -77,7 +77,11 @@ describe('conception and pregnancy', () => {
         assert.ok(p, 'conceived');
         assert.equal(p.conceptionDay, 13, 'conception comes with ovulation');
         assert.deepEqual(p.knownBy, []);
-        assert.ok(/does NOT know/.test(buildStatus(state)));
+        const early = buildStatus(state);
+        assert.ok(!/Анна \(26\): pregnant/.test(early), 'before ovulation the model sees her cycle, not a pregnancy');
+        assert.match(early, /cycle day 12 of 28/);
+        advanceTime(state, 2 * DAY);
+        assert.match(buildStatus(state), /pregnant \(1 week\) but does NOT know/);
     });
 
     it('counts intimacy on ovulation day itself', () => {
@@ -251,6 +255,93 @@ describe('cards', async () => {
         assert.equal(guessAge('Высокий, с тёмными волосами. Живёт в доме 5.'), null);
         assert.equal(guessAge(''), null);
     });
+    it('does not take years of work, marriage or the past for an age', () => {
+        assert.equal(guessAge('Марк, 34. Работает в компании 12 лет.'), null);
+        assert.equal(guessAge('Работает в компании 12 лет. Возраст: 34'), 34);
+        assert.equal(guessAge('Переехал сюда 15 лет назад, 34-летний хирург.'), 34);
+        assert.equal(guessAge('Они вместе уже 5 лет. Ему 31 год.'), 31);
+        assert.equal(guessAge('Они 12 лет замужем.'), null);
+        assert.equal(guessAge('У него сын 10 лет. Он врач, 40 лет.'), 40);
+        assert.equal(guessAge('Ей за 30 лет'), 30);
+    });
+    it('still finds a minor written plainly', () => {
+        assert.equal(guessAge('Аня, 16 лет, школьница.'), 16);
+        assert.equal(guessAge('Работает официанткой, 17 лет.'), 17);
+        assert.equal(guessAge('Ему 15 лет, он учится в школе.'), 15);
+        assert.equal(guessAge('Она 16-летняя ученица.'), 16);
+        assert.equal(guessAge('17 лет, замужем'), 17, 'with a comma it is her age');
+    });
+});
+
+describe('long time skips (the chat with Dora: «4 months later»)', async () => {
+    const { dateLabel, parseSkip } = await import('../engine.js');
+    /** 25 December, 21:00, the third day of her period; the date only guessed so far */
+    function party() {
+        const state = createState({ userName: 'Дора', charName: 'Игорь', startDate: '2026-12-25' });
+        state.clock.minutes = 21 * 60;
+        state.people.user.age = 25;
+        state.people.char.age = 32;
+        state.people.user.female.cycleStart = -2;
+        return state;
+    }
+    const read = (state, scene, text = 'Ответ.') => processReply(state, `${text}\n${sceneToTag(scene)}`, seq(0.99), scene).state;
+
+    it('puts the date the reply names on the moment after the skip', () => {
+        const after = read(party(), { minutes: 4 * 43200, clock: '20:15', date: '2026-04-26' });
+        assert.equal(dateLabel(after, after.clock.day, { day: 'numeric', month: 'long' }), '26 апреля');
+        assert.equal(after.clock.minutes, 20 * 60 + 15);
+    });
+
+    it('tells the model only what happened on the last day, each thing once', () => {
+        const after = read(party(), { minutes: 4 * 43200 });
+        assert.ok(after.log.filter(e => /начались месячные/.test(e.text)).length >= 4, 'the journal keeps them all');
+        const status = buildStatus(after);
+        assert.ok((status.match(/начались месячные/g) ?? []).length <= 1, 'not four times');
+    });
+
+    it('puts what happens in the scene after the skip on the new day', () => {
+        const scene = { minutes: 4 * 43200, scene_after_skip: true, lifestyle: [{ type: 'alcohol', who: 'char' }, { type: 'no_sleep', who: 'char' }] };
+        assert.match(sceneToTag(scene), /ev="" ev_end="alcohol:char,no_sleep:char"/);
+        const after = read(party(), scene);
+        assert.ok(after.people.char.male.lifestyle.every(e => e.day === after.clock.day), 'drunk tonight, not four months ago');
+    });
+
+    it('lets the cycle follow the story when it plainly shows her period', () => {
+        const state = party();
+        advanceTime(state, 10 * DAY);
+        const after = read(state, { period: 'ongoing' });
+        assert.equal(after.clock.day - after.people.user.female.cycleStart + 1, 2, 'the second day of her period');
+        assert.match(buildStatus(after), /her period/);
+        assert.ok(after.log.some(e => /цикл сверен с историей/.test(e.text)));
+        const again = read(after, { period: 'ongoing' });
+        assert.equal(again.people.user.female.cycleStart, after.people.user.female.cycleStart, 'already on it: nothing moves');
+    });
+
+    it('counts closeness told about later («three weeks ago we slept together») with the dice of that day', () => {
+        const state = couple();
+        advanceTime(state, 34 * DAY); // day 34; 21 days ago was day 13, ovulation of the cycle before
+        const after = processReply(state, sceneToTag({ past_intimacy: [{ days_ago: 21, protection: 'none', finished_inside: true }] }), seq(0), {}).state;
+        assert.equal(after.acts.length, 1);
+        assert.equal(after.acts[0].day, 13);
+        assert.equal(after.rolls.at(-1)?.kind, 'conception');
+        assert.equal(after.people.user.female.pregnancy?.lmp, 0, 'dated by the cycle she was in then');
+        const twice = processReply(after, sceneToTag({ past_intimacy: [{ days_ago: 21 }] }), seq(0), {}).state;
+        assert.equal(twice.acts.length, 1, 'not counted twice');
+        const late = processReply(couple(), sceneToTag({ past_intimacy: [{ days_ago: 3 }] }), seq(0), {}).state;
+        assert.equal(late.rolls.length, 0, 'outside the fertile window: no dice');
+    });
+
+    it('reads a time skip at the start of her message, and only there', () => {
+        assert.equal(parseSkip('4 месяца спустя. мы с Игорем в отношениях'), 4 * 43200);
+        assert.equal(parseSkip('пол года спустя.'), 6 * 43200);
+        assert.equal(parseSkip('*Спустя неделю* Дора проснулась'), 7 * DAY);
+        assert.equal(parseSkip('Таймскип: 2 недели'), 14 * DAY);
+        assert.equal(parseSkip('Two weeks later, she called'), 14 * DAY);
+        assert.equal(parseSkip('Через месяц. Они снова встретились'), 30 * DAY);
+        assert.equal(parseSkip('Через месяц у нас свадьба, сказал он'), 0, 'a plan, not a skip');
+        assert.equal(parseSkip('Привет, как дела? 3 года спустя'), 0, 'not at the start');
+        assert.equal(parseSkip('Он сказал, что через неделю уедет'), 0);
+    });
 });
 
 describe('scene analysis', async () => {
@@ -271,6 +362,37 @@ describe('scene analysis', async () => {
     it('treats finishing outside without protection as withdrawal', () => {
         const tag = parseTag(sceneToTag({ minutes: 30, intimacy: { protection: 'none', finished_inside: false } }));
         assert.equal(tag.events[0].protection, 'withdrawal');
+    });
+    it('takes a diagnosis from the story by itself: varicocele, a vasectomy, PCOS', () => {
+        const state = couple();
+        const scene = { diagnoses: ['varicocele', 'vasectomy_now', 'pcos', 'nonsense'] };
+        assert.match(sceneToTag(scene), /ev="varicocele,vasectomy_now,pcos"/);
+        advanceTime(state, 5 * DAY);
+        const { state: next } = processReply(state, `У врача.\n${sceneToTag(scene)}`, seq(0.5), scene);
+        assert.equal(next.people.char.male.varicocele, true);
+        assert.equal(next.people.char.male.vasectomyDay, 5, 'the operation today: it protects in about three months');
+        assert.equal(next.people.user.female.pcos, true);
+        assert.ok(next.log.some(e => /варикоцеле/.test(e.text)));
+        const before = processReply(couple(), sceneToTag({ diagnoses: ['vasectomy'] }), seq(0.5), {}).state;
+        assert.ok(before.people.char.male.vasectomyDay <= -90, 'had one long ago: it protects already');
+        const again = processReply(next, sceneToTag({ diagnoses: ['varicocele'] }), seq(0.5), {}).state;
+        assert.equal(again.log.filter(e => /варикоцеле/.test(e.text)).length, 1, 'said once');
+    });
+    it('counts her habits: they lower the chance and the model hears of them', async () => {
+        const { femaleConditionFactor } = await import('../biology.js');
+        assert.equal(femaleConditionFactor({}), 1);
+        assert.ok(femaleConditionFactor({ smoker: true }) < femaleConditionFactor({ drinker: true }));
+        const state = couple({ smoker: true, drinker: true });
+        assert.match(buildStatus(state), /Habits: smokes, drinks often/);
+        state.people.char.male.smoker = true;
+        assert.match(buildStatus(state), /Марк \(30\):.*Habits: smokes\./);
+    });
+    it('gives the analysis the body data without the story model\'s guide', () => {
+        const state = couple();
+        assert.match(buildStatus(state), /Let these states show/);
+        const forAnalysis = buildStatus(state, { withTag: false, guide: false });
+        assert.ok(!/Let these states show|never write/.test(forAnalysis), 'nothing that forbids describing her state');
+        assert.match(forAnalysis, /Анна \(26\): cycle day/);
     });
     it('handles an empty or broken analysis', () => {
         assert.deepEqual(parseTag(sceneToTag({})), { found: true, minutes: 0, events: [], eventsEnd: [], clock: null });
