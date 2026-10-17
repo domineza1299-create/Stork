@@ -88,6 +88,45 @@ function extractText(result) {
 }
 
 /**
+ * The raw answer of the API, not just its text: finish_reason and the token usage show whether the reply
+ * was cut by the token limit. Reasoning models (Kimi, DeepSeek, Gemini thinking…) spend part of the limit
+ * on thinking, and some routers then put a placeholder `""` into content instead of leaving it empty.
+ */
+function readRaw(raw) {
+    const choice = raw?.choices?.[0];
+    if (!choice) return { text: extractText(raw), finish: '', reasoningTokens: 0, completionTokens: 0, reasoningChars: 0 };
+    const message = choice.message ?? {};
+    let text = '';
+    if (typeof message.content === 'string') text = message.content;
+    else if (Array.isArray(message.content)) text = message.content.map(part => part?.text ?? '').join('');
+    else if (typeof choice.text === 'string') text = choice.text;
+    const reasoning = message.reasoning ?? message.reasoning_content ?? '';
+    return {
+        text,
+        finish: String(choice.finish_reason ?? choice.stop_reason ?? ''),
+        reasoningTokens: Number(raw?.usage?.completion_tokens_details?.reasoning_tokens ?? 0),
+        completionTokens: Number(raw?.usage?.completion_tokens ?? 0),
+        reasoningChars: typeof reasoning === 'string' ? reasoning.length : 0,
+    };
+}
+
+/** `""`, `''`, an empty code fence: what routers send instead of nothing. */
+const isEmptyText = text => !String(text ?? '').replace(/```[a-z]*|["'`\s]/gi, '').trim();
+const isCutByLimit = finish => /^(length|max_tokens|max_output_tokens)$/i.test(finish);
+
+/** Thrown when the reply was cut by the token limit; carries what the log needs. */
+export class TruncatedError extends Error {
+    constructor(message, info) {
+        super(message);
+        this.name = 'TruncatedError';
+        this.info = info;
+    }
+}
+
+/** How far Stork raises the limit by itself when a reasoning model runs out of it. */
+const MAX_AUTO_TOKENS = 16000;
+
+/**
  * Requests are counted per reply and swipe. A second request for the very same text means something triggered
  * Stork twice: the log marks it as a warning. A new request after a continue or an edit is normal and only noted.
  */
@@ -133,29 +172,53 @@ export async function requestModel({ kind, reason, replyKey = '', replyHash = 0,
     logEvent('request', source, `${reason} · ${connection.label} · ${system.length + prompt.length} знаков · лимит ${maxTokens} токенов`,
         full ? `SYSTEM:\n${system}\n\nUSER:\n${prompt}` : undefined);
 
-    let result;
-    try {
-        if (connection.kind === 'profile') {
-            const messages = [{ role: 'system', content: system }, { role: 'user', content: prompt }];
-            // text completion profiles need the messages turned into one prompt with the profile's instruct template
-            const built = ConnectionManagerRequestService.constructPrompt(messages, connection.id);
-            result = await ConnectionManagerRequestService.sendRequest(connection.id, built, maxTokens,
-                { stream: false, extractData: true, includePreset: false, includeInstruct: false });
-        } else {
-            result = await getContext().generateRaw({ prompt, systemPrompt: system, responseLength: maxTokens });
+    let limit = maxTokens;
+    for (let attempt = 1; ; attempt++) {
+        let result;
+        const attemptStarted = performance.now();
+        try {
+            if (connection.kind === 'profile') {
+                const messages = [{ role: 'system', content: system }, { role: 'user', content: prompt }];
+                // text completion profiles need the messages turned into one prompt with the profile's instruct template
+                const built = ConnectionManagerRequestService.constructPrompt(messages, connection.id);
+                // extractData: false — the raw answer keeps finish_reason and usage, so a cut reply is seen as cut
+                result = await ConnectionManagerRequestService.sendRequest(connection.id, built, limit,
+                    { stream: false, extractData: false, includePreset: false, includeInstruct: false });
+            } else {
+                result = await getContext().generateRaw({ prompt, systemPrompt: system, responseLength: limit });
+            }
+        } catch (error) {
+            logEvent('error', source, `${Math.round(performance.now() - started)} мс · ${errorText(error)}`, error?.cause ?? error);
+            throw error;
         }
-    } catch (error) {
-        logEvent('error', source, `${Math.round(performance.now() - started)} мс · ${errorText(error)}`, error?.cause ?? error);
-        throw error;
+        const read = readRaw(result);
+        const text = String(read.text ?? '');
+        const ms = Math.round(performance.now() - attemptStarted);
+        const tokens = read.completionTokens
+            ? ` · потрачено ${read.completionTokens} ток.${read.reasoningTokens ? `, из них на размышления ${read.reasoningTokens}` : ''}`
+            : (read.reasoningChars ? ` · размышления ${read.reasoningChars} знаков` : '');
+
+        if (isCutByLimit(read.finish)) {
+            const thinkingAteAll = isEmptyText(text);
+            const why = thinkingAteAll
+                ? `модель потратила весь лимит ${limit} токенов на размышления и не успела ответить`
+                : `ответ обрезан лимитом ${limit} токенов`;
+            if (limit < MAX_AUTO_TOKENS) {
+                const next = Math.min(MAX_AUTO_TOKENS, limit * 2);
+                logEvent('warn', source, `${ms} мс · ${why}${tokens}. Повторяю с лимитом ${next}`, text || undefined);
+                limit = next;
+                continue;
+            }
+            logEvent('error', source, `${ms} мс · ${why}${tokens}`, text || shape(result));
+            throw new TruncatedError(`${why}. Выбери в Stork модель без долгих размышлений (например, Flash) или ту, где размышления можно выключить`, { limit, ...read });
+        }
+        if (isEmptyText(text)) {
+            logEvent('error', source, `${ms} мс · модель вернула пустой ответ${read.finish ? ` (finish_reason: ${read.finish})` : ''}${tokens}`, shape(result));
+            throw new Error('модель вернула пустой ответ');
+        }
+        logEvent('response', source, `${ms} мс · ${text.length} знаков${tokens}${attempt > 1 ? ` · с ${attempt}-й попытки, лимит ${limit}` : ''}`, text);
+        return text;
     }
-    const text = String(extractText(result) ?? '');
-    const ms = Math.round(performance.now() - started);
-    if (!text.trim()) {
-        logEvent('error', source, `${ms} мс · модель вернула пустой ответ`, shape(result));
-        throw new Error('модель вернула пустой ответ');
-    }
-    logEvent('response', source, `${ms} мс · ${text.length} знаков`, text);
-    return text;
 }
 
 /** The shape of what came back when it had no text: is there reasoning, a finish reason, an error. */

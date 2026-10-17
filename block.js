@@ -1,12 +1,13 @@
 /*
  * The infoblock inside the chat: under (or above, or in the middle of) the latest reply.
  * Folded — one symmetric line: she on the left, he on the right, the date and time between them.
- * Open — tabs «Сейчас» (a pregnancy opens it) and «Календарь»; every panel inside folds on its own.
+ * Open — tabs «Сейчас» (a pregnancy opens it), «Календарь» and «Генеалогическое древо»; every panel inside folds on its own.
  * Other extensions re-render the reply text and wipe foreign nodes: the block comes back in the same tick.
  */
 import { getContext } from '../../../extensions.js';
 import { activeIn, currentState, readStatus, settings } from './store.js';
 import { applyAutoFolds, blockHeadHtml, handleAction, onKeyActivate, renderCalendar, renderNow } from './ui.js';
+import { renderFamily } from './tree.js';
 
 const OPEN_KEY = 'stork_block_open';
 /** The one infoblock and its view: tab, editing, picked day — survive re-renders. */
@@ -114,14 +115,13 @@ function place(mesEl, el) {
 
 function bodyHtml(state) {
     // a pregnancy has no tab of its own: it opens «Сейчас», first thing
-    const tabs = [['now', 'fa-sun', 'Сейчас'], ['calendar', 'fa-calendar-days', 'Календарь']];
+    const tabs = [['now', 'fa-sun', 'Сейчас'], ['calendar', 'fa-calendar-days', 'Календарь'], ['family', 'fa-people-roof', 'Древо']];
     if (!tabs.some(([id]) => id === view.tab)) view.tab = 'now';
-    const panel = view.tab === 'calendar' ? renderCalendar(state, view) : renderNow(state, view);
+    const panel = view.tab === 'calendar' ? renderCalendar(state, view) : view.tab === 'family' ? renderFamily(state, view) : renderNow(state, view);
     return `<nav class="stk-tabs">${tabs.map(([id, ic, label]) => `<button type="button" class="stk-tab${view.tab === id ? ' is-on' : ''}" data-stk-act="tab" data-tab="${id}"><i class="fa-solid ${ic} stk-ic"></i><span>${label}</span></button>`).join('')}</nav>
         <div class="stk-panel">${panel}</div>
         <div class="stk-ib-foot">
             <button type="button" class="stk-link" data-stk-act="open-window" data-tab="today"><i class="fa-solid fa-dove stk-ic"></i>Открыть Stork</button>
-            <button type="button" class="stk-link" data-stk-act="open-window" data-tab="settings"><i class="fa-solid fa-sliders stk-ic"></i>Вид и плашки</button>
         </div>`;
 }
 
@@ -151,6 +151,8 @@ export function renderBlocks(force = false) {
         node = null;
         view.editPerson = null;
         view.pickDay = null;
+        view.famPick = null;
+        view.famAdd = false;
     }
     // a new reply (or the automatic setting just changed): start folded or open, as she chose
     const stamp = `${id}|${settings().blockOpen}|${settings().blockFolds}`;
@@ -175,8 +177,19 @@ export function renderBlocks(force = false) {
     // the same markup is not set again: running animations are not restarted
     const html = blockHeadHtml(state, open, reading) + (open ? `<div class="stk-ib-body">${bodyHtml(state)}</div>` : '');
     if (html !== lastHtml) {
+        // the tree keeps where she scrolled it; opened anew, it shows the two of them in the middle
+        const oldBox = node.querySelector('.stk-tree-scroll');
+        const kept = oldBox ? { left: oldBox.scrollLeft, top: oldBox.scrollTop } : null;
         node.innerHTML = html;
         lastHtml = html;
+        const box = node.querySelector('.stk-tree-scroll');
+        if (box) {
+            if (kept) Object.assign(box, { scrollLeft: kept.left, scrollTop: kept.top });
+            else {
+                const me = box.querySelector('[data-id="user"]');
+                if (me && box.scrollWidth > box.clientWidth) box.scrollLeft = me.offsetLeft + me.offsetWidth - box.clientWidth / 2;
+            }
+        }
     }
 }
 

@@ -289,24 +289,6 @@ export const onReread = handler => { rereadHandler = handler; };
 /** «Перечитать последний ответ» in the window: her message and the latest reply are read anew. */
 export const rereadLast = () => rereadHandler?.() ?? false;
 
-/**
- * The tag mode only: how many of the latest bot replies in a row came without Stork's tag (0 when the newest has one).
- * Replies read by the analysis or marked from a hint count as read; a reply never read ends the count.
- */
-export function missingTags() {
-    if (settings().readMode !== 'tag') return 0;
-    const chat = getContext().chat ?? [];
-    let count = 0;
-    for (let i = chat.length - 1; i >= 0; i--) {
-        const message = chat[i];
-        if (!message || message.is_user || message.is_system) continue;
-        const snapshot = message.extra?.stork?.[message.swipe_id ?? 0];
-        if (!snapshot || snapshot.tagFound || snapshot.fromHints) break;
-        count++;
-    }
-    return count;
-}
-
 // #endregion
 
 // #region Status for the model

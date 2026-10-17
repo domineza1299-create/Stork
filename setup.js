@@ -2,8 +2,9 @@
  * Setting a chat up without the setup form: from the analysis of the cards and the story opening,
  * with sensible defaults for what they don't say. Pure: no SillyTavern imports, tested in Node.
  */
-import { createPregnancy, cycleInfo, perimenopause } from './biology.js';
+import { createPregnancy, perimenopause } from './biology.js';
 import { guessAge, parseClock } from './engine.js';
+import { applyFindings } from './family.js';
 
 export const ADULT_AGE = 18;
 const CONTRACEPTIONS = ['none', 'pill', 'ring', 'patch', 'injection', 'implant', 'iud', 'copper_iud'];
@@ -35,10 +36,10 @@ function diagnosesFromCards(m, day, c) {
     if (c.vasectomy && (m.vasectomyDay === null || m.vasectomyDay === undefined)) m.vasectomyDay = day - 365;
 }
 
-/** This story day (today by default) is this ISO date: story day 0 moves so that the day lands on it. */
-function anchorStartDate(state, iso, day = state.clock.day) {
+/** Today in the story is this ISO date: story day 0 moves so that the current day lands on it. */
+function anchorStartDate(state, iso) {
     const base = new Date(`${iso}T12:00:00Z`);
-    base.setUTCDate(base.getUTCDate() - day);
+    base.setUTCDate(base.getUTCDate() - state.clock.day);
     state.startDate = base.toISOString().slice(0, 10);
 }
 
@@ -111,13 +112,6 @@ export function setupFromAnalysis(state, analysis, cards, rng = Math.random) {
     if (ISO_DATE.test(String(start.date ?? ''))) {
         anchorStartDate(state, start.date);
         state.dateSure = start.date_guessed === false;
-    } else if (!state.startDate) {
-        // nothing to go on: today's real date, as the setup form does, so there is always a date and not «день 1»;
-        // the first date the story names takes its place
-        const now = new Date();
-        const pad = n => String(n).padStart(2, '0');
-        anchorStartDate(state, `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`);
-        state.dateSure = false;
     }
     const time = parseClock(start.time);
     if (time !== null) state.clock.minutes = time;
@@ -127,6 +121,8 @@ export function setupFromAnalysis(state, analysis, cards, rng = Math.random) {
         state.era = a.story.era === 'past' ? 'traditional' : 'modern';
         state.eraSet = true;
     }
+    // relatives the cards name go onto the family tree
+    applyFindings(state, a.family, 'card');
     state.setupDone = true;
     state.autoSetup = true;
     return state;
@@ -135,8 +131,7 @@ export function setupFromAnalysis(state, analysis, cards, rng = Math.random) {
 /**
  * The setup form in the window (shown with what the analysis found), read into the state.
  * {{user}} is always the woman, {{char}} always the man.
- * @param {object} v Form values (strings or booleans) plus names and ages: userName, charName, userAge, charAge;
- *   dateChanged: she typed a date of her own over the one the form showed
+ * @param {object} v Form values (strings or booleans) plus names and ages: userName, charName, userAge, charAge
  * @param {object|null} analysis What analyzeCards() returned: a pregnancy and children the cards describe
  */
 export function applySetupForm(state, v, analysis = null, rng = Math.random) {
@@ -151,19 +146,11 @@ export function applySetupForm(state, v, analysis = null, rng = Math.random) {
 
     const f = user.female;
     const day = state.clock.day;
-    // in a chat already set up the form shows the day of the cycle now (as the window draws it): kept as it is,
-    // the cycle goes on with its delay and its sync; only a day she changed starts it again
-    const shownDay = state.setupDone ? Math.min(f.cycleLength, Math.max(1, cycleInfo(f, day).cycleDay)) : null;
     f.cycleLength = clampInt(v.cycleLength, 21, 35, 28);
     f.periodLength = clampInt(v.periodLength, 3, 7, 5);
-    const cycleDay = clampInt(v.cycleDay, 1, f.cycleLength, 1);
-    if (cycleDay !== shownDay) {
-        f.cycleStart = day - (cycleDay - 1);
-        f.syncedDay = day;
-        f.cycleShift = 0;
-        f.rolledCycle = null;
-        f.lateNoticed = [];
-    }
+    f.cycleStart = day - (clampInt(v.cycleDay, 1, f.cycleLength, 1) - 1);
+    f.syncedDay = day;
+    f.cycleShift = 0;
     f.irregularity = clampInt(v.irregularity, 0, 7, 0);
     const contraception = CONTRACEPTIONS.includes(v.contraception) ? v.contraception : 'none';
     if (f.contraception === 'pill' && contraception !== 'pill') f.pillStoppedDay = day;
@@ -184,13 +171,7 @@ export function applySetupForm(state, v, analysis = null, rng = Math.random) {
     m.drinker = !!v.drinker;
     diagnosesFromCards(m, day, analysis?.char ?? {});
 
-    if (ISO_DATE.test(String(v.startDate ?? ''))) {
-        anchorStartDate(state, v.startDate);
-        // a date she typed herself is the story's date: no date the story names later moves the calendar to it.
-        // Left as shown: the first time it is as sure as the cards made it, later it stays as it was
-        if (v.dateChanged) state.dateSure = true;
-        else if (!state.setupDone && analysis?.start?.date === v.startDate) state.dateSure = analysis.start.date_guessed === false;
-    }
+    if (ISO_DATE.test(String(v.startDate ?? ''))) anchorStartDate(state, v.startDate);
     state.clock.minutes = parseClock(v.time) ?? state.clock.minutes;
     state.storyMode = v.storyMode ?? 'realistic';
     // the world of the story: from her choice in the form, otherwise from the cards
@@ -202,6 +183,7 @@ export function applySetupForm(state, v, analysis = null, rng = Math.random) {
         state.eraSet = true;
     }
     if (analysis?.story?.summary) state.storySummary = analysis.story.summary;
+    applyFindings(state, analysis?.family, 'card');
     state.setupDone = true;
     state.chatOff = false;
     return state;
@@ -209,8 +191,7 @@ export function applySetupForm(state, v, analysis = null, rng = Math.random) {
 
 // #region Quick edits from the pencil and the calendar
 
-/** Not after a birth, not in a pregnancy she knows of; one she does not know of keeps her cycle editable, or the form would give it away. */
-const CYCLE_EDITABLE = f => !f.postpartum && !f.pregnancy?.knownBy?.includes('user');
+const CYCLE_EDITABLE = f => !f.pregnancy && !f.postpartum;
 
 /**
  * Applies the person editor. Only the fields present are changed.
@@ -247,19 +228,6 @@ export function applyPersonEdit(state, key, v) {
         for (const k of ['smoker', 'drinker']) if (v[k] !== undefined) m[k] = !!v[k];
     }
     return state;
-}
-
-/**
- * The story day (today by default) is this date, by her word: the date in the window, or «Переставить» on a hint
- * (its day and the date the story named, so a second tap changes nothing). Only the calendar's dates move;
- * the cycle, a pregnancy and everything else keep their days.
- */
-export function setStoryDate(state, iso, day = state.clock.day) {
-    if (!ISO_DATE.test(String(iso ?? '')) || !Number.isFinite(day)) return false;
-    anchorStartDate(state, iso, day);
-    state.dateSure = true;
-    state.dateHintOffset = null;
-    return true;
 }
 
 /** «Here her period started» from the calendar: the cycle restarts that day (today or earlier, not while pregnant). */

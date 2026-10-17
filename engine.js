@@ -4,9 +4,11 @@
  */
 import {
     ACT_PROTECTION, careOf, createPregnancy, cycleInfo, cycleReturnDay, EMERGENCY_PILL_FACTOR, EMERGENCY_PILL_WINDOW_DAYS, falseContractionsToday,
-    femaleConditionFactor, FEMALE_CONDITIONS, FEMALE_HABITS, femaleState, laborChance, laborProgress, LIFESTYLE, maleState, pillState, POSTPARTUM_RECOVERY_DAYS, pregnancyInfo,
+    femaleConditionFactor, FEMALE_CONDITIONS, FEMALE_HABITS, femaleState, laborChance, laborProgress, LIFESTYLE, maleState, pillState, POSTPARTUM_RECOVERY_DAYS, PREGNANCY_DAYS, pregnancyInfo,
     rollCondomBreak, rollConception, rollCycles, rollTest, startLabor, stressDelay, ultrasoundShowsSex,
 } from './biology.js';
+
+import { addBirths, applyFindings, emptyFamily, ensureFamily } from './family.js';
 
 export const MINUTES_PER_DAY = 1440;
 const MAX_LOG = 200;
@@ -78,13 +80,12 @@ export function createState({ userName = '', charName = '', startDate = null, st
         acts: [],
         rolls: [],
         log: [],
+        family: emptyFamily(),
         pending: [],
         // how each person is right now by the story (from the scene analysis), fading over half a day
         live: {},
         // true once the story itself named a date: before that the calendar date is only a guess
         dateSure: false,
-        // how many days the story's date runs ahead of Stork's (behind if negative), last time she was asked
-        dateHintOffset: null,
     };
 }
 
@@ -94,7 +95,7 @@ export function upgradeState(state) {
     // 0.15 kept the story so far inside every state; now each reply keeps only its own line (see lastLine)
     delete state.timeline;
     state.dateSure ??= false;
-    state.dateHintOffset ??= null;
+    ensureFamily(state);
     for (const person of Object.values(state.people ?? {})) {
         const m = person.male;
         if (m && !Array.isArray(m.orgasms)) m.orgasms = m.lastOrgasmMinute !== null && m.lastOrgasmMinute !== undefined ? [m.lastOrgasmMinute] : [];
@@ -113,8 +114,8 @@ function partnerOf(state, key) {
     return other.sex === 'male' ? other : null;
 }
 
-function note(state, person, text, { model = true, kind = 'event', ...extra } = {}) {
-    const entry = { day: state.clock.day, minutes: state.clock.minutes, who: person?.key ?? null, text, kind, ...extra };
+function note(state, person, text, { model = true, kind = 'event' } = {}) {
+    const entry = { day: state.clock.day, minutes: state.clock.minutes, who: person?.key ?? null, text, kind };
     state.log.push(entry);
     if (state.log.length > MAX_LOG) state.log.splice(0, state.log.length - MAX_LOG);
     if (model) state.pending.push({ who: person?.key ?? null, text, day: state.clock.day });
@@ -192,8 +193,7 @@ function processPregnancyDay(state, person, rng) {
     if (p.spottingDay === day) note(state, person, `${name}: лёгкие мажущие выделения не в срок, она не придаёт им значения`);
 
     // Missed period: she notices on day 1, 3 and 7 of the delay
-    // counted from the cycle she sees: bleeding she took for a period (marked by her or by the story) moves it later
-    const expected = Math.max(p.lmp, f.cycleStart) + f.cycleLength + (f.cycleShift ?? 0);
+    const expected = p.lmp + f.cycleLength + (f.cycleShift ?? 0);
     const late = day - expected + 1;
     if (!knows && [1, 3, 7].includes(late) && !f.lateNoticed.includes(late)) {
         f.lateNoticed.push(late);
@@ -235,6 +235,8 @@ function processLabor(state, person, rng) {
             const babies = p.sexes.map(s => s).join(' и ');
             note(state, person, `${name}: роды завершились, ${p.babies > 1 ? 'родились двойняшки' : 'родился малыш'} (${babies})`, { kind: 'labor' });
             f.births += 1;
+            // the baby goes onto the family tree as a child of both
+            addBirths(state, p.sexes, state.clock.day);
             f.postpartum = { birthDay: state.clock.day, breastfeeding: true, cycleReturnDay: cycleReturnDay(state.clock.day, true, rng) };
             f.pregnancy = null;
         } else {
@@ -377,8 +379,7 @@ export function applyEvent(state, event, rng = Math.random) {
             // the story plainly shows her period: the cycle follows the story, not the count
             const woman = Object.values(state.people).find(p => p.sex === 'female');
             const f = woman?.female;
-            // a pregnancy she does not know of: bleeding she takes for a period moves the cycle she sees, the pregnancy stays
-            if (!f || f.postpartum || f.pregnancy?.knownBy.includes(woman.key)) break;
+            if (!f || f.pregnancy || f.postpartum) break;
             const now = cycleInfo(f, day);
             if (now.phase === 'menstruation') break;
             // The cycle was set by her or by the story lately: a period in its first half is far more likely a slip
@@ -624,6 +625,63 @@ export function rejectPregnancyClaim(state) {
     c.decidedDay = state.clock.day;
     delete c.prev;
     return true;
+}
+
+/**
+ * A pregnancy set by hand: her own (the story has one Stork missed, an old chat) or new dates for the one there is.
+ * Only the start is stored (lmp): the week, the baby, the due date, the visits and the status for the model all
+ * follow from it by themselves. Visits before this week count as done off-screen (no pile of «пора к врачу»),
+ * the ones ahead come as usual; a labor that started too early stops.
+ * @param {{weeks?: number|string, days?: number|string, lmpDate?: string, dueDate?: string, partnerKnows?: boolean}} input
+ *   the term, or the first day of the last period, or the due date (ISO, by the story's calendar)
+ * @returns {{ok: boolean, error?: string, created?: boolean, weeks?: number, days?: number}}
+ */
+export function setPregnancyByHand(state, input, rng = Math.random) {
+    const woman = Object.values(state.people).find(p => p.sex === 'female');
+    const f = woman?.female;
+    if (!f) return { ok: false, error: 'в этом чате нет героини' };
+    const day = state.clock.day;
+    let total;
+    if (input.lmpDate || input.dueDate) {
+        const at = dayOfDate(state, input.lmpDate || input.dueDate);
+        if (at === null) return { ok: false, error: 'у истории нет календарной даты: укажи срок неделями' };
+        total = input.lmpDate ? day - at : PREGNANCY_DAYS - (at - day);
+    } else {
+        total = termDays(input.weeks, input.days);
+    }
+    if (!Number.isFinite(total) || total < 14) return { ok: false, error: 'срок меньше 2 недель — так беременность ещё не считается' };
+    if (total > 42 * 7) return { ok: false, error: 'срок больше 42 недель' };
+
+    const created = !f.pregnancy;
+    if (created) {
+        f.pregnancy = createPregnancy({ lmp: day - total, conceptionDay: day - total + 14, twins: false, births: f.births, rng });
+        f.postpartum = null;
+    } else {
+        setPregnancyTerm(f.pregnancy, day, total);
+    }
+    const p = f.pregnancy;
+    p.manual = true;
+    if (!p.knownBy.includes(woman.key)) p.knownBy.push(woman.key);
+    const partner = Object.values(state.people).find(x => x.sex === 'male');
+    if (partner && typeof input.partnerKnows === 'boolean') {
+        const knows = p.knownBy.includes(partner.key);
+        if (input.partnerKnows && !knows) p.knownBy.push(partner.key);
+        if (!input.partnerKnows && knows) p.knownBy = p.knownBy.filter(k => k !== partner.key);
+    }
+    const week = Math.floor(total / 7);
+    p.visitsDone = careOf(state).visits.filter(v => v.week < week).map(v => v.week);
+    if (week < 18) p.sexKnown = false;
+    if (p.labor && week < 37) p.labor = null;
+    // a question from the story waiting for her answer is settled by what she set herself
+    const claim = state.pregnancyClaim;
+    if (claim?.status === 'pending') {
+        claim.status = 'accepted';
+        claim.decidedDay = day;
+        delete claim.prev;
+    }
+    const term = `${week} нед.${total % 7 ? ` ${total % 7} дн.` : ''}`;
+    note(state, woman, `${woman.name || 'Она'}: ${created ? 'беременность указана вручную' : 'срок беременности поправлен вручную'} — ${term}`, { model: false, kind: 'claim' });
+    return { ok: true, created, weeks: week, days: total % 7 };
 }
 
 /** Her own term: the pregnancy is re-dated, the story no longer moves it while she decides. */
@@ -1009,6 +1067,15 @@ export function liveNow(state, key) {
 }
 /** A level 0-1 with the story's offset (-3..3) on top of the body's own level. */
 export const withLive = (base, offset) => Math.min(1, Math.max(0, base + 0.15 * (offset ?? 0)));
+/**
+ * His energy before the story's offset. Testosterone only nudges it: the evening dip is real but small and is
+ * not tiredness. Taken 1:1, it made him «tired» every evening from about 15:00 to 01:00 whatever the story said,
+ * and the status pushed the role-play model to show it. Now he is in his usual shape by default (about 0.67-0.82
+ * at 30-40) and gets tired from the story (the analysis' energy −1 and lower) or with age.
+ */
+export const maleBaseVigor = t => 0.75 + 0.3 * ((t ?? 0.75) - 0.75);
+/** His energy now, 0-1: the body and what the story shows. */
+export const maleVigor = (state, person, snapshot = maleSnapshot(state, person)) => withLive(maleBaseVigor(snapshot.testosterone), liveNow(state, person.key).energy);
 
 const toOffset = v => (v === null || v === undefined || Number.isNaN(Number(v)) ? null : Math.max(-3, Math.min(3, Math.round(Number(v)))));
 /** The analysis says how each person is now: replaces the earlier reading (it describes now, not a change). */
@@ -1094,7 +1161,7 @@ function maleLineRaw(state, person, detailed) {
     const parts = [`${name}${age}:`];
     if (detailed) {
         const live = liveNow(state, person.key);
-        const vigor = withLive(s.testosterone, live.energy), libido = withLive(s.libido, live.libido);
+        const vigor = maleVigor(state, person, s), libido = withLive(s.libido, live.libido);
         parts.push(vigor > 0.85 ? 'full of energy, at his peak.' : vigor > 0.65 ? 'in his usual shape.' : 'tired.');
         parts.push(`Desire ${level(libido)}.`);
         if (s.erection < 0.75) parts.push('His erection may let him down (stress, tiredness or drink).');
@@ -1122,13 +1189,6 @@ export function storyDate(state, day = state.clock.day) {
 export function dateLabel(state, day = state.clock.day, options = { day: 'numeric', month: 'long', weekday: 'long' }) {
     const date = storyDate(state, day);
     return date ? date.toLocaleDateString('ru-RU', options) : `день ${day + 1}`;
-}
-
-/** «ср, 4 мар» (long: «среда, 4 мар»): the short date with its weekday; «день 5» when there is no date. */
-export function dateWithWeekday(state, day = state.clock.day, { long = false, withYear = false } = {}) {
-    const date = storyDate(state, day);
-    const short = shortDate(state, day, withYear);
-    return date ? `${date.toLocaleDateString('ru-RU', { weekday: long ? 'long' : 'short' })}, ${short}` : short;
 }
 
 /** The part of the day in words, with the same boundaries as Mnema (5555990): both blocks name it alike. */
@@ -1199,22 +1259,19 @@ export function processReply(previousState, replyText, rng = Math.random, scene 
     const clock = tag.clock ?? extractClock(replyText);
     const skip = scene?.scene_after_skip === true || (tag.eventsEnd ?? []).length > 0;
     advanceTime(state, storyMinutes(state, { clock, minutes: tag.minutes, date: scene?.date, part: scene?.part_of_day, skip }), rng);
-    dateHint(state, scene?.date);
     // ...and what came after the time skip happens at the new moment
     for (const event of tag.eventsEnd ?? []) applyEvent(state, event, rng);
     if (scene) {
         applyPeople(state, scene.people);
         applyInjuries(state, scene.injury);
         addPregnancyFacts(state, scene.pregnancy_facts);
+        // a relative the story names for the first time, a wedding: onto the family tree
+        for (const text of applyFindings(state, scene.family, 'story')) note(state, null, `Семья: ${text}`, { model: false, kind: 'family' });
         // this reply's line of the story so far: the analysis of later replies gathers them from the chat
         const line = typeof scene.summary === 'string' ? scene.summary.trim().replace(/\s+/g, ' ').slice(0, 160) : '';
         if (line) state.lastLine = { at: absMinute(state.clock), text: line };
-        // the world of the story, once (when the cards did not tell it): the care of a pregnancy follows it
-        // (a doctor or a midwife). Kept from then on, so the visits do not switch; she can change it in the setup form
-        if (!state.eraSet && (scene.era === 'past' || scene.era === 'modern')) {
-            state.era = scene.era === 'past' ? 'traditional' : 'modern';
-            state.eraSet = true;
-        }
+        // the world of the story, once: the care of a pregnancy follows it (a doctor or a midwife)
+        if (!state.eraSet && (scene.era === 'past' || scene.era === 'modern')) state.era = scene.era === 'past' ? 'traditional' : 'modern';
     }
     // He was recovering and the story time ran out: tell once
     const man = state.people.char;
@@ -1231,25 +1288,6 @@ export function partOf(minutes) {
     const h = Math.floor(minutes / 60);
     return h < 5 ? 'night' : h < 12 ? 'morning' : h < 17 ? 'day' : h < 22 ? 'evening' : 'night';
 }
-/**
- * The story named a date for now that Stork's calendar does not have (it is sure of its own date and the story did
- * not move there by a time skip): she is asked once per difference, nothing moves by itself. The log entry carries
- * the date the story named for its day, for the button «Переставить».
- */
-function dateHint(state, date) {
-    const named = dayOfDate(state, date);
-    if (named === null) return;
-    const offset = named - state.clock.day;
-    if (offset === 0) {
-        state.dateHintOffset = null;
-        return;
-    }
-    if (state.dateHintOffset === offset) return;
-    state.dateHintOffset = offset;
-    const label = day => dateLabel(state, day, { day: 'numeric', month: 'long' });
-    note(state, null, `В истории ${label(named)}, а у Stork ${label(state.clock.day)}`, { model: false, kind: 'date_hint', date });
-}
-
 /** Story day of an ISO date, by the chat's start date. */
 function dayOfDate(state, iso) {
     if (!state.startDate || !/^\d{4}-\d{2}-\d{2}$/.test(String(iso ?? ''))) return null;

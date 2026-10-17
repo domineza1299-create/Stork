@@ -86,7 +86,8 @@ stork {
 }
 
 .stk-tab {
-    flex: 1;
+    flex: 1 1 auto;
+    min-width: 0;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -111,7 +112,14 @@ stork {
     color: var(--stk-pink);
 }
 
-@container (max-width: 560px) {
+/* the words take what they need; a long one never runs into the next tab */
+.stk-tab span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* six tabs with words need room: narrower, only the icons */
+@container (max-width: 720px) {
     .stk-tab span {
         display: none;
     }
@@ -2099,124 +2107,79 @@ div.stk-log-row {
     }
 }
 
-/* ═══ Sperm: three test tubes and the conclusion beside them ═══ */
+/* ═══ Sperm: a short lab sheet — the grade, three lines, the conclusion ═══ */
 .stk-semen {
     display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 10px 16px;
-    padding: 10px 12px;
-    border-radius: 12px;
-    border: 1px solid var(--stk-line);
-    background:
-        radial-gradient(120% 140% at 0% 100%, color-mix(in srgb, var(--stk-pink) 10%, transparent), transparent 60%),
-        var(--stk-glass);
-}
-
-.stk-vials {
-    display: flex;
-    gap: 4px;
-    flex: none;
-}
-
-.stk-vial {
-    display: flex;
     flex-direction: column;
-    align-items: center;
-    gap: 5px;
-    width: 64px;
+    gap: 9px;
+    padding: 10px 12px 11px;
+    border-radius: 10px;
+    background: var(--stk-glass-hover);
 }
 
-.stk-vial > b {
-    font-size: 0.85em;
-    font-weight: 600;
-    font-variant-numeric: tabular-nums;
-    color: color-mix(in srgb, var(--tone) 70%, var(--stk-text));
+.stk-sm-head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
 }
 
-.stk-vial > small {
-    color: var(--stk-muted);
+.stk-sm-k {
     font-size: 0.7em;
-    line-height: 1.1;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--stk-muted);
+}
+
+.stk-sm-head > b {
+    font-size: 1em;
+    color: color-mix(in srgb, var(--tone) 80%, var(--stk-text));
+}
+
+.stk-sm-head .stk-seg5 {
+    width: 64px;
+    margin: 0 0 0 auto;
+    align-self: center;
+}
+
+.stk-sm-rows {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr) max-content;
+    gap: 6px 10px;
+    font-size: 0.84em;
+}
+
+/* the rows share the columns: the bars start at one line whatever the label */
+.stk-sm-row {
+    display: grid;
+    grid-column: 1 / -1;
+    grid-template-columns: subgrid;
+    align-items: center;
+}
+
+.stk-sm-row > span:first-child {
+    color: var(--stk-muted);
     white-space: nowrap;
 }
 
-/* the tube: glass with a rim, filled from the bottom to the value */
-.stk-vial-tube {
-    position: relative;
-    width: 18px;
-    height: 58px;
-    border-radius: 3px 3px 10px 10px;
-    background: color-mix(in srgb, var(--stk-text) 6%, transparent);
-    box-shadow: inset 0 0 0 1.5px var(--stk-line-strong);
+.stk-sm-row > b {
+    text-align: right;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+
+.stk-sm-bar {
+    height: 5px;
+    border-radius: 3px;
+    background: var(--stk-line);
     overflow: hidden;
 }
 
-.stk-vial-tube::before {
-    content: '';
-    position: absolute;
-    inset: 0 0 auto;
-    height: 3px;
-    background: var(--stk-line-strong);
-    z-index: 2;
-}
-
-.stk-vial-tube > i {
-    position: absolute;
-    inset: auto 0 0;
-    height: var(--v);
-    background: linear-gradient(to top, var(--tone), color-mix(in srgb, var(--tone) 55%, transparent));
-    transition: height 0.6s ease;
-}
-
-/* the surface of the liquid */
-.stk-vial-tube > i::before {
-    content: '';
-    position: absolute;
-    inset: 0 0 auto;
-    height: 2px;
-    background: color-mix(in srgb, #fff 45%, var(--tone));
-    opacity: 0.8;
-}
-
-/* a glint along the glass */
-.stk-vial-tube::after {
-    content: '';
-    position: absolute;
-    top: 6px;
-    bottom: 8px;
-    left: 3px;
-    width: 3px;
-    border-radius: 2px;
-    background: rgb(255 255 255 / 0.2);
-    z-index: 1;
-}
-
-.stk-semen-text {
-    flex: 1 1 180px;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-}
-
-.stk-semen-grade {
-    display: flex;
-    align-items: baseline;
-    flex-wrap: wrap;
-    gap: 4px 8px;
-}
-
-.stk-semen-grade > span {
-    color: var(--stk-muted);
-    font-size: 0.72em;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-}
-
-.stk-semen-grade > b {
-    font-size: 1.05em;
-    color: color-mix(in srgb, var(--tone) 80%, var(--stk-text));
+.stk-sm-bar > i {
+    display: block;
+    height: 100%;
+    border-radius: 3px;
+    background: var(--tone);
+    transition: width 0.5s ease;
 }
 
 .stk-chips {
@@ -2236,7 +2199,9 @@ div.stk-log-row {
 
 .stk-semen-note {
     margin: 0;
-    font-size: 0.88em;
+    padding-top: 8px;
+    border-top: 1px solid var(--stk-line);
+    font-size: 0.86em;
     line-height: 1.45;
     color: color-mix(in srgb, var(--stk-text) 88%, transparent);
 }
@@ -2247,7 +2212,7 @@ div.stk-log-row {
 }
 
 @media (prefers-reduced-motion: reduce) {
-    .stk-vial-tube > i {
+    .stk-sm-bar > i {
         transition: none;
     }
 }
@@ -2411,7 +2376,8 @@ div.stk-log-row {
     border-inline: 1px solid var(--stk-line);
 }
 
-.stk-sb-date {
+.stk-sb-date,
+.stk-sb-part {
     color: var(--stk-muted);
 }
 
@@ -2456,8 +2422,7 @@ div.stk-log-row {
     border-bottom-color: color-mix(in srgb, var(--stk-warm) 60%, transparent);
 }
 
-#stork_bar .stk-retry,
-#stork_bar .stk-notag {
+#stork_bar .stk-retry {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -2473,9 +2438,10 @@ div.stk-log-row {
     cursor: pointer;
 }
 
-/* narrower: short words; then signs without names; then the time alone in the middle */
+/* narrower: short words, no part of the day; then signs without names; then the time alone in the middle */
 @container (max-width: 560px) {
-    .stk-sb-long {
+    .stk-sb-long,
+    .stk-sb-part {
         display: none;
     }
 
@@ -2575,48 +2541,6 @@ div.stk-log-row {
     font-variant-numeric: tabular-nums;
 }
 
-/* The date next to the clock: it reads as text, a tap sets it by hand */
-.stk-date-btn {
-    display: inline-flex;
-    align-items: baseline;
-    gap: 6px;
-    padding: 2px 6px;
-    border: none;
-    border-radius: 8px;
-    background: transparent;
-    color: inherit;
-    font: inherit;
-    cursor: pointer;
-}
-
-.stk-date-btn .stk-ic {
-    color: var(--stk-muted);
-    font-size: 0.8em;
-}
-
-.stk-date-btn:hover {
-    background: var(--stk-glass-hover);
-}
-
-.stk-clock.stk-edit {
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: flex-start;
-}
-
-.stk-date-in {
-    width: auto;
-    min-width: 0;
-    flex: 0 1 170px;
-    margin: 0;
-}
-
-/* the two buttons stay together: next to the date, or under it on a phone */
-.stk-date-acts {
-    display: flex;
-    gap: 6px;
-}
-
 /* ═══ The latest event in one line (the infoblock's «Сейчас») ═══ */
 .stk-shared-line {
     display: flex;
@@ -2674,3 +2598,446 @@ div.stk-log-row {
     white-space: nowrap;
 }
 
+
+/* ═══ Person card head: the avatar as a cover, tiles under it (replaces the rings) ═══ */
+.stk-card.has-cover {
+    overflow: hidden;
+}
+
+.stk-cover {
+    position: relative;
+    height: 112px;
+    margin: -12px -14px 4px;
+    overflow: hidden;
+    background: linear-gradient(120deg, color-mix(in srgb, var(--stk-pink) 14%, #0c0809) 40%, color-mix(in srgb, var(--stk-preg) 45%, #000));
+}
+
+.stk-cover.is-char {
+    background: linear-gradient(120deg, color-mix(in srgb, var(--stk-preg) 12%, #0a0a10) 40%, color-mix(in srgb, var(--stk-accent) 35%, #000));
+}
+
+.stk-cover-img {
+    position: absolute;
+    inset: 0 0 0 22%;
+    -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 45%);
+    mask-image: linear-gradient(90deg, transparent 0%, #000 45%);
+}
+
+.stk-cover-img img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: 50% 22%;
+}
+
+.stk-cover-img.is-empty {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding-right: 22px;
+}
+
+.stk-cover-img.is-empty b {
+    font-size: 2.6em;
+    opacity: 0.35;
+    color: #fff;
+}
+
+/* the shade from the left keeps the name readable over any picture, in the theme's own colour */
+.stk-cover::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: linear-gradient(90deg, rgba(8, 6, 7, 0.78) 0%, rgba(8, 6, 7, 0.45) 45%, transparent 75%),
+        linear-gradient(0deg, rgba(8, 6, 7, 0.55) 0%, transparent 55%);
+}
+
+.stk-cover-text {
+    position: absolute;
+    left: 14px;
+    right: 44px;
+    bottom: 11px;
+    z-index: 1;
+    min-width: 0;
+}
+
+.stk-cover-name {
+    display: flex;
+    align-items: baseline;
+    gap: 7px;
+    font-size: 1.22em;
+    font-weight: 700;
+    color: #fff;
+    text-shadow: 0 1px 6px rgba(0, 0, 0, 0.45);
+}
+
+.stk-cover-name .stk-ic {
+    color: var(--stk-pink);
+    font-size: 0.8em;
+}
+
+.stk-cover.is-char .stk-cover-name .stk-ic {
+    color: var(--stk-preg);
+}
+
+.stk-cover-name span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.stk-cover-name small {
+    font-size: 0.68em;
+    font-weight: 400;
+    color: rgba(255, 255, 255, 0.7);
+}
+
+.stk-cover-sub {
+    margin-top: 3px;
+    font-size: 0.86em;
+    color: var(--stk-accent);
+    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.stk-cover-sub.is-preg { color: color-mix(in srgb, var(--stk-preg) 70%, var(--stk-text)); }
+.stk-cover-sub.is-period { color: color-mix(in srgb, var(--stk-period) 75%, var(--stk-text)); }
+.stk-cover-sub.is-warm { color: color-mix(in srgb, var(--stk-warm) 75%, var(--stk-text)); }
+.stk-cover-sub.is-pink { color: var(--stk-pink); }
+
+.stk-cover .stk-pen {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 1;
+    background: rgba(8, 6, 7, 0.45);
+    border-radius: 8px;
+    color: #fff;
+}
+
+.stk-ptiles {
+    display: grid;
+    grid-template-columns: repeat(var(--n, 3), minmax(0, 1fr));
+    gap: 6px;
+}
+
+.stk-ptile {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+    padding: 8px 8px 9px;
+    border-radius: 9px;
+    text-align: left;
+    background: var(--stk-glass-hover);
+}
+
+.stk-ptile-k {
+    font-size: 0.7em;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--stk-muted);
+}
+
+.stk-ptile-v {
+    font-size: 0.84em;
+    line-height: 1.25;
+    margin-bottom: 3px;
+    overflow-wrap: break-word;
+    hyphens: auto;
+}
+
+.stk-seg5 {
+    display: flex;
+    gap: 2px;
+    margin-top: auto;
+}
+
+.stk-seg5 i {
+    flex: 1;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--stk-line);
+}
+
+.stk-seg5 i.is-on { background: var(--stk-accent); }
+.stk-seg5 i.is-on.is-pink { background: var(--stk-pink); }
+.stk-seg5 i.is-on.is-period { background: var(--stk-period); }
+.stk-seg5 i.is-on.is-warm { background: var(--stk-warm); }
+.stk-seg5 i.is-on.is-preg { background: var(--stk-preg); }
+
+/* a narrow half-width card on a wide screen: the tiles go one per row */
+@container (max-width: 300px) {
+    .stk-ptiles {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .stk-ptile {
+        display: grid;
+        grid-template-columns: 5.5em minmax(0, 1fr) 4.5em;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 9px;
+    }
+
+    .stk-ptile-v {
+        margin: 0;
+    }
+}
+
+/* ═══ A pregnancy set by hand ═══ */
+.stk-pf-modes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.stk-pf-mode {
+    display: inline-flex;
+    cursor: pointer;
+}
+
+.stk-pf-mode input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.stk-pf-mode span {
+    padding: 5px 11px;
+    border-radius: 999px;
+    border: 1px solid var(--stk-line);
+    font-size: 0.88em;
+    color: var(--stk-muted);
+}
+
+.stk-pf-mode input:checked + span {
+    color: var(--stk-text);
+    border-color: color-mix(in srgb, var(--stk-preg) 60%, transparent);
+    background: color-mix(in srgb, var(--stk-preg) 18%, transparent);
+}
+
+.stk-pf-mode input:focus-visible + span {
+    outline: 2px solid var(--stk-preg);
+    outline-offset: 2px;
+}
+
+.stk-preg-form .stk-pf-row { display: none; }
+.stk-preg-form:has([data-f="mode"][value="term"]:checked) .stk-pf-row.is-term,
+.stk-preg-form:has([data-f="mode"][value="lmp"]:checked) .stk-pf-row.is-lmp,
+.stk-preg-form:has([data-f="mode"][value="due"]:checked) .stk-pf-row.is-due {
+    display: flex;
+}
+
+.stk-preg-form .stk-field.stk-pf-row {
+    flex-direction: column;
+    gap: 4px;
+}
+
+.stk-empty .stk-btn {
+    margin-top: 10px;
+}
+
+.stk-preg-form .stk-claim-term input.text_pole {
+    width: 3.4em;
+    max-width: 3.4em;
+    flex: none;
+}
+
+.stk-preg-form input[type="date"].text_pole {
+    width: auto;
+    max-width: 14em;
+}
+
+/* ═══ Family tree: generations as rows, faces in frames, lines between them ═══ */
+.stk-tree-scroll {
+    overflow: auto;
+    max-height: min(66vh, 720px);
+    margin: 0 -4px;
+    padding: 4px;
+    border-radius: var(--stk-radius);
+    background:
+        radial-gradient(90% 70% at 50% 0%, color-mix(in srgb, var(--stk-preg) 9%, transparent), transparent 70%),
+        var(--stk-glass);
+    border: 1px solid var(--stk-line);
+    overscroll-behavior: contain;
+}
+
+.stk-tree {
+    position: relative;
+    margin: 0 auto;
+}
+
+.stk-tree-lines {
+    position: absolute;
+    inset: 0;
+    overflow: visible;
+    pointer-events: none;
+}
+
+.stk-tree-lines path {
+    fill: none;
+    stroke: color-mix(in srgb, var(--stk-text) 34%, transparent);
+    stroke-width: 2;
+    stroke-linejoin: round;
+    stroke-linecap: round;
+}
+
+.stk-tree-lines .is-spouse { stroke: color-mix(in srgb, var(--stk-pink) 75%, transparent); }
+.stk-tree-lines .is-partner { stroke: color-mix(in srgb, var(--stk-pink) 60%, transparent); stroke-dasharray: 6 5; }
+.stk-tree-lines .is-ex { stroke: color-mix(in srgb, var(--stk-text) 26%, transparent); stroke-dasharray: 3 6; }
+.stk-tree-lines .is-coparent { stroke: color-mix(in srgb, var(--stk-text) 26%, transparent); stroke-dasharray: 1 5; }
+.stk-tree-lines .is-sibling { stroke: color-mix(in srgb, var(--stk-text) 30%, transparent); }
+.stk-tree-lines .is-far { stroke: color-mix(in srgb, var(--stk-text) 24%, transparent); stroke-width: 1.5; stroke-dasharray: 5 5; }
+
+.stk-fheart {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    font-size: 0.7em;
+    color: var(--stk-pink);
+    pointer-events: none;
+    filter: drop-shadow(0 0 3px color-mix(in srgb, var(--SmartThemeBlurTintColor, #111) 90%, transparent));
+}
+
+.stk-fnode {
+    position: absolute;
+    width: var(--node-w, 84px);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--stk-text);
+    font: inherit;
+    cursor: pointer;
+    text-align: center;
+}
+
+.stk-fnode-img {
+    --frame: var(--stk-line-strong);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 62px;
+    height: 76px;
+    border-radius: 13px;
+    overflow: hidden;
+    background: linear-gradient(160deg, color-mix(in srgb, var(--frame) 30%, #0d0a0b), color-mix(in srgb, var(--frame) 12%, #0d0a0b));
+    box-shadow: 0 0 0 2px var(--frame), 0 6px 14px rgba(0, 0, 0, 0.35);
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.stk-fnode.is-f .stk-fnode-img { --frame: color-mix(in srgb, var(--stk-pink) 70%, transparent); }
+.stk-fnode.is-m .stk-fnode-img { --frame: color-mix(in srgb, var(--stk-preg) 70%, transparent); }
+.stk-fnode.is-fixed .stk-fnode-img { box-shadow: 0 0 0 2px var(--frame), 0 0 0 5px color-mix(in srgb, var(--frame) 25%, transparent), 0 6px 14px rgba(0, 0, 0, 0.35); }
+
+.stk-fnode-img img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: 50% 20%;
+}
+
+.stk-fnode-img > b {
+    font-size: 1.3em;
+    color: rgba(255, 255, 255, 0.75);
+}
+
+.stk-fnode-img > .stk-ic {
+    font-size: 1.6em;
+    color: rgba(255, 255, 255, 0.7);
+}
+
+.stk-fnode > b {
+    max-width: 100%;
+    margin-top: 4px;
+    font-size: 0.82em;
+    line-height: 1.15;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.stk-fnode > small {
+    max-width: 100%;
+    font-size: 0.68em;
+    line-height: 1.2;
+    color: var(--stk-muted);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.stk-fnode:hover .stk-fnode-img,
+.stk-fnode:focus-visible .stk-fnode-img {
+    transform: translateY(-2px);
+}
+
+.stk-fnode:focus-visible {
+    outline: none;
+}
+
+.stk-fnode:focus-visible .stk-fnode-img,
+.stk-fnode.is-on .stk-fnode-img {
+    box-shadow: 0 0 0 2px var(--stk-accent), 0 0 0 6px color-mix(in srgb, var(--stk-accent) 30%, transparent), 0 6px 14px rgba(0, 0, 0, 0.35);
+}
+
+.stk-tree-tools {
+    margin: 0;
+}
+
+.stk-fam-edit .stk-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.stk-fam-pair {
+    display: grid;
+    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+    gap: 8px;
+}
+
+.stk-flink {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 6px 4px 10px;
+    border-radius: 8px;
+    background: var(--stk-glass-hover);
+    font-size: 0.9em;
+}
+
+.stk-flink > span {
+    flex: 1;
+    min-width: 0;
+}
+
+.stk-flink-add {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.9em;
+}
+
+.stk-flink-add select.text_pole {
+    width: auto;
+    flex: 1 1 8em;
+    min-width: 0;
+    margin: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .stk-fnode-img { transition: none; }
+}
+
+.stk-fam-edit .stk-card-title .stk-pen {
+    margin-left: auto;
+}

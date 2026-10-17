@@ -8,8 +8,9 @@ import { cleanRpText, DIAGNOSES, SCENE_LIFESTYLE_TYPES as LIFESTYLE_TYPES } from
 export { sceneToTag } from './engine.js';
 export { errorText } from './connection.js';
 
-// A ceiling, not a cost: a plain model writes a few hundred; a thinking model spends its thoughts from the same budget
-const SCENE_MAX_TOKENS = 2500;
+// The JSON itself is about 500-800 tokens, but reasoning models think first and the thinking counts against
+// this limit too: Kimi K3 spends 1200-2500 tokens on it. The limit is only a ceiling, only used tokens are paid.
+const SCENE_MAX_TOKENS = 6000;
 /** Only the newest part of long messages matters for what just happened. */
 const MAX_MESSAGE_CHARS = 5000;
 const MAX_EARLIER_CHARS = 1500;
@@ -59,8 +60,9 @@ Return JSON:
   "partner_learns_pregnancy": true | false,
   "pregnancy_facts": [ "new facts about her pregnancy these messages establish, each up to 12 words in Russian" ],
   "pregnancy_claim": null or { "weeks": number or null, "days": number or null, "partner_knows": true | false, "quote": "the words that say it, up to 15 words, as written" },
-  "diagnoses": [ any of ${DIAGNOSES.map(d => `"${d}"`).join(', ')} ],
+  "diagnoses": [] — almost always empty; only if these messages show a doctor finding it or state it as a fact: some of ${DIAGNOSES.map(d => `"${d}"`).join(', ')},
   "period": "started" | "ongoing" | null,
+  "family": [ { "name": "as written", "sex": "male" | "female" | null, "relation": "parent" | "child" | "sibling" | "spouse" | "partner" | "ex" | "grandparent" | "grandchild" | "auncle" | "niece" | "cousin", "of": "user" | "char" | "the name of another relative" } ],
   "missed_pill": true | false,
   "emergency_pill": true | false,
   "people": {
@@ -74,6 +76,7 @@ Rules:
 - "scene_after_skip": true when the messages first jump forward in time and the scene with everything in it (closeness, drinking, a test, a doctor, an injury) comes after the jump ("four months later… he pours a whiskey"); false when things happen first and the time passes after them (they made love, then slept till morning), or when there is no jump.
 - "illness" only for a sickness with a raised temperature (flu, an infection, a cold with fever) — then "fever": true. Injuries, bruises, cuts, pain, a hangover or tiredness are NOT an illness: put an injury into "injury", tiredness into "energy".
 - "pregnancy_claim": when these messages, the USER MESSAGE included, state as a fact that {{user}} is pregnant: she says or thinks it as something she knows, a positive test, a doctor confirms it, the narration says so. The user writes {{user}} herself, so her own words count even if the tracker says she is not pregnant. "weeks"/"days": the term the text names (months → weeks: 2 months ≈ 8 weeks; "two weeks of delay" ≈ 6 weeks), null if no term. "partner_knows": true if {{char}} knows in these messages. null when it is only a fear, a guess, a joke, a plan, a dream, a question, or nothing like that.
+- "family": almost always empty. Only relatives of {{user}} or {{char}} that these messages name or show for the first time, or a relation that changes now: "name is relation of of" (Галина — mother of {{char}}: { "name": "Галина", "sex": "female", "relation": "parent", "of": "char" }). When {{user}} and {{char}} marry, become a couple or break up in these messages: { "name": "char", "relation": "spouse" | "partner" | "ex", "of": "user" }. Not friends, colleagues or a relative only mentioned in passing without a name; a baby born in the story is counted by the tracker itself.
 - "pregnancy_facts": only while the tracker says she is pregnant and knows it: what these messages establish about this pregnancy that is worth remembering for its whole course — a symptom that stays (strong nausea, swelling), a complication or a threat, what a doctor or a midwife said, twins, a decision (to keep it, to hide it). Not a passing feeling of this scene, not what the tracker already says. Empty if nothing new.
 - "partner_learns_pregnancy": true only when {{char}} learns in these messages that {{user}} is pregnant (she tells him, he sees a positive test, a doctor says it with him there); false if he already knew, if it is only a guess or a fear, or if nothing like that happened.
 - "past_intimacy": intercourse between {{user}} and {{char}} the messages speak of as already past and not shown in the story before ("three weeks ago we slept together", "they have been sleeping together since spring": the latest time), with how many days before the END of these messages it was; finished_inside true unless said otherwise; protection "none" unless said. Empty if nothing like that.
@@ -95,7 +98,8 @@ function parseJson(text) {
     if (!raw.trim()) throw new Error('модель вернула пустой ответ');
     const start = raw.indexOf('{');
     const end = raw.lastIndexOf('}');
-    if (start < 0 || end <= start) throw new Error('в ответе модели нет данных');
+    if (start < 0) throw new Error('в ответе модели нет данных');
+    if (end <= start) throw new Error('ответ модели оборван на середине (не хватило лимита токенов)');
     try {
         return JSON.parse(raw.slice(start, end + 1));
     } catch {

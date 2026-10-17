@@ -5,17 +5,18 @@
  */
 import { saveSettingsDebounced } from '../../../../script.js';
 import { careOf, cycleInfo, FEMALE_CONTRACEPTION, femaleState, laborProgress, pillState, pregnancyInfo } from './biology.js';
-import { absMinute, acceptPregnancyClaim, clockText, dateWithWeekday, editPregnancyClaim, liveNow, maleSnapshot, recoveryLeft, rejectPregnancyClaim, shortDate, withLive } from './engine.js';
-import { activeIn, changed, currentState, missingTags, readStatus, refreshStatus, rereadLast, retryRead, settings, updateCurrentState, VIEWS } from './store.js';
-import { applyPersonEdit, setPeriodStart, setStoryDate } from './setup.js';
+import { absMinute, acceptPregnancyClaim, clockText, editPregnancyClaim, liveNow, maleSnapshot, maleVigor, recoveryLeft, rejectPregnancyClaim, setPregnancyByHand, shortDate, timeLabel, withLive } from './engine.js';
+import { activeIn, changed, currentState, readStatus, refreshStatus, retryRead, settings, updateCurrentState, VIEWS } from './store.js';
+import { applyPersonEdit, setPeriodStart } from './setup.js';
 import {
-    agoWord, avatarUrl, babyWeight, capitalize, claimCard, clamp01, cycleFields, cycleOpen, cycleStrip, esc, femaleLevels, femaleTraits, icon, initials, irregularityWord,
+    agoWord, avatarUrl, babyWeight, capitalize, claimCard, clamp01, cycleFields, cycleStrip, esc, femaleLevels, femaleTraits, icon, initials, irregularityWord,
     KIND_ICON, knowsPregnancy, levelWord, maleLevels, nameOf, nextInCycle, personFields, pregnancyLibidoWhy, riskyLately,
     pregnancyFacts, spermGrade, spermPanel, years,
 } from './common.js';
 import { calendarCore } from './classic.js';
 import { downloadProblemLog, openStork } from './window.js';
 import { notify, notifyDone, notifyWarn } from './notify.js';
+import { handleFamilyAction } from './tree.js';
 
 // #region Folds: every panel opens and closes, and stays as she left it
 
@@ -99,6 +100,8 @@ function avatarHtml(key, name, size = '') {
 // #region Status line and the folded infoblock
 
 const PHASE_SHORT = { menstruation: 'месячные', follicular: 'фолликулярная фаза', ovulation: 'овуляция', luteal: 'лютеиновая фаза', pms: 'ПМС' };
+/** The phase in one short word: for the line above the chat and the folded block. */
+const PHASE_TINY = { menstruation: 'месячные', follicular: 'фолликул.', ovulation: 'овуляция', luteal: 'лютеин.', pms: 'ПМС' };
 const PHASE_DOT = { menstruation: 'period', pms: 'warm', ovulation: 'pink', follicular: 'calm', luteal: 'calm' };
 
 /**
@@ -118,51 +121,20 @@ function statusOf(state, person) {
         const info = cycleInfo(f, day);
         if (info.late) return { text: `задержка ${info.cycleDay - info.length} дн.`, short: `задержка ${info.cycleDay - info.length} дн.`, tone: 'warm' };
         const suppressed = pillState(f, day).suppressed;
-        if (info.fertile && !suppressed) return { text: `день ${info.cycleDay} · фертильно`, short: 'фертильно', tone: 'pink' };
+        // fertile days: the line still names the phase; the pink colour and the tooltip say it is fertile
+        if (info.fertile && !suppressed) return { text: `день ${info.cycleDay} · ${PHASE_SHORT[info.phase]} · фертильно`, short: PHASE_TINY[info.phase], line: PHASE_TINY[info.phase], tone: 'pink' };
         const noOvulation = suppressed && ['ovulation', 'follicular'].includes(info.phase);
         const phase = noOvulation ? 'без овуляции' : PHASE_SHORT[info.phase];
-        const short = info.phase === 'menstruation' ? 'месячные' : info.phase === 'pms' ? 'ПМС' : `день ${info.cycleDay}`;
-        return { text: `день ${info.cycleDay} · ${phase}`, short, tone: suppressed ? 'calm' : PHASE_DOT[info.phase] };
+        const short = noOvulation ? 'без овуляции' : PHASE_TINY[info.phase];
+        // the line above the chat shows the phase, not the day number: the day is in the tooltip
+        return { text: `день ${info.cycleDay} · ${phase}`, short, line: short, tone: suppressed ? 'calm' : PHASE_DOT[info.phase] };
     }
     const left = recoveryLeft(state, person);
     if (left > 0) return { text: `восстанавливается ~${left} мин`, short: `отдых ~${left} мин`, tone: 'warm' };
-    const vigor = withLive(maleSnapshot(state, person).testosterone, liveNow(state, person.key).energy);
+    const vigor = maleVigor(state, person);
     const word = vigor > 0.85 ? 'полон сил' : vigor > 0.65 ? 'в форме' : 'устал';
     return { text: word, short: vigor > 0.85 ? 'бодр' : word, tone: vigor > 0.65 ? 'accent' : 'calm' };
 }
-
-// #region The bot left no tag (the tag mode)
-
-const NO_TAG = 'Бот не поставил метку Stork: время и события из этого ответа не записаны. Нажми, чтобы перейти на отдельный анализ';
-const replies = n => (n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? 'ответа' : 'ответов');
-
-/**
- * Stork stands still while the bot forgets its tag: say so, with a way out. «Переключить» moves to the analysis
- * of each reply and reads the latest one at once, so nothing of it is lost.
- */
-export function offerAnalyzer(count = missingTags()) {
-    // short: a notification shows three lines, the button is the question
-    const text = count > 1
-        ? `${count} ${replies(count)} подряд без метки: время и события не записываются.`
-        : 'Время и события из этого ответа не записаны.';
-    notify(text, {
-        title: count > 1 ? 'Бот не ставит метку Stork' : 'Бот не поставил метку Stork',
-        icon: 'fa-tag',
-        tone: 'warm',
-        timeOut: 15000,
-        action: 'Включить анализ',
-        onClick: () => {
-            settings().readMode = 'analyzer';
-            saveSettingsDebounced();
-            refreshStatus();
-            changed();
-            rereadLast();
-            notifyDone('Теперь Stork читает каждый ответ отдельным анализом', { icon: 'fa-book-open-reader', timeOut: 4000 });
-        },
-    });
-}
-
-// #endregion
 
 /**
  * The line above the input: she on the left, the story clock in the middle, he on the right. Square, one line
@@ -175,17 +147,16 @@ function statusLineHtml(state, rs) {
         const parts = [
             `<i class="fa-solid ${key === 'user' ? 'fa-venus' : 'fa-mars'} stk-sb-ic t-${st.tone}" aria-hidden="true"></i>`,
             `<b class="stk-sb-name">${esc(name.split(/\s+/)[0])}</b>`,
-            `<span class="stk-sb-st t-${st.tone}" title="${esc(st.text)}"><span class="stk-sb-long">${esc(st.text)}</span><span class="stk-sb-short">${esc(st.short)}</span></span>`,
+            `<span class="stk-sb-st t-${st.tone}" title="${esc(st.text)}"><span class="stk-sb-long">${esc(st.line ?? st.text)}</span><span class="stk-sb-short">${esc(st.short)}</span></span>`,
         ];
         return `<span class="stk-sb-side is-${key}">${(key === 'user' ? parts : parts.reverse()).join('')}</span>`;
     };
     const [hh, mm] = clockText(state.clock.minutes).split(':');
     const mark = rs.failed
         ? `<button type="button" class="stk-retry" title="Анализ не прошёл: ${esc(rs.failed.error)}. Нажми, чтобы повторить" aria-label="Повторить анализ"><i class="fa-solid fa-rotate-right"></i></button>`
-        : rs.index !== null ? '<i class="fa-solid fa-feather-pointed stk-sb-reading" title="Читаю последний ответ" aria-hidden="true"></i>'
-            : missingTags() ? `<button type="button" class="stk-notag" title="${NO_TAG}" aria-label="${NO_TAG}"><i class="fa-solid fa-tag"></i></button>` : '';
+        : rs.index !== null ? '<i class="fa-solid fa-feather-pointed stk-sb-reading" title="Читаю последний ответ" aria-hidden="true"></i>' : '';
     return `${side(state.people.user, 'user')}
-        <span class="stk-sb-mid">${mark}<span class="stk-sb-date">${esc(dateWithWeekday(state))}</span><time class="stk-sb-clock">${hh}<i>:</i>${mm}</time></span>
+        <span class="stk-sb-mid">${mark}<span class="stk-sb-date">${esc(shortDate(state))}</span><time class="stk-sb-clock">${hh}<i>:</i>${mm}</time><span class="stk-sb-part">${esc(timeLabel(state.clock.minutes))}</span></span>
         ${side(state.people.char, 'char')}`;
 }
 
@@ -200,11 +171,10 @@ export function blockHeadHtml(state, open, reading) {
     const sc = statusOf(state, c);
     const failed = readStatus().failed;
     const mark = reading ? `<span class="stk-ib-mark is-reading" title="Читаю последний ответ">${icon('fa-feather-pointed')}</span>`
-        : failed ? `<button type="button" class="stk-ib-mark is-failed" data-stk-act="retry" title="Анализ не прошёл: ${esc(failed.error)}. Повторить">${icon('fa-rotate-right')}</button>`
-            : missingTags() ? `<button type="button" class="stk-ib-mark is-failed" data-stk-act="notag" title="${NO_TAG}">${icon('fa-tag')}</button>` : '';
+        : failed ? `<button type="button" class="stk-ib-mark is-failed" data-stk-act="retry" title="Анализ не прошёл: ${esc(failed.error)}. Повторить">${icon('fa-rotate-right')}</button>` : '';
     return `<div class="stk-ib-head" data-stk-act="block-toggle" role="button" tabindex="0" aria-expanded="${open}" title="${open ? 'Свернуть' : 'Развернуть'}">
         <div class="stk-ib-side">${avatarHtml('user', nameOf(u), 'sm')}<div class="stk-ib-who"><b>${esc(nameOf(u))}</b><span title="${esc(su.text)}">${dot(su.tone)}<span>${esc(su.short)}</span></span></div></div>
-        <div class="stk-ib-mid"><b>${mark}${clockText(state.clock.minutes)}</b><span>${esc(dateWithWeekday(state, state.clock.day, { withYear: true }))}${chevron()}</span></div>
+        <div class="stk-ib-mid"><b>${mark}${clockText(state.clock.minutes)}</b><span>${esc(shortDate(state, state.clock.day, true))}${chevron()}</span></div>
         <div class="stk-ib-side is-right"><div class="stk-ib-who"><b>${esc(nameOf(c))}</b><span title="${esc(sc.text)}"><span>${esc(sc.short)}</span>${dot(sc.tone)}</span></div>${avatarHtml('char', nameOf(c), 'sm')}</div>
     </div>`;
 }
@@ -251,11 +221,6 @@ export function renderStatusBar() {
             if (event.target.closest('.stk-retry')) {
                 event.stopPropagation();
                 retryRead();
-                return;
-            }
-            if (event.target.closest('.stk-notag')) {
-                event.stopPropagation();
-                offerAnalyzer();
                 return;
             }
             openStork();
@@ -402,9 +367,11 @@ function maleCard(state, person, view = {}) {
  * Under it, only when it matters: closeness without protection in her fertile days.
  */
 function sharedLine(state) {
-    const last = [...state.log].reverse().find(e => !['roll', 'date_hint'].includes(e.kind));
+    const last = [...state.log].reverse().find(e => e.kind !== 'roll');
     const iconName = !last ? 'fa-circle-info' : last.kind === 'intimacy' ? 'fa-heart' : KIND_ICON[last.kind] ?? 'fa-circle-dot';
     const risky = riskyLately(state);
+    // nothing has happened yet: no line at all, it shows up with the first event
+    if (!last) return risky ? li('fa-seedling', 'была близость без защиты в фертильные дни — беременность возможна', 'is-pink') : '';
     return `<div class="stk-shared-line" data-stk-act="open-window" data-tab="journal" role="button" tabindex="0" title="Последнее событие. Нажми — весь журнал">
             ${icon(iconName)}<span>${esc(last ? capitalize(last.text) : 'пока ничего не произошло')}</span>${last ? `<em>${esc(agoWord(state.clock.day - last.day))}</em>` : ''}
         </div>
@@ -421,7 +388,7 @@ export function renderNow(state, view = {}) {
     const shared = parts.shared !== false ? sharedLine(state) : '';
     // a known pregnancy comes first: the baby, how she carries, the doctor or the midwife
     const pregnancy = pregnancyPanels(state);
-    if (!people.length && !shared && !pregnancy) return `${claimCard(state)}${li('fa-eye-slash', 'Все плашки скрыты. Вернуть — в окне Stork, вкладка «Настройки».', 'is-muted')}`;
+    if (!people.length && parts.shared === false && !pregnancy) return `${claimCard(state)}${li('fa-eye-slash', 'Все плашки скрыты. Вернуть — в окне Stork, вкладка «Настройки».', 'is-muted')}`;
     return `${claimCard(state)}${shared}${pregnancy}${people.length ? `<div class="stk-pair${people.length === 1 ? ' is-single' : ''}">${people.join('')}</div>` : ''}`;
 }
 
@@ -439,7 +406,10 @@ export function handleAction(target, view, rerender) {
     const form = target.closest('.stk-edit');
     const values = () => {
         const v = {};
-        form?.querySelectorAll('[data-f]').forEach(el => { v[el.dataset.f] = el.type === 'checkbox' ? el.checked : el.value; });
+        form?.querySelectorAll('[data-f]').forEach(el => {
+            if (el.type === 'radio') { if (el.checked) v[el.dataset.f] = el.value; return; }
+            v[el.dataset.f] = el.type === 'checkbox' ? el.checked : el.value;
+        });
         return v;
     };
     const saveSetting = (key, value) => {
@@ -460,17 +430,6 @@ export function handleAction(target, view, rerender) {
                 target.setAttribute('aria-expanded', String(open));
             }
             return true;
-        }
-        case 'edit-date': view.editDate = true; break;
-        case 'cancel-date': view.editDate = false; break;
-        case 'save-date': {
-            const iso = values().date;
-            let done = false;
-            updateCurrentState(state => { done = setStoryDate(state, iso); });
-            view.editDate = false;
-            if (done) notifyDone(`Дата: ${dateWithWeekday(currentState(), undefined, { long: true, withYear: true })}`, { icon: 'fa-calendar-day' });
-            else notifyWarn('Дата не распознана', { timeOut: 2500 });
-            break;
         }
         case 'edit-person': view.editPerson = view.editPerson === target.dataset.key ? null : target.dataset.key; break;
         case 'cancel-edit': view.editPerson = null; break;
@@ -515,9 +474,26 @@ export function handleAction(target, view, rerender) {
             notifyDone('Срок поправлен', { icon: 'fa-calendar-check', tone: 'preg' });
             break;
         }
+        case 'preg-edit': view.pregEdit = true; break;
+        case 'preg-cancel': view.pregEdit = false; break;
+        case 'preg-save': {
+            const v = values();
+            const input = { partnerKnows: v.partnerKnows };
+            if (v.mode === 'lmp') input.lmpDate = v.lmpDate;
+            else if (v.mode === 'due') input.dueDate = v.dueDate;
+            else Object.assign(input, { weeks: v.weeks, days: v.days });
+            let result = { ok: false, error: 'чат не найден' };
+            updateCurrentState(state => { result = setPregnancyByHand(state, input); });
+            if (!result.ok) {
+                notifyWarn(`Не сохранено: ${result.error}`, { timeOut: 4000 });
+                return true;
+            }
+            view.pregEdit = false;
+            notifyDone(`${result.created ? 'Беременность записана' : 'Срок обновлён'}: ${result.weeks} нед.${result.days ? ` ${result.days} дн.` : ''}`, { icon: 'fa-person-pregnant', tone: 'preg' });
+            break;
+        }
         case 'retry': retryRead(); break;
-        case 'notag': offerAnalyzer(); return true;
-        case 'tab': view.tab = target.dataset.tab; view.editPerson = null; break;
+        case 'tab': view.tab = target.dataset.tab; view.editPerson = null; view.pregEdit = false; view.famPick = null; view.famAdd = false; break;
         case 'toggle-ext':
             settings().enabled = !settings().enabled;
             saveSettingsDebounced();
@@ -539,7 +515,7 @@ export function handleAction(target, view, rerender) {
         case 'download-log':
             downloadProblemLog();
             return true;
-        default: return false;
+        default: return act.startsWith('fam-') ? handleFamilyAction(act, target, view, values, rerender) : false;
     }
     rerender();
     return true;
@@ -562,7 +538,7 @@ export function renderCalendar(state, view) {
     const woman = state.people.user;
     const f = woman.female;
     const day = state.clock.day;
-    const editable = cycleOpen(woman);
+    const editable = !f.pregnancy && !f.postpartum;
     const info = editable ? cycleInfo(f, day) : null;
     const suppressed = editable && pillState(f, day).suppressed;
     // the strip of her cycle on top (only here: the window has the month for it), then the same calendar as in the window
