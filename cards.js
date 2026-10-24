@@ -65,7 +65,9 @@ Return JSON exactly in this shape:
   "char": { "age": number|null, "fertility": "normal"|"low"|"sterile"|null, "smoker": boolean, "drinker": boolean, "varicocele": boolean, "vasectomy": boolean },
   "user": { "age": number|null, "smoker": boolean, "drinker": boolean, "pregnant": boolean, "pregnancy_weeks": number|null, "children": number, "contraception": "none"|"pill"|"ring"|"patch"|"injection"|"implant"|"iud"|"copper_iud"|null, "cycle_length": number|null, "cycle_day": number|null, "flow": "light"|"normal"|"heavy"|null, "pms_severe": boolean, "painful_periods": boolean, "pcos": boolean, "endometriosis": boolean },
   "start": { "time": "HH:MM"|null, "date": "YYYY-MM-DD"|null, "date_guessed": boolean, "place": "a short place name in Russian"|null },
-  "family": [ { "name": "as written", "sex": "male" | "female" | null, "relation": "parent" | "child" | "sibling" | "spouse" | "partner" | "ex" | "grandparent" | "grandchild" | "auncle" | "niece" | "cousin", "of": "user" | "char" | "the name of another relative", "age": number | null } ],
+  "kinks": [ { "name": "a few words in Russian", "from": "card" | "persona" } ],
+  "voice": "one sentence in English: how {{char}} talks and thinks",
+  "family": [ { "name": "the relative's own name, as written", "sex": "male" | "female" | null, "relation": "parent" | "child" | "sibling" | "spouse" | "partner" | "ex" | "grandparent" | "grandchild" | "auncle" | "niece" | "cousin", "of": "user" | "char" | "the name of another relative", "age": number | null } ],
   "story": { "relationship": "a short phrase in Russian", "trying_for_baby": boolean, "summary": "1-2 sentences in Russian about what matters for the tracker in this story", "era": "modern"|"past" }
 }
 Rules:
@@ -73,7 +75,9 @@ Rules:
 - Booleans are true only when the texts say so; habits count when they are part of who the person is (smokes, drinks often), not a single scene.
 - contraception, cycle_length, cycle_day, flow: only if stated. cycle_day only if the texts say where she is in her cycle (period now, ovulation, period due soon).
 - "start" is when and where the story opening takes place. time: if stated or clear (morning, late evening). date: if the opening or the card names it; if not, the most plausible date by the setting (year of the setting, season, holidays, school or work rhythm) with "date_guessed": true; null only if there is nothing to go on.
-- "family": relatives of {{char}} and {{user}} the texts name: parents, siblings, children, a spouse or an ex, grandparents. "name is relation of of". If {{user}} and {{char}} are married or a couple: { "name": "char", "relation": "spouse" | "partner", "of": "user" }. A relative with no name: a short Russian description as the name («мать Игоря»). Empty if none.
+- "family": relatives of {{char}} and {{user}} the texts name: parents, siblings, children, a spouse or an ex, grandparents. "name is relation of of". If {{user}} and {{char}} are married or a couple: { "name": "char", "relation": "spouse" | "partner", "of": "user" }. "name" is the relative's own name exactly as the texts give it (a first name, with a patronymic or surname if given) — never a relation word or a description («мама», «бабушка», «мать Игоря»); a relative the texts never name is not listed. Names in the language the story opening is written in («Аня», not «Anya», for a story in Russian). Each relative once. Empty if none.
+- "kinks": every kink, fetish or sexual preference the card or the persona lists or clearly implies, "from" where it is written. Never invent; never anything they name as a limit or a dislike. Empty if none.
+- "voice": how {{char}} talks and thinks — vocabulary, temper, manner of speech — from the card, one sentence in English.
 - "summary": only what matters for the body and the relationship (are they a couple, living together, planning a child, any health facts); no retelling.`;
 }
 
