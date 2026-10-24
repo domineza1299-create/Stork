@@ -8,7 +8,7 @@ import { cycleInfo, ERAS, FEMALE_CONDITIONS, FEMALE_CONTRACEPTION, MALE_FERTILIT
 import { analyzeCards, guessAge, readCards } from './cards.js';
 import { connectionManagerOn, CURRENT, describeChoice, ensureProfileChoice, errorText, getProfiles, requestModel } from './connection.js';
 import { advanceTime, applyEvent, dateLabel, MINUTES_PER_DAY, parseClock, storyDate } from './engine.js';
-import { applySwitches, currentState, currentView, onStateChange, refreshStatus, rereadLast, settings, updateCurrentState, VIEWS } from './store.js';
+import { currentState, currentView, onStateChange, refreshStatus, rereadLast, settings, updateCurrentState, VIEWS } from './store.js';
 import { ADULT_AGE, applySetupForm, setPeriodStart } from './setup.js';
 import { capitalize, esc, icon, nameOf, years } from './common.js';
 import { eventLook, notify, notifyDone, notifyWarn } from './notify.js';
@@ -405,11 +405,6 @@ function viewCard() {
                 <div class="stk-seg is-wide">
                     ${[['top', 'сверху'], ['middle', 'в середине'], ['bottom', 'снизу']].map(([v, l]) => `<button type="button" class="${s.blockPosition === v ? 'is-on' : ''}" data-stk-act="block-pos" data-pos="${v}">${l}</button>`).join('')}
                 </div>
-                <div class="stk-sub">Вид инфоблока</div>
-                <div class="stk-seg is-wide">
-                    ${[['brief', 'кратко'], ['full', 'подробно']].map(([v, l]) => `<button type="button" class="${(s.blockStyle ?? 'brief') === v ? 'is-on' : ''}" data-stk-act="block-auto" data-k="blockStyle" data-v="${v}">${l}</button>`).join('')}
-                </div>
-                <div class="stk-hint">${icon('fa-circle-info')}${(s.blockStyle ?? 'brief') === 'full' ? 'Подробно: шкалы, цикл, объяснения и вкладки «Календарь» и «Древо» прямо в чате.' : 'Кратко: только то, что изменилось в этом ответе — фаза, события, состояние каждого. Всё подробно — в окне Stork.'}</div>
                 <div class="stk-sub">Что в инфоблоке</div>
                 <div class="stk-checks">
                     ${partCheck('user', esc(nameOf(people.user)))}
@@ -439,16 +434,6 @@ function renderSettings(state, view) {
                     <option value="macro" ${s.placement === 'macro' ? 'selected' : ''}>только через {{stork}} в пресете</option>
                 </select>
             </label>
-        </div>
-        <div class="stk-card">
-            <div class="stk-card-title">${icon('fa-fire-flame-curved')}Близость</div>
-            ${toggle('intimacy', 'Режиссёр близости', s.readMode === 'analyzer' ? 'ведёт интимную сцену: темп, готовность, «до оргазма»; в тот же анализ ответа, без отдельного запроса' : 'работает только с анализом каждого ответа (вкладка «Чтение РП» выше)')}
-            ${toggle('intimacyBlock', 'Блок сцены в чате', 'появляется под инфоблоком Stork, когда начинается близость, и уходит после')}
-        </div>
-        <div class="stk-card">
-            <div class="stk-card-title">${icon('fa-scale-balanced')}Реализм</div>
-            ${toggle('erectionDrops', 'Падение эрекции', 'алкоголь, стресс, недосып и болезнь могут ослабить эрекцию; выключи — и у него она не подводит, остальное остаётся как было')}
-            ${toggle('trackExes', 'Отслеживать бывших', 'бывшие партнёры попадают в древо; выключи — в древе только родственники')}
         </div>
         <div class="stk-card">
             <div class="stk-card-title">${icon('fa-bell')}Уведомления</div>
@@ -589,7 +574,6 @@ export async function openStork({ tab } = {}) {
     // Settings
     $root.on('change', '.stk-set', function () {
         settings()[this.dataset.k] = this.type === 'checkbox' ? this.checked : this.value;
-        applySwitches();
         if (this.dataset.k === 'readProfile' || this.dataset.k === 'readMode') {
             logEvent('info', 'настройки', `${this.dataset.k === 'readMode' ? 'чтение РП' : 'анализ через'}: ${this.dataset.k === 'readMode' ? this.value : describeChoice(this.value)}`);
         }

@@ -5,10 +5,9 @@
  * Other extensions re-render the reply text and wipe foreign nodes: the block comes back in the same tick.
  */
 import { getContext } from '../../../extensions.js';
-import { activeIn, currentState, readStatus, settings, stateBefore } from './store.js';
-import { applyAutoFolds, blockHeadHtml, handleAction, onKeyActivate, renderBrief, renderCalendar, renderNow } from './ui.js';
+import { activeIn, currentState, readStatus, settings } from './store.js';
+import { applyAutoFolds, blockHeadHtml, handleAction, onKeyActivate, renderCalendar, renderNow } from './ui.js';
 import { renderFamily } from './tree.js';
-import { sceneBlockHtml, sceneOpen, setSceneOpen } from './closeness.js';
 
 const OPEN_KEY = 'stork_block_open';
 /** The one infoblock and its view: tab, editing, picked day — survive re-renders. */
@@ -114,15 +113,6 @@ function place(mesEl, el) {
 
 // #region Render
 
-/** «Кратко»: no tabs, only what this reply changed; the window has the rest. */
-function briefHtml(state, id) {
-    return `${renderBrief(state, stateBefore(id), view)}
-        <div class="stk-ib-foot">
-            <button type="button" class="stk-link" data-stk-act="open-window" data-tab="today"><i class="fa-solid fa-dove stk-ic"></i>Подробнее — в окне Stork</button>
-        </div>`;
-}
-const isBrief = () => settings().blockStyle !== 'full';
-
 function bodyHtml(state) {
     // a pregnancy has no tab of its own: it opens «Сейчас», first thing
     const tabs = [['now', 'fa-sun', 'Сейчас'], ['calendar', 'fa-calendar-days', 'Календарь'], ['family', 'fa-people-roof', 'Древо']];
@@ -142,20 +132,10 @@ export function scheduleBlocks() {
     renderTimer = setTimeout(() => renderBlocks(), 40);
 }
 
-/** The intimate scene's block, when one is going on and it is shown: at the bottom of the infoblock. */
-function sceneHtml(state, reading) {
-    const s = settings();
-    if (!s.intimacy || !s.intimacyBlock || s.readMode !== 'analyzer' || state.minorBlocked) return '';
-    return sceneBlockHtml(state, { open: sceneOpen(), reading, brief: s.blockStyle !== 'full' });
-}
-
 /** Draws (or removes) the infoblock. force: even while she is typing in its form. */
 export function renderBlocks(force = false) {
     const state = currentState();
-    const reading = readStatus().index !== null;
-    const scene = activeIn(state) ? sceneHtml(state, reading) : '';
-    // with Stork's block hidden, a scene still shows its own block under the reply
-    const id = (!settings().showBlock && !scene) || !activeIn(state) ? null : targetIndex();
+    const id = !settings().showBlock || !activeIn(state) ? null : targetIndex();
     const mesEl = id === null ? null : getMesEl(id);
     if (!mesEl) {
         node?.remove();
@@ -190,15 +170,12 @@ export function renderBlocks(force = false) {
     nodeId = id;
     if (!place(mesEl, node)) return;
     const open = isOpen();
-    const main = !!settings().showBlock;
-    node.classList.toggle('is-open', open && main);
-    node.classList.toggle('has-scene', !!scene);
-    node.classList.toggle('is-scene-only', !main);
+    const reading = readStatus().index !== null;
+    node.classList.toggle('is-open', open);
     node.classList.toggle('is-reading', reading);
     node.classList.toggle('is-failed', !!readStatus().failed);
     // the same markup is not set again: running animations are not restarted
-    const body = isBrief() ? `<div class="stk-ib-body is-brief">${briefHtml(state, id)}</div>` : `<div class="stk-ib-body">${bodyHtml(state)}</div>`;
-    const html = (main ? blockHeadHtml(state, open, reading) + (open ? body : '') : '') + scene;
+    const html = blockHeadHtml(state, open, reading) + (open ? `<div class="stk-ib-body">${bodyHtml(state)}</div>` : '');
     if (html !== lastHtml) {
         // the tree keeps where she scrolled it; opened anew, it shows the two of them in the middle
         const oldBox = node.querySelector('.stk-tree-scroll');
@@ -224,11 +201,6 @@ function bind(el) {
         event.stopPropagation();
         if (target.dataset.stkAct === 'block-toggle') {
             setOpen(!isOpen());
-            renderBlocks(true);
-            return;
-        }
-        if (target.dataset.stkAct === 'ag-toggle') {
-            setSceneOpen(!sceneOpen());
             renderBlocks(true);
             return;
         }

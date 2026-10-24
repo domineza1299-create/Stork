@@ -328,12 +328,6 @@ export function reserveByHours(orgasmMinutes, nowMinute) {
 }
 
 /**
- * Switches of realism the user can turn off (set from the settings; plain values, so Node tests set them too).
- * erectionDrops false: drink, stress, tiredness or illness never weaken his erection; everything else stays real.
- */
-export const realism = { erectionDrops: true };
-
-/**
  * Everything about him today.
  * @param {object} [options]
  * @param {boolean} [options.expectingFather] His partner is pregnant and he knows: testosterone drops, couvade may show
@@ -362,7 +356,7 @@ export function maleState(m, age, day, minutes, { expectingFather = false, nowMi
         const effect = LIFESTYLE[e.type];
         const fresh = e.type === 'stress' ? e.daysAgo <= 3 : e.daysAgo <= 1;
         if (!fresh || !effect) continue;
-        if (realism.erectionDrops) erection *= 1 - (effect.erection ?? 0);
+        erection *= 1 - (effect.erection ?? 0);
         libido *= 1 - (effect.libido ?? 0);
     }
     if (daysSinceLast === 0) libido *= 0.8;

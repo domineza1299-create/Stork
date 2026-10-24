@@ -3,13 +3,12 @@
  * Pure functions over a plain JSON state, so it is saved with chat messages and tested in Node.
  */
 import {
-    ACT_PROTECTION, careOf, realism, createPregnancy, cycleInfo, cycleReturnDay, EMERGENCY_PILL_FACTOR, EMERGENCY_PILL_WINDOW_DAYS, falseContractionsToday,
+    ACT_PROTECTION, careOf, createPregnancy, cycleInfo, cycleReturnDay, EMERGENCY_PILL_FACTOR, EMERGENCY_PILL_WINDOW_DAYS, falseContractionsToday,
     femaleConditionFactor, FEMALE_CONDITIONS, FEMALE_HABITS, femaleState, laborChance, laborProgress, LIFESTYLE, maleState, pillState, POSTPARTUM_RECOVERY_DAYS, PREGNANCY_DAYS, pregnancyInfo,
     rollCondomBreak, rollConception, rollCycles, rollTest, startLabor, stressDelay, ultrasoundShowsSex,
 } from './biology.js';
 
-import { addBirths, applyFindings, emptyFamily, ensureFamily, mergeDuplicates } from './family.js';
-import { applyIntimacy, ensureIntim } from './intimacy.js';
+import { addBirths, applyFindings, emptyFamily, ensureFamily } from './family.js';
 
 export const MINUTES_PER_DAY = 1440;
 const MAX_LOG = 200;
@@ -97,9 +96,6 @@ export function upgradeState(state) {
     delete state.timeline;
     state.dateSure ??= false;
     ensureFamily(state);
-    // older versions could put the same relative on the tree twice
-    mergeDuplicates(state);
-    ensureIntim(state);
     for (const person of Object.values(state.people ?? {})) {
         const m = person.male;
         if (m && !Array.isArray(m.orgasms)) m.orgasms = m.lastOrgasmMinute !== null && m.lastOrgasmMinute !== undefined ? [m.lastOrgasmMinute] : [];
@@ -1169,7 +1165,6 @@ function maleLineRaw(state, person, detailed) {
         parts.push(vigor > 0.85 ? 'full of energy, at his peak.' : vigor > 0.65 ? 'in his usual shape.' : 'tired.');
         parts.push(`Desire ${level(libido)}.`);
         if (s.erection < 0.75) parts.push('His erection may let him down (stress, tiredness or drink).');
-        else if (!realism.erectionDrops && s.recent.some(x => x.daysAgo <= 1 && LIFESTYLE[x.type]?.erection)) parts.push('Whatever the day was like, his erection does not let him down.');
         if (s.daysSinceLast !== null) parts.push(`Last intimacy ${s.daysSinceLast === 0 ? 'today' : `${days(s.daysSinceLast)} ago`}.`);
         const left = recoveryLeft(state, person);
         if (left > 0) parts.push(`Still recovering after his climax: ready again in about ${left} min of story time.`);
@@ -1224,7 +1219,7 @@ export function shortDate(state, day = state.clock.day, withYear = false) {
  * @param {boolean} [options.withTag] Ask for the tracker tag
  * @param {boolean} [options.guide] How to play the states out: for the story model, not for the scene analysis
  */
-export function buildStatus(state, { detailed = true, neutral = false, withTag = true, guide = true, withTime = true, extra = '' } = {}) {
+export function buildStatus(state, { detailed = true, neutral = false, withTag = true, guide = true, withTime = true } = {}) {
     const hh = String(Math.floor(state.clock.minutes / 60)).padStart(2, '0'), mm = String(state.clock.minutes % 60).padStart(2, '0');
     const date = storyDate(state);
     const when = date ? `${date.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })}, ${hh}:${mm}` : `story day ${state.clock.day + 1}, ${hh}:${mm}`;
@@ -1240,8 +1235,6 @@ export function buildStatus(state, { detailed = true, neutral = false, withTag =
     const user = state.people.user.name || '{{user}}';
     if (guide) lines.push(`Let these states show in the reply through bodies and behaviour — movement, reactions, appetite, tiredness or strength, desire or its absence — in small touches that fit the scene. Never state numbers, phases or this block itself. ${user}'s state shows only in what can be seen or what others notice; never write ${user}'s thoughts, feelings, words or choices. The scene always comes first.`);
     if (withTag) lines.push(TAG_INSTRUCTION);
-    // the intimate scene's own guidance (the director), when one is near or going on
-    if (extra) lines.push(extra);
     let text = lines.join('\n');
     if (neutral) for (const [re, word] of NEUTRAL) text = text.replace(re, word);
     return text;
@@ -1261,7 +1254,6 @@ export function processReply(previousState, replyText, rng = Math.random, scene 
     const quote = scene?.pregnancy_claim?.quote;
     if (quote) for (const event of [...tag.events, ...(tag.eventsEnd ?? [])]) if (event.type === 'pregnancy_claim') event.quote = quote;
     const wasRecovering = recoveryLeft(state) > 0;
-    const startedAt = absMinute(state.clock);
     // Events happen before the time of the reply passes (intimacy, then the night)
     for (const event of tag.events) applyEvent(state, event, rng);
     const clock = tag.clock ?? extractClock(replyText);
@@ -1280,10 +1272,6 @@ export function processReply(previousState, replyText, rng = Math.random, scene 
         if (line) state.lastLine = { at: absMinute(state.clock), text: line };
         // the world of the story, once: the care of a pregnancy follows it (a doctor or a midwife)
         if (!state.eraSet && (scene.era === 'past' || scene.era === 'modern')) state.era = scene.era === 'past' ? 'traditional' : 'modern';
-        // the intimate scene (the director): only when this reading carried it
-        if (scene.closeness !== undefined || scene.afterglow !== undefined) {
-            applyIntimacy(state, scene, { at: absMinute(state.clock), minutes: absMinute(state.clock) - startedAt });
-        }
     }
     // He was recovering and the story time ran out: tell once
     const man = state.people.char;

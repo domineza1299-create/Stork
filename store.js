@@ -5,10 +5,7 @@
  */
 import { saveChatDebounced } from '../../../../script.js';
 import { extension_settings, extensionNames, getContext } from '../../../extensions.js';
-import { realism } from './biology.js';
 import { buildStatus, cleanRpText, createState, MINUTES_PER_DAY, parseSkip, processReply, upgradeState } from './engine.js';
-import { familyOptions } from './family.js';
-import { intimacyPrompt, isTimeskip } from './intimacy.js';
 
 export const MODULE = 'stork';
 const PROMPT_KEY = 'stork_status';
@@ -32,8 +29,6 @@ const defaultSettings = {
     blockParts: { user: true, char: true, shared: true },
     // with each new reply: the block itself and its main panels start folded, open, or as she left them
     blockOpen: 'remember',
-    // what the open infoblock shows: 'brief' — only what this reply changed; 'full' — every panel with levels and reasons
-    blockStyle: 'brief',
     blockFolds: 'remember',
     toasts: true,
     showRolls: false,
@@ -45,20 +40,7 @@ const defaultSettings = {
     readProfile: '',
     // the log keeps whole prompts too (big, and has the story's text)
     debugPrompts: false,
-    // the director of intimate scenes (formerly the Afterglow extension) and its block under Stork's
-    intimacy: true,
-    intimacyBlock: true,
-    // realism switches: drink, stress or tiredness may weaken his erection; exes go onto the family tree
-    erectionDrops: true,
-    trackExes: true,
 };
-
-/** The switches the pure modules read (they import no settings): set at start and whenever a setting changes. */
-export function applySwitches() {
-    const s = settings();
-    realism.erectionDrops = s?.erectionDrops !== false;
-    familyOptions.trackExes = s?.trackExes !== false;
-}
 
 export function initSettings() {
     const saved = extension_settings[MODULE] ?? {};
@@ -68,7 +50,6 @@ export function initSettings() {
     if (!['top', 'middle', 'bottom'].includes(s.blockPosition)) s.blockPosition = 'bottom';
     s.blockParts = { ...defaultSettings.blockParts, ...(saved.blockParts ?? {}) };
     extension_settings[MODULE] = s;
-    applySwitches();
 }
 
 /** The four ways to see Stork in the chat, as two switches. */
@@ -327,26 +308,8 @@ export function otherClock() {
     return null;
 }
 
-/** Her last message (the bot has not answered it yet) jumps forward in time: a scene that was going on is over. */
-export function userSkipsNow() {
-    const chat = getContext().chat ?? [];
-    for (let i = chat.length - 1; i >= 0; i--) {
-        const m = chat[i];
-        if (!m || m.is_system) continue;
-        return !!m.is_user && isTimeskip(m.mes);
-    }
-    return false;
-}
-
-/** The director's guidance for the story model: the scene in progress, one that is near, or its traces. */
-export function intimacyText(state) {
-    const s = settings();
-    if (!s.intimacy || s.readMode !== 'analyzer' || state?.minorBlocked) return '';
-    return intimacyPrompt(state, { userSkip: userSkipsNow(), erectionDrops: s.erectionDrops !== false });
-}
-
 export function statusText(state, withTag = settings().readMode === 'tag') {
-    return buildStatus(state, { detailed: settings().detailed, neutral: settings().neutral, withTag, withTime: !otherClock(), extra: intimacyText(state) });
+    return buildStatus(state, { detailed: settings().detailed, neutral: settings().neutral, withTag, withTime: !otherClock() });
 }
 
 /** The state a running generation builds on; the macro must agree with the injected status. */

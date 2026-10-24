@@ -157,22 +157,6 @@ function countReply(source, replyKey, replyHash, reason) {
  * @param {string} request.choice the saved connection choice (profile id or 'current')
  * @returns {Promise<string>}
  */
-/** A request that hangs (the provider never answers) is given up after this long: the reading shows «Повторить». */
-const REQUEST_TIMEOUT_MS = 120000;
-
-/** The answer, or an error after `ms`; the request itself is aborted when the connection lets us. */
-function withTimeout(start, ms) {
-    const controller = typeof AbortController === 'function' ? new AbortController() : null;
-    let timer = null;
-    const timeout = new Promise((_, reject) => {
-        timer = setTimeout(() => {
-            controller?.abort();
-            reject(new Error(`модель не ответила за ${Math.round(ms / 1000)} с (подключение зависло?) — нажми «Повторить»`));
-        }, ms);
-    });
-    return Promise.race([start(controller?.signal), timeout]).finally(() => clearTimeout(timer));
-}
-
 export async function requestModel({ kind, reason, replyKey = '', replyHash = 0, system, prompt, maxTokens, choice }) {
     const source = { scene: 'анализ сцены', cards: 'чтение карточек', test: 'проверка подключения' }[kind] ?? kind;
     const started = performance.now();
@@ -198,10 +182,10 @@ export async function requestModel({ kind, reason, replyKey = '', replyHash = 0,
                 // text completion profiles need the messages turned into one prompt with the profile's instruct template
                 const built = ConnectionManagerRequestService.constructPrompt(messages, connection.id);
                 // extractData: false — the raw answer keeps finish_reason and usage, so a cut reply is seen as cut
-                result = await withTimeout(signal => ConnectionManagerRequestService.sendRequest(connection.id, built, limit,
-                    { stream: false, signal, extractData: false, includePreset: false, includeInstruct: false }), REQUEST_TIMEOUT_MS);
+                result = await ConnectionManagerRequestService.sendRequest(connection.id, built, limit,
+                    { stream: false, extractData: false, includePreset: false, includeInstruct: false });
             } else {
-                result = await withTimeout(() => getContext().generateRaw({ prompt, systemPrompt: system, responseLength: limit }), REQUEST_TIMEOUT_MS);
+                result = await getContext().generateRaw({ prompt, systemPrompt: system, responseLength: limit });
             }
         } catch (error) {
             logEvent('error', source, `${Math.round(performance.now() - started)} мс · ${errorText(error)}`, error?.cause ?? error);

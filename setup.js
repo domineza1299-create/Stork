@@ -5,15 +5,6 @@
 import { createPregnancy, perimenopause } from './biology.js';
 import { guessAge, parseClock } from './engine.js';
 import { applyFindings } from './family.js';
-import { cleanKinks, ensureIntim } from './intimacy.js';
-
-/** The kinks of the card and the persona and how he talks: read once, for the intimate scenes. */
-function intimacyFromCards(state, a) {
-    const intim = ensureIntim(state);
-    const kinks = cleanKinks(a?.kinks);
-    if (kinks) intim.kinks = kinks;
-    if (typeof a?.voice === 'string' && a.voice.trim()) intim.voice = a.voice.trim().slice(0, 240);
-}
 
 export const ADULT_AGE = 18;
 const CONTRACEPTIONS = ['none', 'pill', 'ring', 'patch', 'injection', 'implant', 'iud', 'copper_iud'];
@@ -132,7 +123,6 @@ export function setupFromAnalysis(state, analysis, cards, rng = Math.random) {
     }
     // relatives the cards name go onto the family tree
     applyFindings(state, a.family, 'card');
-    intimacyFromCards(state, a);
     state.setupDone = true;
     state.autoSetup = true;
     return state;
@@ -194,7 +184,6 @@ export function applySetupForm(state, v, analysis = null, rng = Math.random) {
     }
     if (analysis?.story?.summary) state.storySummary = analysis.story.summary;
     applyFindings(state, analysis?.family, 'card');
-    if (analysis) intimacyFromCards(state, analysis);
     state.setupDone = true;
     state.chatOff = false;
     return state;
