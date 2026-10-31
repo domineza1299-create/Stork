@@ -30,6 +30,12 @@ const SYMMETRIC = new Set(['sibling', 'spouse', 'partner', 'ex', 'cousin']);
 export const COUPLE = new Set(['spouse', 'partner', 'ex']);
 const MAX_PEOPLE = 60;
 
+/**
+ * Switches from the settings (plain values, so Node tests set them too).
+ * trackExes false: exes never come onto the tree, and the ones already there are not shown.
+ */
+export const familyOptions = { trackExes: true };
+
 export const emptyFamily = () => ({ seq: 0, people: {}, links: [] });
 export function ensureFamily(state) {
     state.family ??= emptyFamily();
@@ -53,16 +59,81 @@ export const memberById = (state, id) => members(state).find(p => p.id === id) ?
 const norm = s => String(s ?? '').toLowerCase().replace(/ё/g, 'е').replace(/[«»"'.,!?()]/g, ' ').replace(/\s+/g, ' ').trim();
 const firstWord = s => norm(s).split(' ')[0] ?? '';
 
-/** Someone on the tree by name: the full name, or the first name when only one person has it. */
+/** A name written in Latin letters, in Russian ones: «Anya» → «аня», so the card's «Anya» is the story's «Аня». */
+const LATIN = [['shch', 'щ'], ['sch', 'щ'], ['zh', 'ж'], ['kh', 'х'], ['ts', 'ц'], ['ch', 'ч'], ['sh', 'ш'], ['ya', 'я'], ['yu', 'ю'], ['yo', 'е'], ['ye', 'е'], ['ia', 'ия'],
+    ['a', 'а'], ['b', 'б'], ['v', 'в'], ['w', 'в'], ['g', 'г'], ['d', 'д'], ['e', 'е'], ['z', 'з'], ['i', 'и'], ['y', 'и'], ['k', 'к'], ['c', 'к'], ['q', 'к'], ['l', 'л'], ['m', 'м'],
+    ['n', 'н'], ['o', 'о'], ['p', 'п'], ['r', 'р'], ['s', 'с'], ['t', 'т'], ['u', 'у'], ['f', 'ф'], ['h', 'х'], ['x', 'кс'], ['j', 'дж']];
+function cyrillic(word) {
+    if (!/[a-z]/.test(word)) return word;
+    let out = '';
+    for (let i = 0; i < word.length;) {
+        const hit = LATIN.find(([lat]) => word.startsWith(lat, i));
+        if (hit) { out += hit[1]; i += hit[0].length; } else { out += word[i]; i += 1; }
+    }
+    return out.replace(/ий$/, 'ий');
+}
+/** A word without its Russian case ending: «Галину», «Галины», «Галина» → «галин». */
+const stem = w => (w.length > 4 ? w.replace(/(ой|ей|ою|ею|ом|ем|ам|ям|ах|ях|а|я|у|ю|ы|и|е|ь|й)$/, '') : w.replace(/[аяыиеу]$/, ''));
+const nameKey = s => stem(cyrillic(firstWord(s)));
+
+/** Words that only say who someone is, not their name: «мама», «бабушка Игоря», «his mother». */
+const ROLE_WORDS = new Set(`мама мать мамочка маменька матушка мамуля папа отец папочка батя батюшка папуля бабушка бабуля баба бабка дедушка дед деда дедуля
+    брат братик братишка сестра сестричка сестрёнка сестренка сын сынок дочь дочка доченька муж жена супруг супруга бывший бывшая
+    тётя тетя тётушка тетушка дядя дядюшка внук внучка внучок племянник племянница кузен кузина двоюродный двоюродная родной родная
+    свекровь свёкор свекор тёща теща тесть отчим мачеха малыш малышка ребёнок ребенок
+    mother mom mum mommy father dad daddy grandmother grandma granny grandfather grandpa brother sister son daughter husband wife
+    aunt uncle nephew niece cousin grandson granddaughter ex his her`.split(/\s+/).map(w => w.replace(/ё/g, 'е')));
+const FILLER = new Set(['его', 'ее', 'её', 'мой', 'моя', 'мое', 'моё', 'наш', 'наша', 'их', 'the', 'of', 'и']);
+
+/**
+ * The name in what the analysis wrote: «Бабушка Галя» → «Галя», «мать Игоря» → '' (no name at all).
+ * Relation words, pronouns and the genitive of someone on the tree («Игоря», «Нины») are not a name.
+ */
+export function ownName(state, raw) {
+    const words = String(raw ?? '').replace(/[«»"'.,!?()]/g, ' ').trim().split(/\s+/).filter(Boolean);
+    const genitives = new Set(members(state).filter(p => p.fixed || !p.unnamed).map(p => norm(genitive(p.name, p.sex))).filter(Boolean));
+    const left = words.filter(w => {
+        const n = norm(w);
+        return !ROLE_WORDS.has(n) && !FILLER.has(n) && !(words.length > 1 && genitives.has(n));
+    });
+    // a name keeps its own words in their order: «Галина Петровна»
+    return left.length === words.length ? words.join(' ') : left.join(' ');
+}
+/** A relative stored without a name: their name is only the relation word («Бабушка», «мать Игоря»). */
+export const isUnnamed = (state, person) => !!person && !person.fixed && person.source !== 'birth' && (person.unnamed === true || !ownName(state, person.name));
+
+/** Someone on the tree by name: the full name, then the first name (any case form) when only one person has it. */
 export function findByName(state, name) {
     const n = norm(name);
     if (!n) return null;
     const all = members(state);
     const exact = all.find(p => norm(p.name) === n);
     if (exact) return exact.id;
-    const first = firstWord(n);
-    const same = all.filter(p => firstWord(p.name) === first);
-    return same.length === 1 ? same[0].id : null;
+    const first = cyrillic(firstWord(n));
+    const same = all.filter(p => cyrillic(firstWord(p.name)) === first);
+    if (same.length === 1) return same[0].id;
+    if (same.length > 1) return null;
+    // «Галину», «Галины»: the same name in another case
+    const key = nameKey(n);
+    const stemmed = key.length >= 3 ? all.filter(p => !isUnnamed(state, p) && nameKey(p.name) === key) : [];
+    return stemmed.length === 1 ? stemmed[0].id : null;
+}
+
+/** The relative already standing as `kind` of `of`, of this sex (or of an unknown one). */
+function sameRelative(state, kind, of, sex, { unnamedOnly = false } = {}) {
+    const fam = ensureFamily(state);
+    const canon = CANON[kind];
+    for (const l of fam.links) {
+        let other = null;
+        if (canon ? (l.kind === canon && l.a === of) : (l.kind === kind && l.b === of)) other = canon ? l.b : l.a;
+        else if (SYMMETRIC.has(kind) && l.kind === kind && l.a === of) other = l.b;
+        const p = other && fam.people[other];
+        if (!p) continue;
+        if (sex && p.sex && p.sex !== sex) continue;
+        if (unnamedOnly && !isUnnamed(state, p)) continue;
+        return p.id;
+    }
+    return null;
 }
 
 /** «Нина» → «Нины», «Игорь» → «Игоря»: the genitive of a first name, for «мать Нины». Good for most Russian names. */
@@ -159,21 +230,30 @@ export function linksOf(state, id) {
     return fam.links.map((l, index) => ({ l, index })).filter(({ l }) => l.a === id || l.b === id).map(({ l, index }) => {
         const otherId = l.a === id ? l.b : l.a;
         const other = memberById(state, otherId);
-        return { index, otherId, text: `${relationWord(state, l, id)} ${genitive(other?.name, other?.sex)}`.trim() };
+        return { index, otherId, ex: l.kind === 'ex', text: `${relationWord(state, l, id)} ${genitive(other?.name, other?.sex)}`.trim() };
     });
 }
 
 /** The short label under a relative on the tree: their link to her or to him first. */
 export function labelOf(state, id) {
     if (id === 'user' || id === 'char') return '';
-    const all = linksOf(state, id);
+    const all = linksOf(state, id).filter(x => familyOptions.trackExes || !x.ex);
     const main = all.find(x => x.otherId === 'user') ?? all.find(x => x.otherId === 'char') ?? all[0];
-    return main?.text ?? '';
+    if (!main) return '';
+    // a relative without a name already shows «Бабушка» on top: under it only whose, not «бабушка Игоря» again
+    const p = memberById(state, id);
+    if (isUnnamed(state, p)) {
+        const other = memberById(state, main.otherId);
+        return genitive(other?.name, other?.sex);
+    }
+    return main.text;
 }
 
 /**
  * What the analysis found: relatives the cards or the story name, and a marriage of the two of them.
  * item: { name, sex, relation, of, age? } — «name is relation of `of`»; `of` is "user", "char" or a name.
+ * The same relative is never added twice: a name in another case form, a name with a relation word around it
+ * («бабушка Галя»), or a relative that was on the tree without a name and is named now all find the one already there.
  * @returns {string[]} what was added or changed, in words for the log
  */
 export function applyFindings(state, items, source = 'story') {
@@ -186,20 +266,94 @@ export function applyFindings(state, items, source = 'story') {
         const ofRaw = String(item?.of ?? '').trim();
         const of = ofRaw === 'user' || ofRaw === 'char' ? ofRaw : findByName(state, ofRaw);
         if (!of) continue;
-        const name = String(item?.name ?? '').trim();
-        if (!name || name.length > 60) continue;
+        const rawName = String(item?.name ?? '').trim();
+        if (rawName.length > 60) continue;
+        const couple = rawName === 'user' || rawName === 'char';
+        // exes are not tracked: nobody comes onto the tree as an ex, and the two of them breaking up only removes their line
+        if (kind === 'ex' && !familyOptions.trackExes) {
+            if (couple) {
+                const at = linkIndex(ensureFamily(state), rawName, of);
+                if (at >= 0 && COUPLE.has(state.family.links[at].kind)) state.family.links.splice(at, 1);
+            }
+            continue;
+        }
         const sex = item.sex === 'male' || item.sex === 'female' ? item.sex : null;
-        let id = name === 'user' || name === 'char' ? name : findByName(state, name);
+        const name = couple ? rawName : ownName(state, rawName);
+        let id = couple ? rawName : (name ? findByName(state, name) : null);
+        // named now, nameless before («Бабушка» → «Галина»): the same person gets her name
+        if (!id && name) {
+            const placeholder = sameRelative(state, kind, of, sex, { unnamedOnly: true });
+            if (placeholder) {
+                updatePerson(state, placeholder, { name });
+                delete state.family.people[placeholder].unnamed;
+                id = placeholder;
+                done.push(`${name} — ${kindLabel(kind, state.family.people[placeholder].sex)} ${genitive(memberById(state, of)?.name, memberById(state, of)?.sex)}`);
+                continue;
+            }
+        }
+        // no name at all: nobody new comes onto the tree («Бабушка» under «бабушка Игоря» said nothing);
+        // the one already standing in that place may still get a sex
+        if (!id && !name) {
+            const there = sameRelative(state, kind, of, sex);
+            if (there && sex && !state.family.people[there].sex) state.family.people[there].sex = sex;
+            continue;
+        }
         const isNew = !id;
         if (isNew) id = addPerson(state, { name, sex, age: item.age ?? null, source });
         if (!id || id === of) continue;
         const person = memberById(state, id);
         if (!isNew && !person.fixed && !person.sex && sex) person.sex = sex;
+        // the card wrote «Anya», the story «Аня»: the tree speaks the story's language
+        if (!isNew && !person.fixed && name && /^[a-z\s.'-]+$/i.test(person.name) && /[а-яё]/i.test(name)) person.name = name.slice(0, 60);
         const changedLink = link(state, id, kind, of, { soft: true });
         const ofPerson = memberById(state, of);
         if (isNew || changedLink) done.push(`${person.name} — ${kindLabel(kind, person.sex)} ${genitive(ofPerson?.name, ofPerson?.sex)}`);
     }
     return done;
+}
+
+/**
+ * Doubles from older versions: the same relative twice (one name in two forms, or once without a name and once with one
+ * in the same place). They become one person with all the links of both. Safe to run on every read.
+ * @returns {number} how many were merged
+ */
+export function mergeDuplicates(state) {
+    const fam = ensureFamily(state);
+    let merged = 0;
+    const ids = Object.keys(fam.people);
+    const linkSig = id => fam.links.filter(l => l.a === id || l.b === id).map(l => `${SYMMETRIC.has(l.kind) ? '=' : l.a === id ? '>' : '<'}${l.kind}:${l.a === id ? l.b : l.a}`).sort();
+    for (let i = 0; i < ids.length; i++) {
+        const keep = fam.people[ids[i]];
+        if (!keep) continue;
+        for (let j = i + 1; j < ids.length; j++) {
+            const dup = fam.people[ids[j]];
+            if (!dup) continue;
+            const sexOk = !keep.sex || !dup.sex || keep.sex === dup.sex;
+            const shared = linkSig(keep.id).some(s => linkSig(dup.id).includes(s));
+            const named = [keep, dup].filter(p => !isUnnamed(state, p)).length;
+            const sameName = named === 2 && (norm(keep.name) === norm(dup.name) || (nameKey(keep.name).length >= 3 && nameKey(keep.name) === nameKey(dup.name)));
+            const nameless = named === 1 || (named === 0 && norm(keep.name) === norm(dup.name));
+            if (!sexOk || !shared || !(sameName || nameless)) continue;
+            // the older one stays, with the better name: a real one, or the fuller one («Галина Петровна» over «Галина»)
+            if ((isUnnamed(state, keep) && !isUnnamed(state, dup)) || (sameName && dup.name.trim().split(/\s+/).length > keep.name.trim().split(/\s+/).length)) {
+                keep.name = dup.name;
+                delete keep.unnamed;
+            }
+            keep.sex ??= dup.sex ?? null;
+            if (keep.age === null || keep.age === undefined) keep.age = dup.age ?? null;
+            keep.avatar ||= dup.avatar || null;
+            const moved = fam.links.filter(l => l.a === dup.id || l.b === dup.id);
+            fam.links = fam.links.filter(l => l.a !== dup.id && l.b !== dup.id);
+            delete fam.people[dup.id];
+            for (const l of moved) {
+                const a = l.a === dup.id ? keep.id : l.a;
+                const b = l.b === dup.id ? keep.id : l.b;
+                if (a !== b && linkIndex(fam, a, b) < 0) fam.links.push({ a, kind: l.kind, b });
+            }
+            merged += 1;
+        }
+    }
+    return merged;
 }
 
 /** A baby born in the story: a child of both of them on the tree. sexes: ['девочка', 'мальчик'] */
@@ -237,9 +391,17 @@ const SLOT = NODE_W + GAP_X;
  */
 export function layoutFamily(state) {
     const fam = state.family ?? emptyFamily();
-    const list = members(state);
-    const byId = Object.fromEntries(list.map(p => [p.id, p]));
-    const links = fam.links.filter(l => byId[l.a] && byId[l.b] && KINDS[l.kind]);
+    let list = members(state);
+    let byId = Object.fromEntries(list.map(p => [p.id, p]));
+    let links = fam.links.filter(l => byId[l.a] && byId[l.b] && KINDS[l.kind]);
+    // exes not tracked: their lines go, and so do the people who are on the tree only as someone's ex
+    if (!familyOptions.trackExes) {
+        const exOnly = id => !byId[id].fixed && links.some(l => l.kind === 'ex' && (l.a === id || l.b === id)) && !links.some(l => l.kind !== 'ex' && (l.a === id || l.b === id));
+        const hidden = new Set(list.filter(p => exOnly(p.id)).map(p => p.id));
+        links = links.filter(l => l.kind !== 'ex' && !hidden.has(l.a) && !hidden.has(l.b));
+        list = list.filter(p => !hidden.has(p.id));
+        byId = Object.fromEntries(list.map(p => [p.id, p]));
+    }
 
     // generations: a is kind of b → gen(a) = gen(b) + offset
     const adj = Object.fromEntries(list.map(p => [p.id, []]));

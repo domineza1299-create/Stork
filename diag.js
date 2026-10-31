@@ -5,10 +5,12 @@
  */
 import { extensionNames, getContext } from '../../../extensions.js';
 import { cycleInfo } from './biology.js';
-import { describeChoice } from './connection.js';
+import { describeChoice, requestHistory } from './connection.js';
+import { diagnose, scrub, scrubShape } from './diagnose.js';
+import { members } from './family.js';
 import { cleanRpText, dateLabel } from './engine.js';
-import { logEvent, logText } from './log.js';
-import { currentState, otherClock, readStatus, settings } from './store.js';
+import { logEntries, logEvent, logText } from './log.js';
+import { activeIn, currentState, otherClock, readStatus, settings } from './store.js';
 
 const cut = (text, max) => {
     const s = String(text ?? '');
@@ -131,3 +133,118 @@ export async function downloadReport() {
     link.remove();
     setTimeout(() => URL.revokeObjectURL(link.href), 1000);
 }
+
+// #region «Перестал отслеживать!»: the report without the story
+
+/** Every name in this chat: hers, his, the persona's, the character's, the family's. */
+function namesHere(state) {
+    const ctx = getContext();
+    const out = [ctx.name1, ctx.name2, state?.people?.user?.name, state?.people?.char?.name];
+    try { out.push(...members(state).map(m => m.name)); } catch { /* no family yet */ }
+    return out.filter(n => n && !/^(char|user|\{\{.*\}\})$/i.test(n));
+}
+
+/** The bot's recent replies that have no Stork record (the greeting does not count). */
+function unreadReplies() {
+    const chat = getContext().chat ?? [];
+    const firstUser = chat.findIndex(m => m?.is_user);
+    if (firstUser < 0) return [];
+    const out = [];
+    for (let i = chat.length - 1; i > firstUser && i >= chat.length - 20; i--) {
+        const m = chat[i];
+        if (m.is_user || m.is_system) continue;
+        if (!m.extra?.stork?.[m.swipe_id ?? 0]) out.push(i);
+    }
+    return out.reverse();
+}
+
+const OUTCOME = { ok: 'ok', filter: 'ФИЛЬТР', thinking: 'размышления съели лимит', cut: 'обрезан лимитом', timeout: 'нет ответа', error: 'ошибка', empty: 'пусто', 'bad-json': 'не JSON', 'no-connection': 'не отправлен' };
+const KIND = { scene: 'анализ', cards: 'карточки', test: 'проверка' };
+
+/** What to show and download: the likeliest reasons first, then the facts behind them. */
+export function stoppedDiagnosis() {
+    const state = currentState();
+    const s = settings();
+    return diagnose({ settings: s, state, active: activeIn(state), readChoice: s.readMode === 'analyzer' ? describeChoice(s.readProfile) : '', history: requestHistory(), unread: unreadReplies() });
+}
+
+/** The report for «Перестал отслеживать!»: no messages, no names, no cards — only what breaks and why. */
+export async function buildStoppedReport() {
+    const ctx = getContext();
+    const s = settings();
+    const state = currentState();
+    const names = namesHere(state);
+    const clean = t => scrub(t, names);
+    const v = await versions();
+    const rs = readStatus();
+    const model = choice => clean(describeChoice(choice).replace(/профиль «[^»]*» · /, ''));
+    const out = [];
+    const section = title => out.push('', `=== ${title} ===`);
+    const ua = globalThis.navigator?.userAgent ?? '';
+    out.push(`Stork ${v.stork} — «Перестал отслеживать», ${new Date().toISOString()}`, `SillyTavern ${v.tavern} · браузер: ${ua.match(/(Edg|OPR|YaBrowser|Firefox|Chrome|Safari)\/[\d.]+/)?.[0] ?? '?'}${/Mobile|Android|iPhone/.test(ua) ? ' (телефон)' : ''}`);
+    out.push('В отчёте нет текста переписки, карточек, персоны и имён: только настройки, состояние Stork и как прошли запросы.');
+
+    section('Что мешает (самое вероятное сверху)');
+    stoppedDiagnosis().forEach((f, i) => out.push(`${i + 1}. ${f.problem}`, `   почему: ${clean(f.why)}`, `   что поможет: ${f.help}`));
+
+    section('Настройки');
+    out.push(`Stork включён: ${s.enabled ? 'да' : 'НЕТ'} · чтение РП: ${s.readMode === 'analyzer' ? 'анализ каждого ответа' : 'скрытая метка от РП-модели'}`);
+    if (s.readMode === 'analyzer') {
+        out.push(`модель анализа: ${model(s.readProfile)}`);
+        out.push(`режиссёр близости: ${s.intimacy ? 'вкл' : 'выкл'}${s.intimacy ? ` · модель для сцен: ${s.sceneProfile ? model(s.sceneProfile) : 'та же'}` : ''}`);
+        out.push(`контекст: ${s.memoryReplies ?? 20} сообщений`);
+    }
+    out.push(`основное подключение: ${ctx.mainApi ?? '?'}${ctx.mainApi === 'openai' ? ` · ${ctx.getChatCompletionModel?.() ?? '?'}` : ''}`);
+    out.push(`статус в промпт: ${s.placement} · время ведёт: ${otherClock() || 'Stork'}`);
+    out.push(`Connection Manager: ${ctx.extensionSettings?.connectionManager ? 'есть' : 'нет'} · другие расширения: ${extensionNames.filter(n => !/Stork$/i.test(n)).map(n => n.replace(/^third-party\//, '')).join(', ') || 'нет'}`);
+
+    section('Этот чат');
+    out.push(`включён в чате: ${state.setupDone ? 'да' : 'НЕТ'}${state.chatOff ? ' · выключен кнопкой' : ''}${state.minorBlocked ? ' · заблокирован (возраст)' : ''} · работает сейчас: ${activeIn(state) ? 'да' : 'НЕТ'}`);
+    const chat = ctx.chat ?? [];
+    const unread = unreadReplies();
+    out.push(`сообщений: ${chat.length} · ответов бота без записи Stork (из последних 20 сообщений): ${unread.length ? unread.map(i => `#${i}`).join(', ') : 'нет'}`);
+    out.push(`сцена близости идёт: ${state.intim?.scene?.visible ? 'да' : 'нет'} · кинков из карточек: ${Array.isArray(state.intim?.kinks) ? state.intim.kinks.length : 'не читались'} · портрет: ${state.intim?.profile ? 'есть' : 'нет'}`);
+    out.push(`сейчас: ${rs.index !== null ? `читаю ответ #${rs.index}` : 'не читаю'}${rs.failed ? ` · последняя ошибка: ответ #${rs.failed.index}: ${clean(rs.failed.error)}` : ''}`);
+    out.push('последние сообщения (без текста):');
+    for (let i = Math.max(0, chat.length - 12); i < chat.length; i++) {
+        const m = chat[i];
+        const swipe = m.swipe_id ?? 0;
+        out.push(`  #${i} ${m.is_user ? 'пользователь' : m.is_system ? 'система' : 'бот'} · свайп ${swipe + 1}/${m.swipes?.length ?? 1} · ${String(m.mes ?? '').length} знаков · запись Stork: ${m.extra?.stork?.[swipe] ? 'есть' : 'НЕТ'}`);
+    }
+
+    section('Запросы к модели (последние, хранятся в браузере)');
+    const history = requestHistory();
+    if (!history.length) out.push('нет записей');
+    for (const r of history.slice(-40)) {
+        out.push(`[${new Date(r.at).toISOString()}] ${KIND[r.kind] ?? r.kind} · ${[r.api, r.model].filter(Boolean).join(' · ') || '?'} · ${r.size ? `${r.size} знаков · ` : ''}${r.ms ? `${r.ms} мс · ` : ''}${OUTCOME[r.outcome] ?? r.outcome}`
+            + `${r.finish ? ` · finish ${r.finish}` : ''}${r.native ? ` (${r.native})` : ''}${r.tokens ? ` · токенов ${r.tokens}${r.reasoning ? `, размышления ${r.reasoning}` : ''}` : ''}${r.limit ? ` · лимит ${r.limit}` : ''}`
+            + `${r.http ? ` · HTTP ${r.http}` : ''}${r.err ? ` · ${clean(r.err)}` : ''}${r.providerError ? ` · провайдер: ${clean(r.providerError)}` : ''}`);
+    }
+
+    section('Журнал этой страницы (без текста ответов)');
+    const entries = logEntries().filter(e => e.level !== 'info' || /анализ|ошибк|не прошёл|фильтр|включ|пропуск|не удалось|перечит/i.test(e.text));
+    if (!entries.length) out.push('пусто (страницу перезагружали после проблемы?)');
+    for (const e of entries.slice(-120)) {
+        out.push(`[${new Date(e.at).toISOString()}] ${e.level.toUpperCase()} ${e.source}: ${clean(e.text).slice(0, 400)}`);
+        // the provider's raw answer of a failed request: its finish reasons and errors, never its text
+        if (e.level === 'error' && e.data) {
+            const shapeText = scrubShape(e.data, names);
+            if (shapeText) out.push(...shapeText.split('\n').slice(0, 40).map(l => `    ${l}`));
+        }
+    }
+    return out.join('\n');
+}
+
+export async function downloadStoppedReport() {
+    const text = await buildStoppedReport();
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `stork-perestal-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.txt`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+}
+
+// #endregion

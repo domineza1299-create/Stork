@@ -5,16 +5,18 @@
  */
 import { saveSettingsDebounced } from '../../../../script.js';
 import { careOf, cycleInfo, FEMALE_CONTRACEPTION, femaleState, laborProgress, pillState, pregnancyInfo } from './biology.js';
-import { absMinute, acceptPregnancyClaim, clockText, editPregnancyClaim, liveNow, maleSnapshot, maleVigor, recoveryLeft, rejectPregnancyClaim, setPregnancyByHand, shortDate, timeLabel, withLive } from './engine.js';
+import { absMinute, acceptPregnancyClaim, clockText, editPregnancyClaim, liveNow, maleSnapshot, maleVigor, recoveryLeft, rejectPregnancyClaim, removePregnancyByHand, setPregnancyByHand, shortDate, timeLabel, withLive } from './engine.js';
 import { activeIn, changed, currentState, readStatus, refreshStatus, retryRead, settings, updateCurrentState, VIEWS } from './store.js';
-import { applyPersonEdit, setPeriodStart } from './setup.js';
+import { applyPersonEdit, setPeriodStart, setStoryClock } from './setup.js';
 import {
     agoWord, avatarUrl, babyWeight, capitalize, claimCard, clamp01, cycleFields, cycleStrip, esc, femaleLevels, femaleTraits, icon, initials, irregularityWord,
-    KIND_ICON, knowsPregnancy, levelWord, maleLevels, nameOf, nextInCycle, personFields, pregnancyLibidoWhy, riskyLately,
+    ACT_LABEL, KIND_ICON, knowsPregnancy, levelWord, maleLevels, nameOf, nextInCycle, personFields, pregnancyLibidoWhy, riskyLately,
     pregnancyFacts, spermGrade, spermPanel, years,
 } from './common.js';
 import { calendarCore } from './classic.js';
-import { downloadProblemLog, openStork } from './window.js';
+import { LIFESTYLE } from './biology.js';
+import { DYN } from './intimacy.js';
+import { downloadProblemLog, downloadStopped, openStork } from './window.js';
 import { notify, notifyDone, notifyWarn } from './notify.js';
 import { handleFamilyAction } from './tree.js';
 
@@ -394,6 +396,152 @@ export function renderNow(state, view = {}) {
 
 // #endregion
 
+// #region «Кратко»: only what this reply changed, the details stay in the window
+
+const CHIP_MAX = 28;
+/** The text of a journal entry without the name in front: «Игорь Малеев: царапины» → «царапины». */
+const withoutName = (text, person) => {
+    const t = String(text ?? '');
+    for (const n of [person?.name, String(person?.name ?? '').split(/\s+/)[0]].filter(Boolean)) {
+        if (t.startsWith(`${n}: `)) return t.slice(n.length + 2);
+    }
+    return t;
+};
+
+/** The journal entries this reply added (the journal keeps 200, so they are found after the last one before it). */
+function freshLog(state, before) {
+    if (!before) return [];
+    const lastB = before.log.at(-1);
+    if (!lastB) return state.log.slice();
+    let at = -1;
+    for (let i = state.log.length - 1; i >= 0; i--) {
+        const e = state.log[i];
+        if (e.day === lastB.day && e.minutes === lastB.minutes && e.text === lastB.text) { at = i; break; }
+    }
+    return state.log.slice(at + 1);
+}
+
+/** What happened to one of them in this reply: short ones as chips, long ones as lines. */
+function eventsHtml(items) {
+    const short = items.filter(t => t.text.length <= CHIP_MAX);
+    const long = items.filter(t => t.text.length > CHIP_MAX);
+    return `${short.length ? `<div class="stk-brief-chips">${short.map(t => `<span class="stk-ag-chip${t.warm ? ' is-warm' : ''}">${esc(t.text)}</span>`).join('')}</div>` : ''}${long.map(t => li(t.icon ?? 'fa-circle-dot', esc(capitalize(t.text)), t.warm ? 'is-warm' : '')).join('')}`;
+}
+
+/** How the story shows this person now, in their own colour. */
+function briefNote(state, key) {
+    const live = liveNow(state, key);
+    if (!live.note && !live.mood) return '';
+    // one sentence is enough here: the whole note is in «подробно» and in the window
+    const first = String(live.note ?? '').match(/^.*?[.!?…](?=\s|$)/)?.[0] ?? live.note ?? '';
+    return `<div class="stk-note${key === 'char' ? ' is-him' : ''}">${icon('fa-feather-pointed')}<span>${live.mood ? `<b>${esc(capitalize(live.mood))}.</b> ` : ''}${esc(first)}</span></div>`;
+}
+
+function briefHer(state, person, before, events, view) {
+    const key = person.key;
+    const editing = view.editPerson === key;
+    const tools = pencil(key, editing);
+    if (editing) return editorPanel(state, person, tools);
+    const f = person.female;
+    const day = state.clock.day;
+    const rows = [];
+    let sub = statusOf(state, person).text;
+    let tone = statusOf(state, person).tone;
+    if (f.pregnancy?.labor && knowsPregnancy(person)) {
+        const progress = laborProgress(f.pregnancy.labor, absMinute(state.clock));
+        rows.push(`<div class="stk-bars">${bar('Роды', progress.progress, 'preg', progress.label)}</div>`);
+        rows.push(li('fa-stopwatch', `схватки каждые ${progress.intervalMinutes} мин${progress.waterBroken ? ', воды отошли' : ''}`, 'is-warm'));
+    } else if (f.pregnancy && knowsPregnancy(person)) {
+        const p = f.pregnancy;
+        const info = pregnancyInfo(p, day);
+        sub = `${info.week} нед. · ${info.trimester}-й триместр`;
+        tone = 'preg';
+        rows.push(`<div class="stk-bars">${bar('До родов', info.week / 40, 'preg', `${Math.max(0, info.daysToDue)} дн.`)}</div>`);
+        rows.push(`<div class="stk-stats is-sm"><div><b>${info.baby.length} см</b><span>рост</span></div><div><b>${esc(babyWeight(info.baby.weight))}</b><span>вес</span></div><div><b>${esc(info.baby.compare)}</b><span>размером с</span></div></div>`);
+        rows.push(li('fa-wand-sparkles', `${esc(info.baby.develops)}${p.babies > 1 ? ' · двойня' : ''} · ${p.sexKnown ? esc(p.sexes.join(' и ')) : 'пол пока неизвестен'}`));
+        rows.push(li('fa-person-pregnant', `живот ${esc(info.belly)} · +${String(info.weightGain).replace('.', ',')} кг`));
+        if (info.symptoms.length) rows.push(li('fa-notes-medical', esc(info.symptoms.join(', '))));
+    } else if (f.postpartum) {
+        const since = day - f.postpartum.birthDay;
+        rows.push(`<div class="stk-bars">${bar('Восстановление', Math.min(1, since / 42), 'preg', since < 42 ? `${since} из 42 дн.` : 'позади')}</div>`);
+        if (f.postpartum.breastfeeding) rows.push(li('fa-baby', 'кормит грудью'));
+    } else {
+        const s = cycleInfo(f, day);
+        const pill = pillState(f, day);
+        const noOvulation = pill.suppressed && ['ovulation', 'follicular'].includes(s.phase);
+        // only the phase she is in now: what comes next is in the window
+        sub = s.late ? `день ${s.cycleDay} · задержка ${s.cycleDay - s.length} дн.` : `день ${s.cycleDay} из ${s.length} · ${noOvulation ? 'овуляции нет' : PHASE_SHORT[s.phase]}`;
+        if (riskyLately(state)) {
+            const testIn = f.cycleStart + s.ovulation - 1 + 14 - day;
+            rows.push(li('fa-seedling', `близость без защиты в фертильные дни — беременность возможна${testIn > 0 ? `; тест покажет через ${testIn} дн.` : '; тест уже покажет'}`, 'is-pink'));
+        } else if (pill.suppressed) {
+            rows.push(li('fa-shield-halved', `${esc(FEMALE_CONTRACEPTION[pill.effective]?.label ?? 'контрацепция')}: овуляции нет`));
+        } else if (s.fertile) {
+            rows.push(li('fa-heart', `фертильные дни · шанс зачатия сегодня <b>${Math.round(s.chanceToday * 100)}%</b>`, 'is-pink'));
+        } else {
+            rows.push(li('fa-heart', 'сегодня не фертильный день', 'is-muted'));
+        }
+    }
+    rows.push(eventsHtml(events));
+    rows.push(briefNote(state, key));
+    return panel(key, personHead(state, person, { tools, sub: esc(sub), tone, alert: riskyLately(state) }), rows.join(''));
+}
+
+function briefHim(state, person, before, events, view) {
+    const key = person.key;
+    const editing = view.editPerson === key;
+    const tools = pencil(key, editing);
+    if (editing) return editorPanel(state, person, tools);
+    const m = person.male;
+    const s = maleSnapshot(state, person);
+    const rows = [];
+    if (s.erection < 0.75) rows.push(li('fa-triangle-exclamation', 'эрекция может подвести', 'is-warm'));
+    const left = recoveryLeft(state, person);
+    if (left > 0) rows.push(li('fa-hourglass-half', `восстанавливается после оргазма: ещё ~${left} мин`, 'is-warm'));
+    // drink, smoke, a sleepless night, stress of this reply: they are not in the journal, so they are read from his habits
+    const had = before?.people?.[key]?.male?.lifestyle?.length ?? m.lifestyle.length;
+    const fresh = [...new Set(m.lifestyle.slice(had).map(e => LIFESTYLE[e.type]?.label ?? e.type))].map(text => ({ text, warm: true }));
+    rows.push(eventsHtml([...fresh, ...events]));
+    rows.push(briefNote(state, key));
+    const sub = s.expectingFather ? `${statusOf(state, person).text} · знает, что станет отцом` : statusOf(state, person).text;
+    return panel(key, personHead(state, person, { tools, sub: esc(sub) }), rows.join(''));
+}
+
+/**
+ * The infoblock «кратко»: each of them in one panel — where she is now (the phase, or the pregnancy in short),
+ * a risk when there is one, what happened to each in this reply, how each is by the story in their own colour.
+ * Everything else (levels, the cycle strip, the reasons, sperm, the calendar, the tree) is in the window.
+ * @param {object} state after the latest reply
+ * @param {object|null} before the state before it: what changed is found by the difference
+ */
+export function renderBrief(state, before, view = {}) {
+    const parts = settings().blockParts ?? {};
+    const fresh = freshLog(state, before).filter(e => e.kind !== 'roll' && e.kind !== 'intimacy');
+    const ofWho = key => fresh.filter(e => e.who === key && e.kind !== 'family')
+        .map(e => ({ text: withoutName(e.text, state.people[key]), warm: ['injury', 'labor'].includes(e.kind), icon: KIND_ICON[e.kind] }));
+    const shared = [];
+    for (const e of fresh.filter(x => x.kind === 'family' || !x.who)) shared.push(li(KIND_ICON[e.kind] ?? 'fa-circle-dot', esc(capitalize(e.text)), 'is-muted'));
+    // the scene ended with this reply, or closeness happened without one
+    const wasScene = before?.intim?.scene?.visible;
+    const isScene = state.intim?.scene?.visible;
+    const act = state.acts.length > (before?.acts?.length ?? state.acts.length) ? state.acts.at(-1) : null;
+    if (wasScene && !isScene) {
+        const last = state.intim?.history?.at(-1);
+        // the protection only of closeness that was part of this scene, not of some older one
+        const inScene = last && state.acts.at(-1)?.minute >= last.at - (last.minutes ?? 0) - 240 ? state.acts.at(-1) : null;
+        shared.push(li('fa-fire-flame-curved', `близость позади${last ? ` · ${esc((DYN[last.dyn]?.ru ?? '').toLowerCase())}` : ''}${inScene ? ` · ${esc(ACT_LABEL[inScene.protection] ?? '')}` : ''}`, 'is-muted'));
+    } else if (act && !isScene) {
+        shared.push(li('fa-heart', `близость · ${esc(ACT_LABEL[act.protection] ?? act.protection)}${act.condomBroke ? ' · презерватив порвался' : ''}`, act.protection === 'none' || act.condomBroke ? 'is-pink' : 'is-muted'));
+    }
+    const people = [
+        parts.user !== false && briefHer(state, state.people.user, before, ofWho('user'), view),
+        parts.char !== false && briefHim(state, state.people.char, before, ofWho('char'), view),
+    ].filter(Boolean);
+    return `${claimCard(state)}${people.join('')}${parts.shared !== false ? shared.join('') : ''}`;
+}
+
+// #endregion
+
 // #region Buttons shared by the infoblock and the window
 
 /**
@@ -474,11 +622,37 @@ export function handleAction(target, view, rerender) {
             notifyDone('Срок поправлен', { icon: 'fa-calendar-check', tone: 'preg' });
             break;
         }
-        case 'preg-edit': view.pregEdit = true; break;
-        case 'preg-cancel': view.pregEdit = false; break;
+        case 'preg-edit': view.pregEdit = true; view.pregRemove = false; break;
+        case 'preg-cancel': view.pregEdit = false; view.pregRemove = false; break;
+        case 'preg-remove':
+            // two taps: the first only asks
+            if (!view.pregRemove) { view.pregRemove = true; break; }
+            updateCurrentState(state => removePregnancyByHand(state));
+            view.pregEdit = false;
+            view.pregRemove = false;
+            notify('Беременность убрана, цикл идёт дальше', { icon: 'fa-rotate-left', tone: 'calm', timeOut: 3500 });
+            break;
+        case 'time-save': {
+            const v = values();
+            let ok = false;
+            updateCurrentState(state => { ok = setStoryClock(state, v); });
+            if (!ok) {
+                notifyWarn('Укажи дату или время', { timeOut: 2500 });
+                return true;
+            }
+            notifyDone(`Теперь в истории ${v.time || ''} ${v.date ? v.date.split('-').reverse().join('.') : ''}`.replace(/\s+/g, ' ').trim(), { icon: 'fa-clock', timeOut: 3000 });
+            break;
+        }
         case 'preg-save': {
             const v = values();
-            const input = { partnerKnows: v.partnerKnows };
+            const input = {
+                partnerKnows: v.partnerKnows,
+                babies: v.babies,
+                sexes: Number(v.babies) > 1 ? [v.sex0, v.sex1] : [v.sex0],
+                facts: String(v.facts ?? '').split('\n'),
+                cravings: v.cravings,
+                aversions: v.aversions,
+            };
             if (v.mode === 'lmp') input.lmpDate = v.lmpDate;
             else if (v.mode === 'due') input.dueDate = v.dueDate;
             else Object.assign(input, { weeks: v.weeks, days: v.days });
@@ -489,7 +663,8 @@ export function handleAction(target, view, rerender) {
                 return true;
             }
             view.pregEdit = false;
-            notifyDone(`${result.created ? 'Беременность записана' : 'Срок обновлён'}: ${result.weeks} нед.${result.days ? ` ${result.days} дн.` : ''}`, { icon: 'fa-person-pregnant', tone: 'preg' });
+            view.pregRemove = false;
+            notifyDone(`${result.created ? 'Беременность записана' : 'Сохранено'}: ${result.weeks} нед.${result.days ? ` ${result.days} дн.` : ''}`, { icon: 'fa-person-pregnant', tone: 'preg' });
             break;
         }
         case 'retry': retryRead(); break;
@@ -514,6 +689,9 @@ export function handleAction(target, view, rerender) {
             return true;
         case 'download-log':
             downloadProblemLog();
+            return true;
+        case 'stopped-report':
+            downloadStopped();
             return true;
         default: return act.startsWith('fam-') ? handleFamilyAction(act, target, view, values, rerender) : false;
     }

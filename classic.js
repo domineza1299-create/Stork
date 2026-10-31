@@ -259,7 +259,7 @@ function isoOfDay(state, day) {
  * A pregnancy by hand: by the term, by her last period or by the due date. Everything else Stork works out itself.
  * The three ways are radios; CSS shows the fields of the chosen one.
  */
-function pregnancyForm(state) {
+function pregnancyForm(state, view = {}) {
     const woman = [state.people.user, state.people.char].find(p => p.sex === 'female');
     const man = [state.people.user, state.people.char].find(p => p.sex === 'male');
     if (!woman) return '';
@@ -269,7 +269,7 @@ function pregnancyForm(state) {
     const hasDates = !!state.startDate;
     const mode = (id, label, checked) => `<label class="stk-pf-mode"><input type="radio" name="stk-pf-mode" data-f="mode" value="${id}" ${checked ? 'checked' : ''}><span>${label}</span></label>`;
     return `<div class="stk-card stk-edit stk-preg-form" data-key="preg">
-        <div class="stk-card-title">${icon('fa-person-pregnant')}${p ? 'Изменить срок' : 'Указать беременность'}</div>
+        <div class="stk-card-title">${icon('fa-person-pregnant')}${p ? 'Изменить беременность' : 'Указать беременность'}</div>
         <div class="stk-pf-modes" role="radiogroup">
             ${mode('term', 'Срок', true)}
             ${hasDates ? mode('lmp', 'Последние месячные', false) : ''}
@@ -283,16 +283,40 @@ function pregnancyForm(state) {
         ${hasDates ? `<label class="stk-field stk-pf-row is-lmp"><span>Первый день последних месячных</span><input class="text_pole" data-f="lmpDate" type="date" value="${isoOfDay(state, day - total)}"></label>
         <label class="stk-field stk-pf-row is-due"><span>Предполагаемая дата родов</span><input class="text_pole" data-f="dueDate" type="date" value="${isoOfDay(state, day - total + 280)}"></label>` : ''}
         ${man ? `<label class="stk-check"><input type="checkbox" data-f="partnerKnows" ${p?.knownBy.includes(man.key) ? 'checked' : ''}>${esc(nameOf(man))} знает о беременности</label>` : ''}
+        <div class="stk-pf-sub">${icon('fa-seedling')}Малыш</div>
+        <div class="stk-grid">
+            <label class="stk-field"><span>Сколько</span><select class="text_pole" data-f="babies">
+                <option value="1" ${(p?.babies ?? 1) < 2 ? 'selected' : ''}>один</option>
+                <option value="2" ${(p?.babies ?? 1) > 1 ? 'selected' : ''}>двойня</option>
+            </select></label>
+            ${sexSelect(p, 0, 'Пол')}
+            ${sexSelect(p, 1, 'Пол второго', 'is-twin')}
+        </div>
+        <label class="stk-field"><span>Что известно по истории — по строке на факт (врач, УЗИ, анализы)</span>
+            <textarea class="text_pole" data-f="facts" rows="3" placeholder="УЗИ на 12 неделе: всё в норме">${esc((p?.facts ?? []).map(f => f.text).join('\n'))}</textarea></label>
+        <div class="stk-grid">
+            <label class="stk-field"><span>Тянет на (через запятую)</span><input class="text_pole" data-f="cravings" value="${esc((p?.cravings ?? []).join(', '))}"></label>
+            <label class="stk-field"><span>Воротит от</span><input class="text_pole" data-f="aversions" value="${esc((p?.aversions ?? []).join(', '))}"></label>
+        </div>
         <div class="stk-actions">
             <button type="button" class="stk-btn is-primary" data-stk-act="preg-save">${icon('fa-check')}Сохранить</button>
             <button type="button" class="stk-btn is-ghost" data-stk-act="preg-cancel">${icon('fa-xmark')}Отмена</button>
+            ${p ? `<button type="button" class="stk-btn is-ghost is-danger" data-stk-act="preg-remove">${icon('fa-trash-can')}${view.pregRemove ? 'Точно убрать?' : 'Убрать беременность'}</button>` : ''}
         </div>
     </div>`;
 }
 
+/** A baby's sex: unknown, or as the story (or she) settled it. */
+function sexSelect(p, i, label, cls = '') {
+    const now = p?.sexKnown ? p.sexes[i] ?? '' : '';
+    return `<label class="stk-field ${cls}"><span>${label}</span><select class="text_pole" data-f="sex${i}">
+        ${[['', 'пока не знаем'], ['девочка', 'девочка'], ['мальчик', 'мальчик']].map(([v, l]) => `<option value="${v}" ${now === v ? 'selected' : ''}>${l}</option>`).join('')}
+    </select></label>`;
+}
+
 export function renderPregnancy(state, view = {}) {
     const woman = [state.people.user, state.people.char].find(p => p.sex === 'female' && p.female.pregnancy && knowsPregnancy(p));
-    if (view.pregEdit) return pregnancyForm(state);
+    if (view.pregEdit) return pregnancyForm(state, view);
     if (!woman) {
         return `${claimCard(state)}<div class="stk-empty">${icon('fa-baby', 'stk-ic-xl')}<div>Беременности пока нет. Или о ней ещё никто не знает: сделай тест.</div>
             <button type="button" class="stk-btn" data-stk-act="preg-edit">${icon('fa-plus')}Указать вручную</button></div>`;
@@ -304,7 +328,7 @@ export function renderPregnancy(state, view = {}) {
     return `
         ${claimCard(state)}
         <div class="stk-card">
-            <div class="stk-card-title">${icon('fa-person-pregnant')}${esc(nameOf(woman))}<button type="button" class="stk-pen" data-stk-act="preg-edit" title="Изменить срок" aria-label="Изменить срок">${icon('fa-pen')}</button></div>
+            <div class="stk-card-title">${icon('fa-person-pregnant')}${esc(nameOf(woman))}<button type="button" class="stk-pen" data-stk-act="preg-edit" title="Изменить срок, пол малыша и остальное" aria-label="Изменить беременность">${icon('fa-pen')}</button></div>
             <div class="stk-big">${info.week} нед. ${info.weekDay} дн.<span class="stk-muted">${info.trimester}-й триместр · до родов ${Math.max(0, info.daysToDue)} дн. (${esc(due)})</span></div>
             <div class="stk-progress"><i style="width:${Math.min(100, Math.round(info.week / 40 * 100))}%"></i></div>
         </div>

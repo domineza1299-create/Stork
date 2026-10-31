@@ -7,12 +7,12 @@ import { callGenericPopup, POPUP_TYPE } from '../../../popup.js';
 import { cycleInfo, ERAS, FEMALE_CONDITIONS, FEMALE_CONTRACEPTION, MALE_FERTILITY, PERIOD_FLOW, STORY_MODES } from './biology.js';
 import { analyzeCards, guessAge, readCards } from './cards.js';
 import { connectionManagerOn, CURRENT, describeChoice, ensureProfileChoice, errorText, getProfiles, requestModel } from './connection.js';
-import { advanceTime, applyEvent, dateLabel, MINUTES_PER_DAY, parseClock, storyDate } from './engine.js';
-import { currentState, currentView, onStateChange, refreshStatus, rereadLast, settings, updateCurrentState, VIEWS } from './store.js';
+import { advanceTime, applyEvent, clockText, dateLabel, extractClock, extractDate, MINUTES_PER_DAY, parseClock, storyDate } from './engine.js';
+import { applySwitches, currentState, currentView, enableNow, onStateChange, refreshStatus, rereadLast, settings, updateCurrentState, VIEWS } from './store.js';
 import { ADULT_AGE, applySetupForm, setPeriodStart } from './setup.js';
 import { capitalize, esc, icon, nameOf, years } from './common.js';
 import { eventLook, notify, notifyDone, notifyWarn } from './notify.js';
-import { downloadReport } from './diag.js';
+import { downloadReport, downloadStoppedReport, stoppedDiagnosis } from './diag.js';
 import { clearLog, logCountText, logEvent, logListHtml, onLogChange } from './log.js';
 import { handleAction, onKeyActivate } from './ui.js';
 import * as classic from './classic.js';
@@ -61,6 +61,17 @@ export function announce(events) {
 // #region The log
 
 /** «Скачать журнал»: a .txt file with everything needed to see what went wrong. */
+/** «Перестал отслеживать!»: the likeliest reason on screen and a report without the story to send. */
+export async function downloadStopped() {
+    try {
+        const top = stoppedDiagnosis()[0];
+        await downloadStoppedReport();
+        notifyWarn(`${top.problem}. Что поможет: ${top.help}. Отчёт скачан — пришли его разработчику, переписки и имён в нём нет.`, { timeOut: 15000 });
+    } catch (error) {
+        notifyWarn(`Не получилось собрать отчёт: ${error?.message ?? error}`);
+    }
+}
+
 export async function downloadProblemLog() {
     try {
         await downloadReport();
@@ -78,6 +89,7 @@ function logCard() {
             <label class="stk-check"><input type="checkbox" class="stk-set" data-k="debugPrompts" ${settings().debugPrompts ? 'checked' : ''}>записывать промпты целиком (журнал станет большим, в нём будет текст истории)</label>
             <div class="stk-actions">
                 <button type="button" class="stk-btn is-primary" data-stk-act="download-log">${icon('fa-download')}Скачать журнал</button>
+                <button type="button" class="stk-btn is-warn" data-stk-act="stopped-report" title="Отчёт о том, почему Stork не отслеживает: без переписки и имён">${icon('fa-heart-crack')}Перестал отслеживать!</button>
                 <button type="button" class="stk-btn is-ghost stk-log-clear">${icon('fa-broom')}Очистить</button>
             </div>
             <div class="stk-log-list">${logListHtml()}</div>
@@ -150,7 +162,7 @@ function renderSetup(state, view) {
     const cycleLength = preUser.cycle_length ?? f.cycleLength;
     const info = cycleInfo(f, state.clock.day);
     const pad = n => String(n).padStart(2, '0');
-    const fromAnalysis = parseClock(pre?.start?.time);
+    const fromAnalysis = extractClock(readCards().opening) ?? parseClock(pre?.start?.time);
     const minutes = fromAnalysis ?? state.clock.minutes;
     const startTime = `${pad(Math.floor(minutes / 60))}:${pad(minutes % 60)}`;
     const ageOf = key => people[key].age ?? (Number(view.manualAge?.[key]) || null);
@@ -211,18 +223,8 @@ function renderSetup(state, view) {
         <div class="stk-card">
             <div class="stk-card-title">${icon('fa-clock')}История</div>
             <div class="stk-grid">
-                <label class="stk-field"><span>Дата в истории сейчас</span><input class="text_pole stk-story" data-k="startDate" type="date" value="${esc(/^\d{4}-\d{2}-\d{2}$/.test(pre?.start?.date ?? '') ? pre.start.date : storyIsoDate(state))}"></label>
+                <label class="stk-field"><span>Дата в истории сейчас</span><input class="text_pole stk-story" data-k="startDate" type="date" value="${esc(extractDate(readCards().opening, String(pre?.start?.date ?? '').slice(0, 4) || null) ?? (/^\d{4}-\d{2}-\d{2}$/.test(pre?.start?.date ?? '') ? pre.start.date : storyIsoDate(state)))}"></label>
                 <label class="stk-field"><span>Время в истории сейчас</span><input class="text_pole stk-story" data-k="time" type="time" value="${esc(startTime)}"></label>
-                <label class="stk-field"><span>Шансы зачатия</span>
-                    <select class="text_pole stk-story" data-k="storyMode">
-                        ${Object.entries(STORY_MODES).map(([k, v]) => `<option value="${k}" ${(state.storyMode ?? 'realistic') === k ? 'selected' : ''}>${v.label}</option>`).join('')}
-                    </select>
-                </label>
-                <label class="stk-field"><span>Мир истории</span>
-                    <select class="text_pole stk-story" data-k="era">
-                        ${Object.entries(ERAS).map(([k, v]) => `<option value="${k}" ${(pre?.story?.era === 'past' && !state.eraSet ? 'traditional' : state.era ?? 'modern') === k ? 'selected' : ''}>${v}</option>`).join('')}
-                    </select>
-                </label>
             </div>
         </div>
         ${minors.length
@@ -231,7 +233,7 @@ function renderSetup(state, view) {
 }
 
 const SETUP_FIELDS = ['cycleLength', 'periodLength', 'cycleDay', 'irregularity', 'flow', 'contraception', 'pmsSevere', 'painfulPeriods', 'pcos', 'endometriosis',
-    'userSmoker', 'userDrinker', 'fertility', 'smoker', 'drinker', 'startDate', 'time', 'storyMode', 'era'];
+    'userSmoker', 'userDrinker', 'fertility', 'smoker', 'drinker', 'startDate', 'time'];
 
 /** Reads the setup form (and the names and ages from the cards) into the state. */
 function applySetup($root, state, view) {
@@ -269,10 +271,11 @@ function renderWaiting(state) {
         return `<div class="stk-empty">${icon('fa-moon', 'stk-ic-xl')}<div>Stork выключен в этом чате. Всё, что он успел записать, сохранено.</div>
             <button type="button" class="stk-btn is-primary stk-enable-chat">${icon('fa-power-off')}Включить снова</button></div>`;
     }
-    return `<div class="stk-empty">${icon('fa-dove', 'stk-ic-xl')}<div>Stork включится сам, когда бот ответит на твоё первое сообщение в этом чате: прочитает карточку, персону и начало истории и запомнит всё для этого чата.</div>
+    return `<div class="stk-empty">${icon('fa-dove', 'stk-ic-xl')}<div>Stork включится сам на твоём первом сообщении в этом чате: прочитает карточку, персону и начало истории — и дату со временем из шапки приветствия, если они там есть.</div>
         <div class="stk-actions" style="justify-content:center">
-            <button type="button" class="stk-btn stk-setup-now">${icon('fa-sliders')}Настроить сейчас вручную</button>
-            <button type="button" class="stk-btn is-ghost stk-disable-chat">${icon('fa-power-off')}Не включать в этом чате</button>
+            <button type="button" class="stk-btn is-primary stk-enable-now">${icon('fa-power-off')}Включить сейчас</button>
+            <button type="button" class="stk-btn stk-setup-now">${icon('fa-sliders')}Настроить вручную</button>
+            <button type="button" class="stk-btn is-ghost stk-disable-chat">${icon('fa-ban')}Не включать в этом чате</button>
         </div></div>`;
 }
 
@@ -290,6 +293,20 @@ function renderJournal(state) {
  * The profile the analysis goes through, as a select. compact: names only, for the window's head;
  * otherwise with the model, for the settings. The same setting either way.
  */
+/** The profile for the intimate scenes: the same as the analysis, or another one (a model whose filter lets the scenes through). */
+function sceneProfileSelect() {
+    const s = settings();
+    const profiles = getProfiles();
+    const v = s.sceneProfile ?? '';
+    const missing = v && v !== CURRENT && !profiles.some(p => p.id === v);
+    return `<select class="text_pole stk-set" data-k="sceneProfile" aria-label="Профиль для откровенных сцен">
+        <option value="" ${!v ? 'selected' : ''}>тот же, что для анализа</option>
+        ${missing ? '<option value="" selected>— профиль не найден —</option>' : ''}
+        ${profiles.map(p => `<option value="${esc(p.id)}" ${p.id === v ? 'selected' : ''}>${esc(p.name)} · ${esc(p.model || '?')}</option>`).join('')}
+        <option value="${CURRENT}" ${v === CURRENT ? 'selected' : ''}>Основное подключение SillyTavern</option>
+    </select>`;
+}
+
 function profileSelect(compact = false) {
     const s = settings();
     ensureProfileChoice(s, saveSettingsDebounced);
@@ -405,6 +422,11 @@ function viewCard() {
                 <div class="stk-seg is-wide">
                     ${[['top', 'сверху'], ['middle', 'в середине'], ['bottom', 'снизу']].map(([v, l]) => `<button type="button" class="${s.blockPosition === v ? 'is-on' : ''}" data-stk-act="block-pos" data-pos="${v}">${l}</button>`).join('')}
                 </div>
+                <div class="stk-sub">Вид инфоблока</div>
+                <div class="stk-seg is-wide">
+                    ${[['brief', 'кратко'], ['full', 'подробно']].map(([v, l]) => `<button type="button" class="${(s.blockStyle ?? 'brief') === v ? 'is-on' : ''}" data-stk-act="block-auto" data-k="blockStyle" data-v="${v}">${l}</button>`).join('')}
+                </div>
+                <div class="stk-hint">${icon('fa-circle-info')}${(s.blockStyle ?? 'brief') === 'full' ? 'Подробно: шкалы, цикл, объяснения и вкладки «Календарь» и «Древо» прямо в чате.' : 'Кратко: только то, что изменилось в этом ответе — фаза, события, состояние каждого. Всё подробно — в окне Stork.'}</div>
                 <div class="stk-sub">Что в инфоблоке</div>
                 <div class="stk-checks">
                     ${partCheck('user', esc(nameOf(people.user)))}
@@ -436,11 +458,36 @@ function renderSettings(state, view) {
             </label>
         </div>
         <div class="stk-card">
+            <div class="stk-card-title">${icon('fa-fire-flame-curved')}Близость</div>
+            ${toggle('intimacy', 'Режиссёр близости', s.readMode === 'analyzer' ? 'ведёт интимную сцену: темп, готовность, «до оргазма»; в тот же анализ ответа, без отдельного запроса' : 'работает только с анализом каждого ответа (вкладка «Чтение РП» выше)')}
+            ${toggle('intimacyBlock', 'Блок сцены в чате', 'появляется под инфоблоком Stork, когда начинается близость, и уходит после')}
+            ${s.readMode === 'analyzer' && s.intimacy ? `<label class="stk-field"><span>Модель для откровенных сцен</span>${sceneProfileSelect()}</label>
+            <div class="stk-hint">${icon('fa-circle-info')}Пока идёт сцена, анализ уходит сюда. Нужна, если модель анализа отказывается читать откровенное (Gemini часто так делает): тогда Stork читает ответ без режиссёра и предупреждает.</div>` : ''}
+        </div>
+        <div class="stk-card">
+            <div class="stk-card-title">${icon('fa-scale-balanced')}Реализм</div>
+            ${toggle('erectionDrops', 'Падение эрекции', 'алкоголь, стресс, недосып и болезнь могут ослабить эрекцию; выключи — и у него она не подводит, остальное остаётся как было')}
+            ${toggle('trackExes', 'Отслеживать бывших', 'бывшие партнёры попадают в древо; выключи — в древе только родственники')}
+        </div>
+        <div class="stk-card">
             <div class="stk-card-title">${icon('fa-bell')}Уведомления</div>
             ${toggle('toasts', 'Уведомления о событиях', 'начались месячные, задержка, схватки')}
         </div>
         <div class="stk-card">
             <div class="stk-card-title">${icon('fa-comment-dots')}Этот чат</div>
+            ${state.setupDone ? `<div class="stk-edit stk-time-edit" data-key="time">
+                <div class="stk-grid">
+                    <label class="stk-field"><span>Дата в истории сейчас</span><input class="text_pole" data-f="date" type="date" value="${esc(storyIsoDate(state))}"></label>
+                    <label class="stk-field"><span>Время в истории сейчас</span><input class="text_pole" data-f="time" type="time" value="${esc(clockText(state.clock.minutes))}"></label>
+                </div>
+                <div class="stk-actions"><button type="button" class="stk-btn is-primary" data-stk-act="time-save">${icon('fa-check')}Сохранить дату и время</button>
+                    ${state.dateSure ? '' : `<span class="stk-muted">${icon('fa-circle-info')}дата пока примерная</span>`}</div>
+            </div>
+            <label class="stk-field"><span>Шансы зачатия</span>
+                <select class="text_pole stk-chat-set" data-k="storyMode">
+                    ${Object.entries(STORY_MODES).map(([k, v]) => `<option value="${k}" ${(state.storyMode ?? 'realistic') === k ? 'selected' : ''}>${v.label}</option>`).join('')}
+                </select>
+            </label>` : ''}
             <div class="stk-actions">
                 <button type="button" class="stk-btn stk-edit-setup">${icon('fa-pen')}Изменить персонажей</button>
                 <button type="button" class="stk-btn stk-reread">${icon('fa-rotate')}Перечитать последний ответ</button>
@@ -574,12 +621,13 @@ export async function openStork({ tab } = {}) {
     // Settings
     $root.on('change', '.stk-set', function () {
         settings()[this.dataset.k] = this.type === 'checkbox' ? this.checked : this.value;
+        applySwitches();
         if (this.dataset.k === 'readProfile' || this.dataset.k === 'readMode') {
             logEvent('info', 'настройки', `${this.dataset.k === 'readMode' ? 'чтение РП' : 'анализ через'}: ${this.dataset.k === 'readMode' ? this.value : describeChoice(this.value)}`);
         }
         saveSettingsDebounced();
         // the connection and the log change nothing in the story: no chat save, only a redraw
-        if (['readProfile', 'debugPrompts', 'memoryReplies'].includes(this.dataset.k)) {
+        if (['readProfile', 'sceneProfile', 'debugPrompts', 'memoryReplies'].includes(this.dataset.k)) {
             if (!view.touched) render();
             return;
         }
@@ -610,6 +658,18 @@ export async function openStork({ tab } = {}) {
     $root.on('click', '.stk-reread', () => {
         if (rereadLast()) notify('Перечитываю последний ответ, это займёт столько же, сколько обычный анализ', { icon: 'fa-rotate', tone: 'accent', timeOut: 4000 });
         else notifyWarn('Перечитывать нечего: в этом чате ещё нет ответа бота, который Stork читает', { timeOut: 4000 });
+    });
+    $root.on('click', '.stk-enable-now', async function () {
+        $(this).prop('disabled', true).html(`${icon('fa-spinner fa-spin')}Читаю карточки…`);
+        const ok = await enableNow();
+        if (!ok && !currentState().setupDone) notifyWarn('Не получилось включить: посмотри журнал Stork в «Настройках»', { timeOut: 5000 });
+        render();
+    });
+    $root.on('change', '.stk-chat-set', function () {
+        const key = this.dataset.k;
+        const value = this.value;
+        updateCurrentState(state => { state[key] = value; });
+        notifyDone('Сохранено', { timeOut: 1500 });
     });
     $root.on('click', '.stk-disable-chat', () => {
         updateCurrentState(state => { state.chatOff = true; });

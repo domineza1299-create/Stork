@@ -6,11 +6,13 @@ import { trace } from './diag.js';
 import { installLogCapture, logEvent } from './log.js';
 import { ensureProfileChoice, forgetReplyCounts } from './connection.js';
 import {
-    activeIn, changed, currentState, currentView, getGenerationState, initSettings, MODULE, onReread, onRetry, onStateChange, processMessage,
+    activeIn, changed, currentState, currentView, getGenerationState, initSettings, MODULE, onEnableNow, onReread, onRetry, onStateChange, processMessage,
     processUserMessage, readStatus, refreshStatus, sameReply, setGenerationState, setReadFailed, setReading, setStatus, settings, similarSig,
     otherClock, skipBefore, stateBefore, statusText, storyLines, storyHash, storySig, storyText, updateCurrentState, VIEWS,
 } from './store.js';
 import { buildStatus, timelineText } from './engine.js';
+import { bedExcerpt, isTimeskip, memoryText, readingMode, sectionPrompt } from './intimacy.js';
+import { labelOf, members } from './family.js';
 import { analyzeCards, readCards } from './cards.js';
 import { hasMinor, setupFromAnalysis } from './setup.js';
 import { renderStatusBar } from './ui.js';
@@ -164,11 +166,13 @@ async function readReplyNow(index, { force = false, strict = false, reason = '' 
     // the reply before the user's message — context, so the analysis follows the scene, not one line of it
     const userAt = chat[index - 1]?.is_user ? index - 1 : null;
     const earlier = userAt !== null && chat[userAt - 1] && !chat[userAt - 1].is_user && !chat[userAt - 1].is_system ? chat[userAt - 1].mes : '';
+    const userText = userAt !== null ? chat[userAt].mes : '';
+    const userSkip = isTimeskip(userText);
+    const intim = intimacyRequest(before, [userText, message.mes], userSkip);
     setReading(index);
     try {
         ensureProfileChoice(settings(), saveSettingsDebounced);
-        const scene = await analyzeScene({
-            profileId: settings().readProfile,
+        const input = {
             reason: `${reason} (#${index}${swipe ? `, свайп ${swipe + 1}` : ''})`,
             // her button and a retry are asked for on purpose: they are not counted as repeats
             replyKey: force ? '' : `${index}:${swipe}`,
@@ -182,7 +186,29 @@ async function readReplyNow(index, { force = false, strict = false, reason = '' 
             userMessage: userAt !== null ? chat[userAt].mes : '',
             reply: message.mes,
             skipCounted: skipBefore(index) > 0,
-        });
+            intim,
+            familyKnown: familyLines(before),
+            trackExes: settings().trackExes !== false,
+            erectionDrops: settings().erectionDrops !== false,
+        };
+        const ask = (it, note = '') => analyzeScene({ ...input, intim: it, profileId: sceneProfile(before, it), reason: `${input.reason}${note}`, ...(note ? { replyKey: '' } : {}) });
+        let scene;
+        let director = !!intim?.full;
+        try {
+            scene = await ask(intim);
+        } catch (error) {
+            // the model's own filter refused the explicit scene: the rest of the tracker must not stop with it
+            if (!error?.filtered || !intim?.full) throw error;
+            trace(`ответ #${index}: фильтр модели не пропустил откровенную сцену — читаю без режиссёра`, 'warn');
+            filteredNotice();
+            scene = await ask({ full: false }, ', без режиссёра');
+            director = false;
+        }
+        if (intim) {
+            scene.user_skip = userSkip;
+            // the field forgotten by the model: the scene is judged without it, never left hanging
+            if (scene.closeness === undefined) scene.closeness = null;
+        }
         // another chat opened, the reply was swiped or deleted, or a newer reading of it started: this answer is not for what is there now
         const now = getContext().chat === chat ? chat[index] : null;
         if (!now || (now.swipe_id ?? 0) !== swipe || latestRead.get(index) !== mine) {
@@ -196,7 +222,8 @@ async function readReplyNow(index, { force = false, strict = false, reason = '' 
             trace(`ответ #${index}: текст заметно изменился, пока шёл анализ (другое расширение?): результат всё равно записан, повторного запроса нет`);
         }
         const result = processMessage(index, sceneToTag(scene), scene);
-        trace(`ответ #${index} прочитан: ${sceneToTag(scene)} · ${timeMove(before, stateBefore(index + 1), scene)}`);
+        const after = stateBefore(index + 1);
+        trace(`ответ #${index} прочитан: ${sceneToTag(scene)} · ${timeMove(before, after, scene)}${intim ? ` · близость: ${scene.closeness ?? '—'}${director ? ' (режиссёр)' : intim.full ? ' (режиссёр пропущен: фильтр модели)' : ''}${after.intim?.scene?.visible ? `, сцена идёт: она ${after.intim.scene.user.climax}%, он ${after.intim.scene.char.climax}%` : ''}` : ''}`);
         setReading(null);
         refreshStatus();
         announce(result?.events);
@@ -207,6 +234,47 @@ async function readReplyNow(index, { force = false, strict = false, reason = '' 
     } finally {
         if (readStatus().index === index) setReading(null);
     }
+}
+
+/** The profile a reading goes through: the scenes' own one while the director reads a scene, if she chose one. */
+function sceneProfile(before, intim) {
+    const s = settings();
+    return intim?.full && s.sceneProfile ? s.sceneProfile : s.readProfile;
+}
+
+let filteredWarned = 0;
+/** Once in a while, not every reply: the analysis model's filter refused an explicit scene. */
+function filteredNotice() {
+    if (Date.now() - filteredWarned < 30 * 60 * 1000) return;
+    filteredWarned = Date.now();
+    notifyWarn('Модель анализа не стала читать откровенную сцену (её фильтр). Время и цикл Stork записал, а режиссёр этот ответ пропустил. Выбери другую модель в «Настройки» → «Близость» → «Модель для откровенных сцен».', { timeOut: 15000 });
+}
+
+/**
+ * What the reading carries for the intimate scene: nothing when the director is off (or a minor is in the chat),
+ * the one word "closeness" usually, the whole section while a scene is near or going on or the text hints at one.
+ */
+function intimacyRequest(before, texts, userSkip) {
+    const s = settings();
+    if (!s.intimacy || before.minorBlocked) return null;
+    const intim = before.intim ?? {};
+    const full = readingMode(before, texts) === 'full';
+    if (!full) return { full: false };
+    const kinks = Array.isArray(intim.kinks) ? intim.kinks : undefined;
+    const profile = intim.profile ?? undefined;
+    const cards = kinks && profile ? '' : (() => {
+        const c = readCards();
+        return [`{{char}} (${c.charName}):\n${bedExcerpt(c.charText, 3500)}`, `{{user}} (${c.userName}):\n${bedExcerpt(c.userText, 1800)}`].join('\n\n');
+    })();
+    return {
+        full: true,
+        section: sectionPrompt({ scene: intim.scene, memory: memoryText(intim.history, 1200), kinks, profile, cards, voice: intim.voice ?? null, erectionDrops: s.erectionDrops !== false, userSkip }),
+    };
+}
+
+/** Who is on the family tree, for the reading: so the same relative is not reported again under another name. */
+function familyLines(state) {
+    return members(state).filter(p => !p.fixed).slice(0, 30).map(p => `${p.name} — ${labelOf(state, p.id) || 'relative'}`).join('\n');
 }
 
 const hhmm = minutes => `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
@@ -237,9 +305,12 @@ let enabling = null;
  * in this chat. Never in a chat where she turned it off, never before the first real reply, never with a minor.
  * @returns {Promise<boolean>} Stork is on in this chat now
  */
-async function autoEnable(index) {
+async function autoEnable(index, { byHand = false } = {}) {
     const before = stateBefore(index);
-    if (!settings().enabled || before.setupDone || before.chatOff || before.minorBlocked || isOpening(index)) return false;
+    // her own first message counts (Stork starts before the bot answers it); the greeting and its swipes never do
+    const fromHer = !!getContext().chat?.[index]?.is_user;
+    if (!settings().enabled || before.setupDone || before.chatOff || before.minorBlocked) return false;
+    if (isOpening(index) && !fromHer && !byHand) return false;
     if (enabling) return enabling;
     enabling = (async () => {
         setReading(index);
@@ -259,9 +330,14 @@ async function autoEnable(index) {
             return false;
         }
         updateCurrentState(state => setupFromAnalysis(state, analysis, cards));
-        notify('Stork включился в этом чате: цикл и состояние ведутся по сюжету. Нажми, чтобы поправить.', { icon: 'fa-dove', tone: 'pink', timeOut: 7000, onClick: () => openStork() });
+        const now = currentState();
+        trace(`Stork включился: в истории ${dateLabel(now, now.clock.day, { day: 'numeric', month: 'long', year: 'numeric' })}, ${hhmm(now.clock.minutes)}${now.dateSure ? '' : ' (дата примерная)'}`);
+        notify(`Stork включился в этом чате: в истории ${dateLabel(now, now.clock.day, { day: 'numeric', month: 'long' })}, ${hhmm(now.clock.minutes)}. Поправить дату и время — в окне Stork → «Настройки».`, { icon: 'fa-dove', tone: 'pink', timeOut: 8000, onClick: () => openStork({ tab: 'settings' }) });
         return true;
-    })().finally(() => { enabling = null; });
+    })().finally(() => {
+        enabling = null;
+        if (readStatus().index === index) setReading(null);
+    });
     return enabling;
 }
 
@@ -269,8 +345,16 @@ async function autoEnable(index) {
  * Her message, before the bot answers it: a time skip it opens with moves the story right now,
  * so the bot already writes from the right day.
  */
-function onMessageSent(messageId) {
+async function onMessageSent(messageId) {
     const index = Number(messageId);
+    // a chat where Stork never started: it starts now, on her message, so the bot's first reply already knows
+    // the bodies and the story's time (from the greeting's header). The bot waits for it, at most READ_WAIT_MS.
+    const message = getContext().chat?.[index];
+    const pending = stateBefore(index);
+    if (message?.is_user && settings().enabled && !pending.setupDone && !pending.chatOff && !pending.minorBlocked) {
+        const run = autoEnable(index);
+        await Promise.race([run, new Promise(resolve => setTimeout(resolve, READ_WAIT_MS))]);
+    }
     if (!activeIn(stateBefore(index))) return;
     const result = processUserMessage(index);
     refreshStatus();
@@ -281,10 +365,17 @@ function onMessageSent(messageId) {
     announce(result.events);
 }
 
+/** «Включить сейчас» in the window: the same automatic start as on her first message, by hand. */
+export function enableNow() {
+    const chat = getContext().chat ?? [];
+    return autoEnable(Math.max(0, chat.length - 1), { byHand: true });
+}
+
 /**
  * Read the latest reply anew, by hand: her message before it first (a time skip in it), then the reply itself.
  * @returns {boolean} there was a reply to read
  */
+
 export function rereadLatest() {
     const chat = getContext().chat ?? [];
     let index = chat.length - 1;
@@ -459,6 +550,7 @@ jQuery(() => {
     onStateChange(syncDrawer);
     onRetry(retry);
     onReread(rereadLatest);
+    onEnableNow(enableNow);
     watchChat();
 
     eventSource.on(event_types.GENERATION_AFTER_COMMANDS, onGenerationAfterCommands);

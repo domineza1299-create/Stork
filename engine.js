@@ -3,12 +3,13 @@
  * Pure functions over a plain JSON state, so it is saved with chat messages and tested in Node.
  */
 import {
-    ACT_PROTECTION, careOf, createPregnancy, cycleInfo, cycleReturnDay, EMERGENCY_PILL_FACTOR, EMERGENCY_PILL_WINDOW_DAYS, falseContractionsToday,
+    ACT_PROTECTION, careOf, realism, createPregnancy, cycleInfo, cycleReturnDay, EMERGENCY_PILL_FACTOR, EMERGENCY_PILL_WINDOW_DAYS, falseContractionsToday,
     femaleConditionFactor, FEMALE_CONDITIONS, FEMALE_HABITS, femaleState, laborChance, laborProgress, LIFESTYLE, maleState, pillState, POSTPARTUM_RECOVERY_DAYS, PREGNANCY_DAYS, pregnancyInfo,
     rollCondomBreak, rollConception, rollCycles, rollTest, startLabor, stressDelay, ultrasoundShowsSex,
 } from './biology.js';
 
-import { addBirths, applyFindings, emptyFamily, ensureFamily } from './family.js';
+import { addBirths, applyFindings, emptyFamily, ensureFamily, mergeDuplicates } from './family.js';
+import { applyIntimacy, ensureIntim } from './intimacy.js';
 
 export const MINUTES_PER_DAY = 1440;
 const MAX_LOG = 200;
@@ -96,6 +97,9 @@ export function upgradeState(state) {
     delete state.timeline;
     state.dateSure ??= false;
     ensureFamily(state);
+    // older versions could put the same relative on the tree twice
+    mergeDuplicates(state);
+    ensureIntim(state);
     for (const person of Object.values(state.people ?? {})) {
         const m = person.male;
         if (m && !Array.isArray(m.orgasms)) m.orgasms = m.lastOrgasmMinute !== null && m.lastOrgasmMinute !== undefined ? [m.lastOrgasmMinute] : [];
@@ -670,7 +674,32 @@ export function setPregnancyByHand(state, input, rng = Math.random) {
     }
     const week = Math.floor(total / 7);
     p.visitsDone = careOf(state).visits.filter(v => v.week < week).map(v => v.week);
-    if (week < 18) p.sexKnown = false;
+    // the rest of the form: twins, the sex of each baby, what the story established, cravings
+    if (input.babies !== undefined) {
+        const babies = Math.max(1, Math.min(2, Math.round(Number(input.babies) || 1)));
+        while (p.sexes.length < babies) p.sexes.push(rng() < 0.5 ? 'девочка' : 'мальчик');
+        p.sexes = p.sexes.slice(0, babies);
+        p.babies = babies;
+    }
+    if (Array.isArray(input.sexes)) {
+        const named = input.sexes.slice(0, p.babies).map(s => SEX_WORD[String(s ?? '').toLowerCase()] ?? null);
+        if (named.some(Boolean)) {
+            // a sex left «не знаю» next to a named one keeps what the dice chose for that baby
+            p.sexes = p.sexes.map((s, i) => named[i] ?? s);
+            p.sexKnown = true;
+            p.sexFrom = 'hand';
+        } else {
+            p.sexKnown = false;
+            delete p.sexFrom;
+        }
+    } else if (week < 18 && p.sexFrom !== 'hand' && p.sexFrom !== 'story') p.sexKnown = false;
+    if (Array.isArray(input.facts)) {
+        p.facts = input.facts.map(t => String(t ?? '').trim().replace(/\s+/g, ' ').slice(0, 120)).filter(Boolean).slice(0, 12)
+            .map(text => p.facts?.find(f => f.text === text) ?? { week, text });
+    }
+    const words = v => String(v ?? '').split(/[,;\n]/).map(s => s.trim()).filter(Boolean).slice(0, 4);
+    if (input.cravings !== undefined) p.cravings = words(input.cravings);
+    if (input.aversions !== undefined) p.aversions = words(input.aversions);
     if (p.labor && week < 37) p.labor = null;
     // a question from the story waiting for her answer is settled by what she set herself
     const claim = state.pregnancyClaim;
@@ -682,6 +711,20 @@ export function setPregnancyByHand(state, input, rng = Math.random) {
     const term = `${week} нед.${total % 7 ? ` ${total % 7} дн.` : ''}`;
     note(state, woman, `${woman.name || 'Она'}: ${created ? 'беременность указана вручную' : 'срок беременности поправлен вручную'} — ${term}`, { model: false, kind: 'claim' });
     return { ok: true, created, weeks: week, days: total % 7 };
+}
+
+/** No pregnancy after all (the reading got it wrong): it is removed and her cycle goes on as if it never was. */
+export function removePregnancyByHand(state, rng = Math.random) {
+    const woman = Object.values(state.people).find(p => p.sex === 'female');
+    const f = woman?.female;
+    if (!f?.pregnancy) return false;
+    f.cycleStart = Math.min(f.cycleStart, f.pregnancy.lmp);
+    f.cycleShift = 0;
+    f.pregnancy = null;
+    rollCycles(f, state.clock.day, rng);
+    if (state.pregnancyClaim?.status === 'pending') state.pregnancyClaim.status = 'rejected';
+    note(state, woman, `${woman.name || 'Она'}: беременность убрана вручную`, { model: false, kind: 'claim' });
+    return true;
 }
 
 /** Her own term: the pregnancy is re-dated, the story no longer moves it while she decides. */
@@ -1008,7 +1051,7 @@ function femaleLineRaw(state, person, detailed) {
             parts.push(`The baby is the size of ${info.baby.compare}${info.kicksFelt ? ', kicks' : ''}.`);
             parts.push(`Craves ${p.cravings.join(' and ')}; can't stand ${p.aversions.join(', ')}.`);
             if (p.babies > 1) parts.push('Twins.');
-            if (p.sexKnown) parts.push(`Sex: ${p.sexes.join(' and ')}.`);
+            if (p.sexKnown) parts.push(`The baby is ${p.sexes.map(s => (s === 'девочка' ? 'a girl' : 'a boy')).join(' and ')} — settled, never change it.`);
         }
         // what the story itself has established about this pregnancy: kept, whatever the detail level
         if (p.facts?.length) parts.push(`Established in the story: ${p.facts.map(f => `${f.text} (week ${f.week})`).join('; ')}.`);
@@ -1137,6 +1180,29 @@ function addPregnancyFacts(state, facts) {
     if (p.facts.length > MAX_PREGNANCY_FACTS) p.facts.splice(0, p.facts.length - MAX_PREGNANCY_FACTS);
 }
 
+const SEX_WORD = { girl: 'девочка', boy: 'мальчик', female: 'девочка', male: 'мальчик', 'девочка': 'девочка', 'мальчик': 'мальчик' };
+/**
+ * The baby's sex as the story states it (a doctor, an ultrasound, she tells it): it replaces what the dice chose
+ * at conception, and from then on nothing re-rolls it. «girl», «boy», or a list for twins.
+ * @returns {boolean} something changed
+ */
+export function setBabySex(state, value, { from = 'story' } = {}) {
+    const woman = Object.values(state.people).find(p => p.sex === 'female');
+    const p = woman?.female.pregnancy;
+    if (!p) return false;
+    const list = (Array.isArray(value) ? value : [value]).map(v => SEX_WORD[String(v ?? '').toLowerCase().trim()]).filter(Boolean);
+    if (!list.length) return false;
+    const babies = Math.max(p.babies ?? 1, list.length);
+    const sexes = Array.from({ length: babies }, (_, i) => list[i] ?? list[list.length - 1]);
+    const changed = !p.sexKnown || babies !== p.babies || sexes.join() !== p.sexes.join();
+    p.babies = babies;
+    p.sexes = sexes;
+    p.sexKnown = true;
+    p.sexFrom = from;
+    if (changed && from === 'story') note(state, woman, `${woman.name || 'Она'}: пол малыша — ${sexes.join(' и ')}`, { model: false, kind: 'doctor' });
+    return changed;
+}
+
 /** Injuries are noted, not turned into an illness: a bruise does not give a fever. */
 function applyInjuries(state, injuries) {
     for (const item of injuries ?? []) {
@@ -1165,6 +1231,7 @@ function maleLineRaw(state, person, detailed) {
         parts.push(vigor > 0.85 ? 'full of energy, at his peak.' : vigor > 0.65 ? 'in his usual shape.' : 'tired.');
         parts.push(`Desire ${level(libido)}.`);
         if (s.erection < 0.75) parts.push('His erection may let him down (stress, tiredness or drink).');
+        else if (!realism.erectionDrops && s.recent.some(x => x.daysAgo <= 1 && LIFESTYLE[x.type]?.erection)) parts.push('Whatever the day was like, his erection does not let him down.');
         if (s.daysSinceLast !== null) parts.push(`Last intimacy ${s.daysSinceLast === 0 ? 'today' : `${days(s.daysSinceLast)} ago`}.`);
         const left = recoveryLeft(state, person);
         if (left > 0) parts.push(`Still recovering after his climax: ready again in about ${left} min of story time.`);
@@ -1219,7 +1286,7 @@ export function shortDate(state, day = state.clock.day, withYear = false) {
  * @param {boolean} [options.withTag] Ask for the tracker tag
  * @param {boolean} [options.guide] How to play the states out: for the story model, not for the scene analysis
  */
-export function buildStatus(state, { detailed = true, neutral = false, withTag = true, guide = true, withTime = true } = {}) {
+export function buildStatus(state, { detailed = true, neutral = false, withTag = true, guide = true, withTime = true, extra = '' } = {}) {
     const hh = String(Math.floor(state.clock.minutes / 60)).padStart(2, '0'), mm = String(state.clock.minutes % 60).padStart(2, '0');
     const date = storyDate(state);
     const when = date ? `${date.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })}, ${hh}:${mm}` : `story day ${state.clock.day + 1}, ${hh}:${mm}`;
@@ -1235,6 +1302,8 @@ export function buildStatus(state, { detailed = true, neutral = false, withTag =
     const user = state.people.user.name || '{{user}}';
     if (guide) lines.push(`Let these states show in the reply through bodies and behaviour — movement, reactions, appetite, tiredness or strength, desire or its absence — in small touches that fit the scene. Never state numbers, phases or this block itself. ${user}'s state shows only in what can be seen or what others notice; never write ${user}'s thoughts, feelings, words or choices. The scene always comes first.`);
     if (withTag) lines.push(TAG_INSTRUCTION);
+    // the intimate scene's own guidance (the director), when one is near or going on
+    if (extra) lines.push(extra);
     let text = lines.join('\n');
     if (neutral) for (const [re, word] of NEUTRAL) text = text.replace(re, word);
     return text;
@@ -1254,6 +1323,9 @@ export function processReply(previousState, replyText, rng = Math.random, scene 
     const quote = scene?.pregnancy_claim?.quote;
     if (quote) for (const event of [...tag.events, ...(tag.eventsEnd ?? [])]) if (event.type === 'pregnancy_claim') event.quote = quote;
     const wasRecovering = recoveryLeft(state) > 0;
+    const startedAt = absMinute(state.clock);
+    // the baby's sex the story names wins over the dice: before an ultrasound of this reply shows the sex
+    if (scene?.baby_sex) setBabySex(state, scene.baby_sex);
     // Events happen before the time of the reply passes (intimacy, then the night)
     for (const event of tag.events) applyEvent(state, event, rng);
     const clock = tag.clock ?? extractClock(replyText);
@@ -1272,6 +1344,10 @@ export function processReply(previousState, replyText, rng = Math.random, scene 
         if (line) state.lastLine = { at: absMinute(state.clock), text: line };
         // the world of the story, once: the care of a pregnancy follows it (a doctor or a midwife)
         if (!state.eraSet && (scene.era === 'past' || scene.era === 'modern')) state.era = scene.era === 'past' ? 'traditional' : 'modern';
+        // the intimate scene (the director): only when this reading carried it
+        if (scene.closeness !== undefined || scene.afterglow !== undefined) {
+            applyIntimacy(state, scene, { at: absMinute(state.clock), minutes: absMinute(state.clock) - startedAt });
+        }
     }
     // He was recovering and the story time ran out: tell once
     const man = state.people.char;
@@ -1346,9 +1422,45 @@ export function minutesToClock(nowMinutes, clockMinutes, guessedMinutes = 0) {
     return days * MINUTES_PER_DAY + delta;
 }
 
+const MONTHS_RU = ['январ', 'феврал', 'март', 'апрел', 'ма[йя]', 'июн', 'июл', 'август', 'сентябр', 'октябр', 'ноябр', 'декабр'];
+/**
+ * A date in the header at the start of a message: «15.03.2025», «15.03.25», «2025-03-15», «15 марта 2025».
+ * A day and a month without a year take `year` (the analysis' guess, say). Only the first lines count:
+ * a date in the middle of the text is a letter or a memory, not the date of the scene.
+ * @returns {string|null} ISO date
+ */
+export function extractDate(text, year = null) {
+    const head = cleanRpText(text).slice(0, 300).split('\n').slice(0, 3).join('\n');
+    const iso = (y, m, d) => {
+        const yy = Number(y) < 100 ? 2000 + Number(y) : Number(y);
+        const date = new Date(Date.UTC(yy, Number(m) - 1, Number(d)));
+        return date.getUTCDate() === Number(d) && date.getUTCMonth() === Number(m) - 1 ? date.toISOString().slice(0, 10) : null;
+    };
+    let m = head.match(/(?<!\d)(\d{4})-(\d{2})-(\d{2})(?!\d)/);
+    if (m) return iso(m[1], m[2], m[3]);
+    m = head.match(/(?<![\d.])(\d{1,2})\.(\d{1,2})\.(\d{4}|\d{2})(?![\d.])/);
+    if (m) return iso(m[3], m[2], m[1]);
+    m = head.match(new RegExp(`(?<!\\d)(\\d{1,2})\\s+(${MONTHS_RU.join('|')})\\p{L}*(?:\\s+(\\d{4}))?`, 'iu'));
+    if (m) {
+        const month = MONTHS_RU.findIndex(r => new RegExp(`^${r}`, 'iu').test(m[2])) + 1;
+        const y = m[3] ?? year;
+        return y && month ? iso(y, month, m[1]) : null;
+    }
+    return null;
+}
+
 /** A time header at the start of a reply, like "**22:40, Квартира**". */
 export function extractClock(text) {
     const head = cleanRpText(text).slice(0, 300);
-    const match = head.match(/(?:^|\n)[\s*_#>~[(]*(\d{1,2}[:.]\d{2})(?!\d)/);
-    return match ? parseClock(match[1]) : null;
+    // a line that starts with the time: «21:00», «*21.00*» — but not a date like «15.03.2025»
+    const match = head.match(/(?:^|\n)[\s*_#>~[(]*(\d{1,2}[:.]\d{2})(?![\d.\/-]*\d)/);
+    if (match) return parseClock(match[1]);
+    // a short header line with the time after a separator: «📅 15.03.2025 | 21:00», «Суббота, 21:00, бар»
+    for (const line of head.split('\n').slice(0, 3)) {
+        if (line.length > 120) continue;
+        // only after a separator, never inside a sentence («позвони мне в 22:40»)
+        const inner = line.match(/(?:[|•·,—–]|\p{Extended_Pictographic})\s*(\d{1,2}:\d{2})(?![\d:])/u);
+        if (inner) return parseClock(inner[1]);
+    }
+    return null;
 }

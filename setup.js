@@ -3,8 +3,22 @@
  * with sensible defaults for what they don't say. Pure: no SillyTavern imports, tested in Node.
  */
 import { createPregnancy, perimenopause } from './biology.js';
-import { guessAge, parseClock } from './engine.js';
+import { extractClock, extractDate, guessAge, parseClock, setBabySex } from './engine.js';
 import { applyFindings } from './family.js';
+import { cleanKinks, ensureIntim } from './intimacy.js';
+
+/** The kinks of the card and the persona and how he talks: read once, for the intimate scenes. */
+function intimacyFromCards(state, a) {
+    const intim = ensureIntim(state);
+    const kinks = cleanKinks(a?.kinks);
+    if (kinks) intim.kinks = kinks;
+    const bed = a?.in_bed;
+    if (kinks && bed && typeof bed === 'object') {
+        const clip = (v, n) => (typeof v === 'string' && v.trim() && !/^null$/i.test(v.trim()) ? v.trim().slice(0, n) : null);
+        intim.profile = { char: clip(bed.char, 500), user: clip(bed.user, 300) };
+    }
+    if (typeof a?.voice === 'string' && a.voice.trim()) intim.voice = a.voice.trim().slice(0, 240);
+}
 
 export const ADULT_AGE = 18;
 const CONTRACEPTIONS = ['none', 'pill', 'ring', 'patch', 'injection', 'implant', 'iud', 'copper_iud'];
@@ -24,6 +38,7 @@ function pregnancyFromCards(f, day, u, rng) {
         const lmp = day - weeks * 7;
         f.pregnancy = createPregnancy({ lmp, conceptionDay: lmp + 14, twins: false, births: f.births, rng });
         f.pregnancy.knownBy = ['user', 'char'];
+        if (u.pregnancy_sex) f.pregnancy.cardSex = u.pregnancy_sex;
     }
 }
 
@@ -34,6 +49,27 @@ function pregnancyFromCards(f, day, u, rng) {
 function diagnosesFromCards(m, day, c) {
     if (c.varicocele) m.varicocele = true;
     if (c.vasectomy && (m.vasectomyDay === null || m.vasectomyDay === undefined)) m.vasectomyDay = day - 365;
+}
+
+/**
+ * The story's date and time set by hand: the clock shows them from now on, the cycle and everything else stay
+ * where they are (only the calendar date moves, and the hour of today).
+ * @param {{date?: string, time?: string}} v ISO date, «HH:MM»
+ * @returns {boolean} something was set
+ */
+export function setStoryClock(state, v) {
+    let done = false;
+    if (ISO_DATE.test(String(v.date ?? ''))) {
+        anchorStartDate(state, v.date);
+        state.dateSure = true;
+        done = true;
+    }
+    const time = parseClock(v.time);
+    if (time !== null) {
+        state.clock.minutes = time;
+        done = true;
+    }
+    return done;
 }
 
 /** Today in the story is this ISO date: story day 0 moves so that the current day lands on it. */
@@ -113,7 +149,14 @@ export function setupFromAnalysis(state, analysis, cards, rng = Math.random) {
         anchorStartDate(state, start.date);
         state.dateSure = start.date_guessed === false;
     }
-    const time = parseClock(start.time);
+    // the greeting's own header («**21:00, Ресторан…**», «15.03.2025») wins over a guess: it is written, not inferred
+    const opening = cards?.opening ?? '';
+    const headDate = extractDate(opening, String(start.date ?? '').slice(0, 4) || null);
+    if (headDate) {
+        anchorStartDate(state, headDate);
+        state.dateSure = true;
+    }
+    const time = extractClock(opening) ?? parseClock(start.time);
     if (time !== null) state.clock.minutes = time;
     if (a.story?.summary) state.storySummary = a.story.summary;
     // the world of the story: a doctor or a midwife looks after a pregnancy
@@ -123,6 +166,8 @@ export function setupFromAnalysis(state, analysis, cards, rng = Math.random) {
     }
     // relatives the cards name go onto the family tree
     applyFindings(state, a.family, 'card');
+    intimacyFromCards(state, a);
+    if (state.people.user.female.pregnancy?.cardSex) setBabySex(state, state.people.user.female.pregnancy.cardSex, { from: 'card' });
     state.setupDone = true;
     state.autoSetup = true;
     return state;
@@ -173,7 +218,7 @@ export function applySetupForm(state, v, analysis = null, rng = Math.random) {
 
     if (ISO_DATE.test(String(v.startDate ?? ''))) anchorStartDate(state, v.startDate);
     state.clock.minutes = parseClock(v.time) ?? state.clock.minutes;
-    state.storyMode = v.storyMode ?? 'realistic';
+    state.storyMode = v.storyMode ?? state.storyMode ?? 'realistic';
     // the world of the story: from her choice in the form, otherwise from the cards
     if (v.era === 'traditional' || v.era === 'modern') {
         state.era = v.era;
@@ -184,6 +229,7 @@ export function applySetupForm(state, v, analysis = null, rng = Math.random) {
     }
     if (analysis?.story?.summary) state.storySummary = analysis.story.summary;
     applyFindings(state, analysis?.family, 'card');
+    if (analysis) intimacyFromCards(state, analysis);
     state.setupDone = true;
     state.chatOff = false;
     return state;

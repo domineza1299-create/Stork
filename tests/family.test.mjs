@@ -82,3 +82,67 @@ describe('family tree', () => {
         assert.equal(state.family.links.length, 0);
     });
 });
+
+describe('the same relative is never added twice', async () => {
+    const { applyFindings, familyOptions, labelOf, layoutFamily, members, mergeDuplicates } = await import('../family.js');
+    const { createState: fresh } = await import('../engine.js');
+    const base = () => fresh({ userName: 'Нина', charName: 'Игорь' });
+    const relatives = state => members(state).filter(p => !p.fixed);
+
+    it('finds a name in another case and inside a relation word', () => {
+        const state = base();
+        applyFindings(state, [{ name: 'Галина Петровна', sex: 'female', relation: 'parent', of: 'char' }]);
+        applyFindings(state, [{ name: 'Галина', sex: 'female', relation: 'parent', of: 'char' }]);
+        applyFindings(state, [{ name: 'мама Галина', sex: 'female', relation: 'parent', of: 'char' }]);
+        applyFindings(state, [{ name: 'Тамара', sex: 'female', relation: 'grandparent', of: 'char' }, { name: 'Галину', relation: 'parent', of: 'char' }]);
+        assert.deepEqual(relatives(state).map(p => p.name), ['Галина Петровна', 'Тамара']);
+        applyFindings(state, [{ name: 'Anya', sex: 'female', relation: 'sibling', of: 'char' }]);
+        applyFindings(state, [{ name: 'Аня', sex: 'female', relation: 'sibling', of: 'char' }, { name: 'Ани', relation: 'sibling', of: 'char' }]);
+        assert.deepEqual(relatives(state).filter(p => p.name === 'Anya' || p.name === 'Аня').map(p => p.name), ['Аня'], 'the card\'s «Anya» is the story\'s «Аня»');
+    });
+
+    it('adds nobody without a name, and names a nameless one from older versions when the story does', () => {
+        const state = base();
+        applyFindings(state, [{ name: 'бабушка Игоря', sex: 'female', relation: 'grandparent', of: 'char' }, { name: null, relation: 'parent', of: 'char' }]);
+        assert.equal(relatives(state).length, 0, 'no «Бабушка», no «Родитель»');
+        // a nameless grandmother saved by an older version
+        state.family.people.p9 = { id: 'p9', name: 'Бабушка', sex: 'female' };
+        state.family.links.push({ a: 'p9', kind: 'grandparent', b: 'char' });
+        let rel = relatives(state);
+        assert.equal(labelOf(state, 'p9'), 'Игоря', 'under «Бабушка» only whose, not «бабушка Игоря» again');
+        applyFindings(state, [{ name: 'Зинаида', sex: 'female', relation: 'grandparent', of: 'char' }]);
+        rel = relatives(state);
+        assert.equal(rel.length, 1);
+        assert.equal(rel[0].name, 'Зинаида');
+        assert.equal(labelOf(state, rel[0].id), 'бабушка Игоря');
+    });
+
+    it('merges doubles saved by older versions', () => {
+        const state = base();
+        const fam = state.family;
+        fam.people = {
+            p1: { id: 'p1', name: 'Бабушка', sex: 'female' }, p2: { id: 'p2', name: 'Зинаида', sex: 'female' },
+            p3: { id: 'p3', name: 'Олег', sex: 'male' }, p4: { id: 'p4', name: 'Олега', sex: 'male', age: 40 },
+        };
+        fam.links = [{ a: 'p1', kind: 'grandparent', b: 'char' }, { a: 'p2', kind: 'grandparent', b: 'char' }, { a: 'p3', kind: 'sibling', b: 'char' }, { a: 'char', kind: 'sibling', b: 'p4' }];
+        fam.seq = 4;
+        assert.equal(mergeDuplicates(state), 2);
+        assert.deepEqual(relatives(state).map(p => [p.name, p.age ?? null]), [['Зинаида', null], ['Олег', 40]]);
+    });
+
+    it('leaves exes off the tree when they are not tracked', () => {
+        const state = base();
+        applyFindings(state, [{ name: 'char', relation: 'partner', of: 'user' }, { name: 'Вика', sex: 'female', relation: 'ex', of: 'char' }]);
+        familyOptions.trackExes = false;
+        try {
+            applyFindings(state, [{ name: 'Денис', sex: 'male', relation: 'ex', of: 'user' }]);
+            assert.ok(!relatives(state).some(p => p.name === 'Денис'), 'no new exes');
+            assert.ok(!layoutFamily(state).nodes.some(n => n.name === 'Вика'), 'the old ones are hidden');
+            applyFindings(state, [{ name: 'char', relation: 'ex', of: 'user' }]);
+            assert.ok(!state.family.links.some(l => ['user', 'char'].includes(l.a) && ['user', 'char'].includes(l.b)), 'a break-up removes their line');
+        } finally {
+            familyOptions.trackExes = true;
+        }
+        assert.ok(layoutFamily(state).nodes.some(n => n.name === 'Вика'), 'shown again when tracked');
+    });
+});

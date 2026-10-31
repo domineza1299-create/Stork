@@ -157,6 +157,22 @@ function countReply(source, replyKey, replyHash, reason) {
  * @param {string} request.choice the saved connection choice (profile id or 'current')
  * @returns {Promise<string>}
  */
+/** A request that hangs (the provider never answers) is given up after this long: the reading shows «Повторить». */
+const REQUEST_TIMEOUT_MS = 120000;
+
+/** The answer, or an error after `ms`; the request itself is aborted when the connection lets us. */
+function withTimeout(start, ms) {
+    const controller = typeof AbortController === 'function' ? new AbortController() : null;
+    let timer = null;
+    const timeout = new Promise((_, reject) => {
+        timer = setTimeout(() => {
+            controller?.abort();
+            reject(new Error(`модель не ответила за ${Math.round(ms / 1000)} с (подключение зависло?) — нажми «Повторить»`));
+        }, ms);
+    });
+    return Promise.race([start(controller?.signal), timeout]).finally(() => clearTimeout(timer));
+}
+
 export async function requestModel({ kind, reason, replyKey = '', replyHash = 0, system, prompt, maxTokens, choice }) {
     const source = { scene: 'анализ сцены', cards: 'чтение карточек', test: 'проверка подключения' }[kind] ?? kind;
     const started = performance.now();
@@ -166,8 +182,12 @@ export async function requestModel({ kind, reason, replyKey = '', replyHash = 0,
         connection = resolveConnection(choice);
     } catch (error) {
         logEvent('error', source, `${reason}: запрос не отправлен — ${error.message}`);
+        remember({ kind, outcome: 'no-connection', err: String(error.message).slice(0, 200) });
         throw error;
     }
+    lastSent = { kind, system, prompt, maxTokens, choice };
+    const who = connection.kind === 'profile' ? { api: connection.profile.api, model: connection.profile.model } : { api: 'main', model: connection.label.split(' · ').at(-1) };
+    const size = system.length + prompt.length;
     if (replyKey) countReply(source, replyKey, replyHash, reason);
     logEvent('request', source, `${reason} · ${connection.label} · ${system.length + prompt.length} знаков · лимит ${maxTokens} токенов`,
         full ? `SYSTEM:\n${system}\n\nUSER:\n${prompt}` : undefined);
@@ -182,13 +202,15 @@ export async function requestModel({ kind, reason, replyKey = '', replyHash = 0,
                 // text completion profiles need the messages turned into one prompt with the profile's instruct template
                 const built = ConnectionManagerRequestService.constructPrompt(messages, connection.id);
                 // extractData: false — the raw answer keeps finish_reason and usage, so a cut reply is seen as cut
-                result = await ConnectionManagerRequestService.sendRequest(connection.id, built, limit,
-                    { stream: false, extractData: false, includePreset: false, includeInstruct: false });
+                result = await withTimeout(signal => ConnectionManagerRequestService.sendRequest(connection.id, built, limit,
+                    { stream: false, signal, extractData: false, includePreset: false, includeInstruct: false }), REQUEST_TIMEOUT_MS);
             } else {
-                result = await getContext().generateRaw({ prompt, systemPrompt: system, responseLength: limit });
+                result = await withTimeout(() => getContext().generateRaw({ prompt, systemPrompt: system, responseLength: limit }), REQUEST_TIMEOUT_MS);
             }
         } catch (error) {
-            logEvent('error', source, `${Math.round(performance.now() - started)} мс · ${errorText(error)}`, error?.cause ?? error);
+            const ms = Math.round(performance.now() - started);
+            logEvent('error', source, `${ms} мс · ${errorText(error)}`, error?.cause ?? error);
+            remember({ kind, ...who, size, ms, outcome: /timeout|не ответила|abort/i.test(errorText(error)) ? 'timeout' : 'error', http: httpStatus(error), err: errorText(error).slice(0, 200) });
             throw error;
         }
         const read = readRaw(result);
@@ -210,16 +232,49 @@ export async function requestModel({ kind, reason, replyKey = '', replyHash = 0,
                 continue;
             }
             logEvent('error', source, `${ms} мс · ${why}${tokens}`, text || shape(result));
+            remember({ kind, ...who, size, ms, outcome: thinkingAteAll ? 'thinking' : 'cut', finish: read.finish, tokens: read.completionTokens, reasoning: read.reasoningTokens, limit });
             throw new TruncatedError(`${why}. Выбери в Stork модель без долгих размышлений (например, Flash) или ту, где размышления можно выключить`, { limit, ...read });
         }
         if (isEmptyText(text)) {
             logEvent('error', source, `${ms} мс · модель вернула пустой ответ${read.finish ? ` (finish_reason: ${read.finish})` : ''}${tokens}`, shape(result));
-            throw new Error('модель вернула пустой ответ');
+            const error = new Error('модель вернула пустой ответ');
+            // the provider's own filter refused the text (Gemini: PROHIBITED_CONTENT, SAFETY): the same text will not pass again
+            error.filtered = /content_filter|safety|prohibited|blocklist|recitation/i.test(`${read.finish ?? ''} ${JSON.stringify(result ?? '').slice(0, 2000)}`);
+            const native = result?.choices?.[0]?.native_finish_reason ?? result?.promptFeedback?.blockReason ?? null;
+            remember({ kind, ...who, size, ms, outcome: error.filtered ? 'filter' : 'empty', finish: read.finish, native: native ? String(native).slice(0, 40) : null, tokens: read.completionTokens, reasoning: read.reasoningTokens, providerError: result?.error ? String(result.error.message ?? result.error).slice(0, 200) : null });
+            throw error;
         }
         logEvent('response', source, `${ms} мс · ${text.length} знаков${tokens}${attempt > 1 ? ` · с ${attempt}-й попытки, лимит ${limit}` : ''}`, text);
+        remember({ kind, ...who, size, ms, outcome: 'ok', tokens: read.completionTokens, reasoning: read.reasoningTokens, attempt });
         return text;
     }
 }
+
+// #region What happened to the requests, for «Перестал отслеживать»
+
+const HISTORY_KEY = 'stork_requests';
+const HISTORY_MAX = 60;
+let lastSent = null;
+/** The last request as sent (memory only, never saved or reported): for checking another model by hand. */
+export const lastRequest = () => lastSent;
+
+/** Outcomes of the last requests: no text of the story, only how each went. Kept in this browser, survives a reload. */
+export function requestHistory() {
+    try { return JSON.parse(localStorage.getItem(HISTORY_KEY) ?? '[]'); } catch { return []; }
+}
+export function remember(entry) {
+    try {
+        const list = requestHistory();
+        list.push({ at: Date.now(), ...entry });
+        localStorage.setItem(HISTORY_KEY, JSON.stringify(list.slice(-HISTORY_MAX)));
+    } catch { /* private mode: the report has the log of this page only */ }
+}
+const httpStatus = error => {
+    const text = `${error?.status ?? ''} ${error?.message ?? ''} ${error?.cause?.message ?? ''}`;
+    return Number(error?.status) || Number(text.match(/\b(4\d\d|5\d\d)\b/)?.[1]) || null;
+};
+
+// #endregion
 
 /** The shape of what came back when it had no text: is there reasoning, a finish reason, an error. */
 function shape(value) {
