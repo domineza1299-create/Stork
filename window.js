@@ -7,9 +7,9 @@ import { callGenericPopup, POPUP_TYPE } from '../../../popup.js';
 import { cycleInfo, ERAS, FEMALE_CONDITIONS, FEMALE_CONTRACEPTION, MALE_FERTILITY, PERIOD_FLOW, STORY_MODES } from './biology.js';
 import { analyzeCards, guessAge, readCards } from './cards.js';
 import { connectionManagerOn, CURRENT, describeChoice, ensureProfileChoice, errorText, getProfiles, requestModel } from './connection.js';
-import { advanceTime, applyEvent, clockText, dateLabel, extractClock, extractDate, MINUTES_PER_DAY, parseClock, storyDate } from './engine.js';
+import { advanceTime, applyEvent, dateLabel, extractClock, extractDate, MINUTES_PER_DAY, parseClock, storyDate } from './engine.js';
 import { applySwitches, currentState, currentView, enableNow, onStateChange, refreshStatus, rereadLast, settings, updateCurrentState, VIEWS } from './store.js';
-import { ADULT_AGE, applySetupForm, setPeriodStart } from './setup.js';
+import { ADULT_AGE, applySetupForm, ruDate, setPeriodStart } from './setup.js';
 import { capitalize, esc, icon, nameOf, years } from './common.js';
 import { eventLook, notify, notifyDone, notifyWarn } from './notify.js';
 import { downloadReport, downloadStoppedReport, stoppedDiagnosis } from './diag.js';
@@ -223,8 +223,8 @@ function renderSetup(state, view) {
         <div class="stk-card">
             <div class="stk-card-title">${icon('fa-clock')}История</div>
             <div class="stk-grid">
-                <label class="stk-field"><span>Дата в истории сейчас</span><input class="text_pole stk-story" data-k="startDate" type="date" value="${esc(extractDate(readCards().opening, String(pre?.start?.date ?? '').slice(0, 4) || null) ?? (/^\d{4}-\d{2}-\d{2}$/.test(pre?.start?.date ?? '') ? pre.start.date : storyIsoDate(state)))}"></label>
-                <label class="stk-field"><span>Время в истории сейчас</span><input class="text_pole stk-story" data-k="time" type="time" value="${esc(startTime)}"></label>
+                <label class="stk-field"><span>Дата в истории сейчас</span><input class="text_pole stk-story" data-k="startDate" type="text" inputmode="numeric" maxlength="10" placeholder="15.03.2025" value="${esc(ruDate(extractDate(readCards().opening, String(pre?.start?.date ?? '').slice(0, 4) || null) ?? (/^\d{4}-\d{2}-\d{2}$/.test(pre?.start?.date ?? '') ? pre.start.date : storyIsoDate(state))))}"></label>
+                <label class="stk-field"><span>Время в истории сейчас</span><input class="text_pole stk-story" data-k="time" type="text" inputmode="numeric" maxlength="5" placeholder="21:00" value="${esc(startTime)}"></label>
             </div>
         </div>
         ${minors.length
@@ -475,15 +475,7 @@ function renderSettings(state, view) {
         </div>
         <div class="stk-card">
             <div class="stk-card-title">${icon('fa-comment-dots')}Этот чат</div>
-            ${state.setupDone ? `<div class="stk-edit stk-time-edit" data-key="time">
-                <div class="stk-grid">
-                    <label class="stk-field"><span>Дата в истории сейчас</span><input class="text_pole" data-f="date" type="date" value="${esc(storyIsoDate(state))}"></label>
-                    <label class="stk-field"><span>Время в истории сейчас</span><input class="text_pole" data-f="time" type="time" value="${esc(clockText(state.clock.minutes))}"></label>
-                </div>
-                <div class="stk-actions"><button type="button" class="stk-btn is-primary" data-stk-act="time-save">${icon('fa-check')}Сохранить дату и время</button>
-                    ${state.dateSure ? '' : `<span class="stk-muted">${icon('fa-circle-info')}дата пока примерная</span>`}</div>
-            </div>
-            <label class="stk-field"><span>Шансы зачатия</span>
+            ${state.setupDone ? `<label class="stk-field"><span>Шансы зачатия</span>
                 <select class="text_pole stk-chat-set" data-k="storyMode">
                     ${Object.entries(STORY_MODES).map(([k, v]) => `<option value="${k}" ${(state.storyMode ?? 'realistic') === k ? 'selected' : ''}>${v.label}</option>`).join('')}
                 </select>

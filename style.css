@@ -3470,7 +3470,14 @@ div.stk-log-row {
 .stk-preg-form:has([data-f="babies"] option[value="1"]:checked) .is-twin { display: none; }
 .stk-preg-form textarea { resize: vertical; min-height: 3.5em; }
 .stk-btn.is-danger { color: var(--stk-warm); }
-.stk-time-edit { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+/* the time and the date typed in place of the clock */
+.stk-clock.stk-time-edit { flex-direction: column; align-items: stretch; gap: 4px; }
+.stk-time-fields { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.stk-time-fields .text_pole { margin: 0; font-variant-numeric: tabular-nums; }
+.stk-time-in { width: 5.2em; font-size: 1.15em; font-weight: 600; text-align: center; }
+.stk-date-in { width: 8.5em; text-align: center; }
+.stk-time-edit .stk-muted { font-size: 0.82em; }
+.stk-clock > div:first-child .stk-pen { align-self: center; }
 
 /* ═══ The scene, reworked: readiness and «до оргазма» apart, the pose with its minutes, risks, the place ═══ */
 .stk-ag-nums {

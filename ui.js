@@ -7,7 +7,7 @@ import { saveSettingsDebounced } from '../../../../script.js';
 import { careOf, cycleInfo, FEMALE_CONTRACEPTION, femaleState, laborProgress, pillState, pregnancyInfo } from './biology.js';
 import { absMinute, acceptPregnancyClaim, clockText, editPregnancyClaim, liveNow, maleSnapshot, maleVigor, recoveryLeft, rejectPregnancyClaim, removePregnancyByHand, setPregnancyByHand, shortDate, timeLabel, withLive } from './engine.js';
 import { activeIn, changed, currentState, readStatus, refreshStatus, retryRead, settings, updateCurrentState, VIEWS } from './store.js';
-import { applyPersonEdit, setPeriodStart, setStoryClock } from './setup.js';
+import { applyPersonEdit, parseStoryDate, parseTypedClock, setPeriodStart, setStoryClock } from './setup.js';
 import {
     agoWord, avatarUrl, babyWeight, capitalize, claimCard, clamp01, cycleFields, cycleStrip, esc, femaleLevels, femaleTraits, icon, initials, irregularityWord,
     ACT_LABEL, KIND_ICON, knowsPregnancy, levelWord, maleLevels, nameOf, nextInCycle, personFields, pregnancyLibidoWhy, riskyLately,
@@ -632,15 +632,25 @@ export function handleAction(target, view, rerender) {
             view.pregRemove = false;
             notify('Беременность убрана, цикл идёт дальше', { icon: 'fa-rotate-left', tone: 'calm', timeOut: 3500 });
             break;
+        case 'time-edit': view.timeEdit = true; break;
+        case 'time-cancel': view.timeEdit = false; break;
         case 'time-save': {
             const v = values();
+            // both as typed; a field left as it was changes nothing, a wrong one stops the save
+            const badTime = String(v.time ?? '').trim() && parseTypedClock(v.time) === null;
+            const badDate = String(v.date ?? '').trim() && !parseStoryDate(v.date);
+            if (badTime || badDate) {
+                notifyWarn(badTime ? 'Время так: 21:00' : 'Дата так: 15.03.2025', { timeOut: 3000 });
+                return true;
+            }
             let ok = false;
             updateCurrentState(state => { ok = setStoryClock(state, v); });
             if (!ok) {
-                notifyWarn('Укажи дату или время', { timeOut: 2500 });
+                notifyWarn('Впиши время или дату', { timeOut: 2500 });
                 return true;
             }
-            notifyDone(`Теперь в истории ${v.time || ''} ${v.date ? v.date.split('-').reverse().join('.') : ''}`.replace(/\s+/g, ' ').trim(), { icon: 'fa-clock', timeOut: 3000 });
+            view.timeEdit = false;
+            notifyDone(`Теперь в истории ${v.time || ''} ${v.date || ''}`.replace(/\s+/g, ' ').trim(), { icon: 'fa-clock', timeOut: 3000 });
             break;
         }
         case 'preg-save': {
@@ -701,6 +711,13 @@ export function handleAction(target, view, rerender) {
 
 /** Enter or Space on a panel head works like a click (the heads are not buttons: a pencil sits inside). */
 export function onKeyActivate(event) {
+    // the typed time and date: Enter saves, Escape closes
+    const timeForm = event.target?.closest?.('.stk-time-edit');
+    if (timeForm && event.target.tagName === 'INPUT' && (event.key === 'Enter' || event.key === 'Escape')) {
+        event.preventDefault();
+        timeForm.querySelector(`[data-stk-act="${event.key === 'Enter' ? 'time-save' : 'time-cancel'}"]`)?.click();
+        return;
+    }
     if (event.key !== 'Enter' && event.key !== ' ') return;
     const el = event.target;
     if (el?.getAttribute?.('role') !== 'button' || !el.dataset?.stkAct) return;

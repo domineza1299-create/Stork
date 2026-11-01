@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { advanceTime, buildStatus, createState, extractDate, MINUTES_PER_DAY, processReply, removePregnancyByHand, sceneToTag, setBabySex, setPregnancyByHand } from '../engine.js';
-import { setStoryClock, setupFromAnalysis } from '../setup.js';
+import { parseStoryDate, parseTypedClock, setStoryClock, setupFromAnalysis } from '../setup.js';
 
 function couple() {
     const state = createState({ userName: 'Даша', charName: 'Лёша', startDate: '2026-01-01' });
@@ -98,5 +98,33 @@ describe('the whole pregnancy by hand', () => {
         removePregnancyByHand(state, () => 0.5);
         assert.equal(preg(state), null);
         assert.match(buildStatus(state), /Даша \(26\): cycle day/);
+    });
+});
+
+describe('the date and time as she types them', () => {
+    it('reads the usual ways of writing a date and refuses a day that does not exist', () => {
+        assert.equal(parseStoryDate('15.03.2025'), '2025-03-15');
+        assert.equal(parseStoryDate('5.3.25'), '2025-03-05');
+        assert.equal(parseStoryDate('15/03/2025'), '2025-03-15');
+        assert.equal(parseStoryDate('2025-03-15'), '2025-03-15');
+        assert.equal(parseStoryDate('31.02.2025'), null);
+        assert.equal(parseStoryDate('завтра'), null);
+    });
+
+    it('reads the time with or without a colon', () => {
+        assert.equal(parseTypedClock('21:00'), 21 * 60);
+        assert.equal(parseTypedClock('9.05'), 9 * 60 + 5);
+        assert.equal(parseTypedClock('2130'), 21 * 60 + 30);
+        assert.equal(parseTypedClock('21'), 21 * 60);
+        assert.equal(parseTypedClock('25:00'), null);
+    });
+
+    it('sets the story clock from typed values', () => {
+        const state = couple();
+        assert.equal(setStoryClock(state, { date: '09.05.2026', time: '7:30' }), true);
+        assert.equal(state.clock.minutes, 7 * 60 + 30);
+        const today = new Date(`${state.startDate}T12:00:00Z`);
+        today.setUTCDate(today.getUTCDate() + state.clock.day);
+        assert.equal(today.toISOString().slice(0, 10), '2026-05-09');
     });
 });

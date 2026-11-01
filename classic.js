@@ -174,11 +174,27 @@ export function sharedCard(state) {
     </div>`;
 }
 
+/** The time and the date typed in place of the clock: «21:00» and «15.03.2025». */
+function clockForm(state) {
+    const d = storyDate(state);
+    const pad = n => String(n).padStart(2, '0');
+    const date = d ? `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}` : '';
+    return `<div class="stk-clock stk-edit stk-time-edit">
+        <div class="stk-time-fields">
+            <input class="text_pole stk-time-in" data-f="time" type="text" inputmode="numeric" maxlength="5" placeholder="21:00" value="${esc(clockText(state.clock.minutes))}" aria-label="Время, чч:мм">
+            <input class="text_pole stk-date-in" data-f="date" type="text" inputmode="numeric" maxlength="10" placeholder="15.03.2025" value="${esc(date)}" aria-label="Дата, дд.мм.гггг">
+            <button type="button" class="stk-icon-btn is-primary" data-stk-act="time-save" title="Сохранить" aria-label="Сохранить">${icon('fa-check')}</button>
+            <button type="button" class="stk-icon-btn" data-stk-act="time-cancel" title="Отмена" aria-label="Отмена">${icon('fa-xmark')}</button>
+        </div>
+        <span class="stk-muted">время чч:мм, дата дд.мм.гггг · Enter — сохранить</span>
+    </div>`;
+}
+
 /** Both of them side by side (one under the other on a phone), then what they share. */
 export function renderNow(state, view = {}) {
     const weekday = storyDate(state)?.toLocaleDateString('ru-RU', { weekday: 'long' }) ?? '';
     return `
-        <div class="stk-clock"><div><b class="stk-clock-time">${clockText(state.clock.minutes)}</b><span>${esc(shortDate(state, state.clock.day, true))}</span></div><span class="stk-muted">${esc([weekday, timeLabel(state.clock.minutes), state.dateSure ? '' : 'дата пока примерная'].filter(Boolean).join(' · '))}</span></div>
+        ${view.timeEdit ? clockForm(state) : `<div class="stk-clock"><div><b class="stk-clock-time">${clockText(state.clock.minutes)}</b><span>${esc(shortDate(state, state.clock.day, true))}</span>${state.setupDone ? `<button type="button" class="stk-pen" data-stk-act="time-edit" title="Поправить время и дату" aria-label="Поправить время и дату">${icon('fa-pen')}</button>` : ''}</div><span class="stk-muted">${esc([weekday, timeLabel(state.clock.minutes), state.dateSure ? '' : 'дата пока примерная'].filter(Boolean).join(' · '))}</span></div>`}
         ${readingLine()}
         ${claimCard(state)}
         <div class="stk-duo">

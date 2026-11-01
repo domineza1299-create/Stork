@@ -52,19 +52,50 @@ function diagnosesFromCards(m, day, c) {
 }
 
 /**
+ * A date as she types it: «15.03.2025», «15.3.25», «15/03/2025», «2025-03-15». A day that does not exist is null.
+ * @returns {string|null} ISO
+ */
+export function parseStoryDate(text) {
+    const t = String(text ?? '').trim();
+    let y, m, d;
+    let match = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+    if (match) [, y, m, d] = match.map(Number);
+    else if ((match = t.match(/^(\d{1,2})[./\-\s](\d{1,2})[./\-\s](\d{2}|\d{4})$/))) {
+        [, d, m, y] = match.map(Number);
+        if (y < 100) y += 2000;
+    } else return null;
+    const date = new Date(Date.UTC(y, m - 1, d));
+    if (date.getUTCFullYear() !== y || date.getUTCMonth() !== m - 1 || date.getUTCDate() !== d) return null;
+    return date.toISOString().slice(0, 10);
+}
+
+/** «2025-03-15» → «15.03.2025», for the typed fields. */
+export const ruDate = iso => (ISO_DATE.test(String(iso ?? '')) ? iso.split('-').reverse().join('.') : '');
+
+/** «21:00», «21.00», «2100», «9:05» → minutes of the day; the hour alone («21») is the full hour. */
+export function parseTypedClock(text) {
+    const t = String(text ?? '').trim().replace(/\s+/g, '');
+    const m = t.match(/^(\d{1,2})(?:[:.,]?(\d{2}))?$/);
+    if (!m) return null;
+    const h = Number(m[1]), min = Number(m[2] ?? 0);
+    return h < 24 && min < 60 ? h * 60 + min : null;
+}
+
+/**
  * The story's date and time set by hand: the clock shows them from now on, the cycle and everything else stay
  * where they are (only the calendar date moves, and the hour of today).
- * @param {{date?: string, time?: string}} v ISO date, «HH:MM»
+ * @param {{date?: string, time?: string}} v as typed: «15.03.2025» (or ISO), «21:00»
  * @returns {boolean} something was set
  */
 export function setStoryClock(state, v) {
     let done = false;
-    if (ISO_DATE.test(String(v.date ?? ''))) {
-        anchorStartDate(state, v.date);
+    const iso = parseStoryDate(v.date);
+    if (iso) {
+        anchorStartDate(state, iso);
         state.dateSure = true;
         done = true;
     }
-    const time = parseClock(v.time);
+    const time = parseTypedClock(v.time);
     if (time !== null) {
         state.clock.minutes = time;
         done = true;
@@ -216,8 +247,9 @@ export function applySetupForm(state, v, analysis = null, rng = Math.random) {
     m.drinker = !!v.drinker;
     diagnosesFromCards(m, day, analysis?.char ?? {});
 
-    if (ISO_DATE.test(String(v.startDate ?? ''))) anchorStartDate(state, v.startDate);
-    state.clock.minutes = parseClock(v.time) ?? state.clock.minutes;
+    const startIso = parseStoryDate(v.startDate);
+    if (startIso) anchorStartDate(state, startIso);
+    state.clock.minutes = parseTypedClock(v.time) ?? state.clock.minutes;
     state.storyMode = v.storyMode ?? state.storyMode ?? 'realistic';
     // the world of the story: from her choice in the form, otherwise from the cards
     if (v.era === 'traditional' || v.era === 'modern') {
