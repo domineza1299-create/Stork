@@ -19,7 +19,7 @@ jobs:
       - name: Apply reviewed beta fixes
         run: python tools/apply_beta_fixes.py
       - name: Run Stork tests
-        run: node --test tests/
+        run: node --test tests/*.test.mjs
       - name: Commit tested beta changes
         run: |
           if git diff --quiet; then
