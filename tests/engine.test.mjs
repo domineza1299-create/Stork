@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-    advanceTime, applyEvent, buildStatus, createState, detectHints, parseDuration, parseTag, processReply, sceneToTag, stripTag,
+    advanceTime, applyEvent, buildStatus, createState, detectHints, localIsoDate, parseDuration, parseTag, partOf, processReply, sceneToTag, stripTag,
 } from '../engine.js';
 
 const seq = (...values) => () => (values.length ? values.shift() : 0.5);
@@ -16,6 +16,20 @@ function couple(over = {}) {
     Object.assign(state.people.user.female, over);
     return state;
 }
+
+describe('calendar helpers', () => {
+    it('uses local calendar components for the guessed date', () => {
+        const local = new Date(2026, 10, 3, 0, 30, 0);
+        assert.equal(localIsoDate(local), '2026-11-03');
+    });
+
+    it('uses the same boundaries for the named part of day', () => {
+        assert.equal(partOf(5 * 60 + 59), 'night');
+        assert.equal(partOf(6 * 60), 'morning');
+        assert.equal(partOf(17 * 60 + 59), 'day');
+        assert.equal(partOf(18 * 60), 'evening');
+    });
+});
 
 describe('model tag', () => {
     it('parses time and events', () => {
@@ -90,6 +104,18 @@ describe('conception and pregnancy', () => {
         applyEvent(state, { type: 'intimacy', protection: 'none' }, seq(0.2));
         assert.ok(state.rolls.at(-1).chance > 0.3);
         assert.ok(state.people.user.female.pregnancy, 'conceived');
+    });
+
+    it('remembers whether each act itself happened in the fertile window', () => {
+        const early = couple();
+        advanceTime(early, 3 * DAY);
+        applyEvent(early, { type: 'intimacy', protection: 'none' }, seq(0.99));
+        assert.equal(early.acts.at(-1).fertile, false);
+
+        const fertile = couple();
+        advanceTime(fertile, 11 * DAY);
+        applyEvent(fertile, { type: 'intimacy', protection: 'none' }, seq(0.99));
+        assert.equal(fertile.acts.at(-1).fertile, true);
     });
 
     it('does not roll outside the fertile window, and rolls each act once', () => {

@@ -3591,3 +3591,19 @@ div.stk-log-row {
 .stk-btn.is-warn .stk-ic {
     color: var(--stk-warm);
 }
+
+
+/* Beta: larger touch targets on coarse pointers without enlarging the visible icons. */
+@media (pointer: coarse) {
+    .stk-pen,
+    .stk-icon-btn,
+    .stk-toast-x {
+        min-width: 40px;
+        min-height: 40px;
+    }
+
+    .stk-tab,
+    .stk-cal button {
+        min-height: 40px;
+    }
+}

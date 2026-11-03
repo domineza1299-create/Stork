@@ -6,7 +6,7 @@
 import { saveChatDebounced } from '../../../../script.js';
 import { extension_settings, extensionNames, getContext } from '../../../extensions.js';
 import { realism } from './biology.js';
-import { buildStatus, cleanRpText, createState, MINUTES_PER_DAY, parseSkip, processReply, upgradeState } from './engine.js';
+import { buildStatus, cleanRpText, createState, localIsoDate, MINUTES_PER_DAY, parseSkip, processReply, upgradeState } from './engine.js';
 import { familyOptions } from './family.js';
 import { intimacyPrompt, isTimeskip } from './intimacy.js';
 
@@ -110,7 +110,7 @@ function baseState({ persist = false } = {}) {
     const meta = context.chatMetadata;
     if (meta[MODULE]) return upgradeState(meta[MODULE]);
     // the real date only until the story names its own (then the calendar re-anchors to it)
-    const fresh = createState({ userName: context.name1, charName: context.name2, startDate: new Date().toISOString().slice(0, 10) });
+    const fresh = createState({ userName: context.name1, charName: context.name2, startDate: localIsoDate() });
     if (persist) {
         meta[MODULE] = fresh;
         context.saveMetadataDebounced();
