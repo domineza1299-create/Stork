@@ -4,8 +4,8 @@
     "requires": [],
     "optional": [],
     "js": "index.js",
-    "css": "beta-ui.css",
+    "css": "beta-mnema.css",
     "author": "Даша",
-    "version": "0.20.2-beta.2",
+    "version": "0.20.2-beta.3",
     "homePage": ""
 }
