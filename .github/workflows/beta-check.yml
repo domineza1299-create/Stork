@@ -1,0 +1,36 @@
+name: Beta fixes and tests
+
+on:
+  push:
+    branches: [beta-work]
+    paths:
+      - tools/apply_beta_fixes.py
+      - .github/workflows/beta-check.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: beta-work
+          fetch-depth: 0
+      - name: Apply reviewed beta fixes
+        run: python tools/apply_beta_fixes.py
+      - name: Run Stork tests
+        run: node --test tests/
+      - name: Commit tested beta changes
+        run: |
+          if git diff --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add engine.js store.js window.js common.js style.css manifest.json tests/engine.test.mjs
+          git commit -m "Beta: fix setup, date, time labels and mobile UX"
+          git push origin HEAD:beta-work
