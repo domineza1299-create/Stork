@@ -58,7 +58,15 @@ export function riskyLately(state) {
     const lastAct = state.acts.at(-1);
     if (!lastAct || f.pregnancy || f.postpartum) return false;
     const day = state.clock.day;
-    return cycleInfo(f, day).fertile && !pillState(f, day).suppressed && (lastAct.protection === 'none' || lastAct.condomBroke) && day - lastAct.day <= 5;
+    const unprotected = lastAct.protection === 'none' || lastAct.condomBroke;
+    const recent = day - lastAct.day >= 0 && day - lastAct.day <= 5;
+    // New acts remember this exactly. For older saved chats, reconstruct at most the previous cycle
+    // (the warning only looks five days back, while a cycle is at least 21 days).
+    const fertileAtAct = typeof lastAct.fertile === 'boolean' ? lastAct.fertile : (() => {
+        const cycle = lastAct.day >= f.cycleStart ? f : { ...f, cycleStart: f.cycleStart - f.cycleLength, cycleShift: 0 };
+        return cycleInfo(cycle, lastAct.day).fertile && !pillState(cycle, lastAct.day).suppressed;
+    })();
+    return fertileAtAct && unprotected && recent;
 }
 
 /** The latest story events worth showing (no dice, no plain «близость»), newest first. */

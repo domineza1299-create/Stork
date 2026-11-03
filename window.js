@@ -7,7 +7,7 @@ import { callGenericPopup, POPUP_TYPE } from '../../../popup.js';
 import { cycleInfo, ERAS, FEMALE_CONDITIONS, FEMALE_CONTRACEPTION, MALE_FERTILITY, PERIOD_FLOW, STORY_MODES } from './biology.js';
 import { analyzeCards, guessAge, readCards } from './cards.js';
 import { connectionManagerOn, CURRENT, describeChoice, ensureProfileChoice, errorText, getProfiles, requestModel } from './connection.js';
-import { advanceTime, applyEvent, dateLabel, extractClock, extractDate, MINUTES_PER_DAY, parseClock, storyDate } from './engine.js';
+import { advanceTime, applyEvent, dateLabel, extractClock, extractDate, localIsoDate, MINUTES_PER_DAY, parseClock, storyDate } from './engine.js';
 import { applySwitches, currentState, currentView, enableNow, onStateChange, refreshStatus, rereadLast, settings, updateCurrentState, VIEWS } from './store.js';
 import { ADULT_AGE, applySetupForm, ruDate, setPeriodStart } from './setup.js';
 import { capitalize, esc, icon, nameOf, years } from './common.js';
@@ -145,7 +145,7 @@ function renderAnalysis(view) {
 /** ISO date (yyyy-mm-dd) of the current story day, for the date field. */
 function storyIsoDate(state) {
     const date = storyDate(state);
-    if (!date) return new Date().toISOString().slice(0, 10);
+    if (!date) return localIsoDate();
     const pad = n => String(n).padStart(2, '0');
     return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
@@ -502,7 +502,7 @@ export async function openStork({ tab } = {}) {
     const $root = $(`
         <div class="stk stk-window">
             <div class="stk-head"><div class="stk-brand">${icon('fa-dove')}<span>Stork</span></div><span class="stk-profile-slot"></span><span class="stk-switch-slot"></span></div>
-            <nav class="stk-tabs">${TABS.map(t => `<button type="button" class="stk-tab" data-tab="${t.id}">${icon(t.icon)}<span>${t.label}</span></button>`).join('')}</nav>
+            <nav class="stk-tabs">${TABS.map(t => `<button type="button" class="stk-tab" data-tab="${t.id}" title="${t.label}" aria-label="${t.label}">${icon(t.icon)}<span>${t.label}</span></button>`).join('')}</nav>
             <div class="stk-panel"></div>
         </div>`);
 
@@ -550,8 +550,9 @@ export async function openStork({ tab } = {}) {
         } catch (error) {
             view.analysis = { error: String(error?.message ?? error) };
         }
-        // If she already changed something in the form, keep it: refresh only the analysis card
-        if (view.touched && !view.analysis.data) $root.find('.stk-analysis-card').replaceWith(renderAnalysis(view));
+        // If she already changed something in the form, keep it: refresh only the analysis card.
+        // A successful analysis must not redraw the whole form and erase unsaved edits.
+        if (view.touched) $root.find('.stk-analysis-card').replaceWith(renderAnalysis(view));
         else render();
     };
 
@@ -589,6 +590,7 @@ export async function openStork({ tab } = {}) {
         const $card = $(this).closest('.stk-card');
         const length = Number($card.find('[data-k="cycleLength"]').val()) || 28;
         $card.find('[data-k="cycleDay"]').val(1 + Math.floor(Math.random() * length));
+        view.touched = true;
     });
     $root.on('click', '.stk-setup-save', () => {
         updateCurrentState(state => applySetup($root, state, view));

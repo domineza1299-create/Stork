@@ -12,6 +12,13 @@ import { addBirths, applyFindings, emptyFamily, ensureFamily, mergeDuplicates } 
 import { applyIntimacy, ensureIntim } from './intimacy.js';
 
 export const MINUTES_PER_DAY = 1440;
+
+/** Current calendar date in local time, not UTC (important around midnight on phones). */
+export function localIsoDate(date = new Date()) {
+    const pad = n => String(n).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
 const MAX_LOG = 200;
 const MAX_ROLLS = 100;
 
@@ -313,11 +320,12 @@ function rollAct(state, act, rng) {
     act.rolled = true;
     if (!f || f.pregnancy || f.postpartum) return;
     const pill = pillState(f, act.day);
-    // hormonal contraception used correctly: no ovulation, nothing to roll
-    if (pill.suppressed) return;
     const cycle = cycleOf(f, act.day);
     const ovulated = cycle.cycleStart + cycleInfo(cycle, act.day).ovulation - 1;
-    if (act.day < ovulated - 5 || act.day > ovulated) return;
+    // Save this on the act itself: later UI warnings must describe the day the act happened,
+    // even after the cycle has already rolled over. Older saved acts simply do not have the field.
+    act.fertile = !pill.suppressed && act.day >= ovulated - 5 && act.day <= ovulated;
+    if (!act.fertile) return;
     throwDice(state, woman, [act], ovulated, pill, rng, cycle.cycleStart);
 }
 
@@ -1361,8 +1369,8 @@ export function processReply(previousState, replyText, rng = Math.random, scene 
 const PART_MINUTES = { morning: 8 * 60, day: 13 * 60, evening: 19 * 60, night: 23 * 60 };
 /** Part of the day by the clock, the same boundaries as timeLabel(). */
 export function partOf(minutes) {
-    const h = Math.floor(minutes / 60);
-    return h < 5 ? 'night' : h < 12 ? 'morning' : h < 17 ? 'day' : h < 22 ? 'evening' : 'night';
+    const h = Math.floor(minutes / 60) % 24;
+    return h < 6 ? 'night' : h < 12 ? 'morning' : h < 18 ? 'day' : 'evening';
 }
 /** Story day of an ISO date, by the chat's start date. */
 function dayOfDate(state, iso) {
