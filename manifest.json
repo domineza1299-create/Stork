@@ -4,8 +4,8 @@
     "requires": [],
     "optional": [],
     "js": "index.js",
-    "css": "style.css",
+    "css": "beta-ui.css",
     "author": "Даша",
-    "version": "0.20.2-beta.1",
+    "version": "0.20.2-beta.2",
     "homePage": ""
 }
