@@ -1,11 +1,8 @@
 name: Beta fixes and tests
 
 on:
-  push:
-    branches: [beta-work]
-    paths:
-      - tools/apply_beta_fixes.py
-      - .github/workflows/beta-check.yml
+  pull_request:
+    branches: [beta]
   workflow_dispatch:
 
 permissions:
