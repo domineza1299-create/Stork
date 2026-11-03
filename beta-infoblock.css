@@ -1,0 +1,275 @@
+@import url("./style.css");
+
+/*
+ * Beta-only infoblock pass.
+ * The main Stork window stays untouched. This styles only the compact block
+ * attached to the latest assistant reply, so it reads as a lightweight status
+ * summary rather than a second copy of the extension.
+ */
+
+.stk.stk-ib {
+    --stk-ib-bg: color-mix(in srgb, var(--SmartThemeBlurTintColor, #1a1a1a) 90%, transparent);
+    --stk-ib-line: color-mix(in srgb, var(--stk-text) 11%, transparent);
+    --stk-ib-line-strong: color-mix(in srgb, var(--stk-text) 17%, transparent);
+    --stk-ib-soft: color-mix(in srgb, var(--stk-text) 4%, transparent);
+    --stk-ib-soft-hover: color-mix(in srgb, var(--stk-text) 7%, transparent);
+    margin: 8px 0 5px;
+    gap: 0;
+    overflow: hidden;
+    border: 1px solid var(--stk-ib-line-strong);
+    border-radius: 12px;
+    background: var(--stk-ib-bg);
+    box-shadow: 0 4px 14px rgb(0 0 0 / 0.12);
+    backdrop-filter: blur(calc(var(--SmartThemeBlurStrength, 10px) + 4px)) saturate(108%);
+    font-size: 0.9em;
+}
+
+/* Header = persistent glanceable status, not a dashboard. */
+.stk-ib .stk-ib-head {
+    min-height: 46px;
+    padding: 7px 9px;
+    gap: 6px;
+    border-radius: 0;
+    background: transparent;
+}
+
+.stk-ib .stk-ib-head:hover {
+    background: var(--stk-ib-soft);
+}
+
+.stk-ib.is-open .stk-ib-head {
+    border-bottom: 1px solid var(--stk-ib-line);
+}
+
+.stk-ib .stk-ib-side {
+    min-width: 0;
+    gap: 6px;
+}
+
+.stk-ib .stk-av.is-sm {
+    width: 28px;
+    height: 28px;
+    flex: 0 0 28px;
+    border: 1px solid var(--stk-ib-line-strong);
+    box-shadow: none;
+}
+
+.stk-ib .stk-ib-who {
+    min-width: 0;
+    gap: 1px;
+}
+
+.stk-ib .stk-ib-who > b {
+    max-width: 9em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.94em;
+    font-weight: 600;
+}
+
+.stk-ib .stk-ib-who > span {
+    min-width: 0;
+    color: var(--stk-muted);
+    font-size: 0.8em;
+    line-height: 1.2;
+}
+
+.stk-ib .stk-ib-mid {
+    min-width: 54px;
+}
+
+.stk-ib .stk-ib-mid > b {
+    font-size: 0.98em;
+    font-weight: 650;
+}
+
+.stk-ib .stk-ib-mid > span {
+    color: var(--stk-muted);
+    font-size: 0.74em;
+}
+
+.stk-ib .stk-dot {
+    width: 6px;
+    height: 6px;
+}
+
+.stk-ib .stk-chev {
+    opacity: 0.55;
+}
+
+/* Brief body: small stack of changes from this reply only. */
+.stk-ib .stk-ib-body.is-brief {
+    gap: 6px;
+    padding: 7px 8px 8px;
+}
+
+.stk-ib .stk-ib-body.is-brief .stk-pn {
+    overflow: hidden;
+    border: 1px solid var(--stk-ib-line);
+    border-radius: 9px;
+    background: color-mix(in srgb, var(--stk-text) 2.5%, transparent);
+    box-shadow: none;
+}
+
+.stk-ib .stk-ib-body.is-brief .stk-pn.is-alert {
+    border-color: color-mix(in srgb, var(--stk-warm) 32%, transparent);
+}
+
+.stk-ib .stk-ib-body.is-brief .stk-pn-head {
+    min-height: 38px;
+    padding: 6px 8px;
+    gap: 7px;
+    background: transparent;
+}
+
+.stk-ib .stk-ib-body.is-brief .stk-pn-head:hover {
+    background: var(--stk-ib-soft);
+}
+
+.stk-ib .stk-ib-body.is-brief .stk-pn-title b {
+    font-size: 0.9em;
+    font-weight: 600;
+}
+
+.stk-ib .stk-ib-body.is-brief .stk-pn-title small {
+    font-size: 0.76em;
+    line-height: 1.25;
+}
+
+.stk-ib .stk-ib-body.is-brief .stk-pn-body {
+    gap: 5px;
+    padding: 5px 8px 8px;
+    border-top: 1px solid var(--stk-ib-line);
+}
+
+/* Event rows are the visual core of the block. */
+.stk-ib .stk-note,
+.stk-ib .stk-li {
+    gap: 7px;
+    padding: 5px 7px;
+    border-radius: 7px;
+    background: transparent;
+    line-height: 1.35;
+}
+
+.stk-ib .stk-note {
+    border-left: 2px solid color-mix(in srgb, var(--stk-pink) 45%, transparent);
+    background: color-mix(in srgb, var(--stk-pink) 4%, transparent);
+}
+
+.stk-ib .stk-note.is-him {
+    border-left-color: color-mix(in srgb, var(--stk-him) 45%, transparent);
+    background: color-mix(in srgb, var(--stk-him) 4%, transparent);
+}
+
+.stk-ib .stk-note.is-warm,
+.stk-ib .stk-li.is-warn {
+    border-left-color: color-mix(in srgb, var(--stk-warm) 55%, transparent);
+    background: color-mix(in srgb, var(--stk-warm) 5%, transparent);
+}
+
+.stk-ib .stk-note > .stk-ic,
+.stk-ib .stk-li > .stk-ic {
+    opacity: 0.78;
+}
+
+/* Chips are compact metadata, never a second row of giant controls. */
+.stk-ib .stk-brief-chips {
+    gap: 4px;
+}
+
+.stk-ib .stk-brief-chips .stk-ag-chip {
+    min-height: 24px;
+    padding: 3px 7px;
+    border-radius: 7px;
+    background: var(--stk-ib-soft);
+    border-color: var(--stk-ib-line);
+    font-size: 0.78em;
+    box-shadow: none;
+}
+
+/* Footer is deliberately quiet: one escape hatch to the full extension. */
+.stk-ib .stk-ib-foot {
+    justify-content: flex-end;
+    padding-top: 1px;
+}
+
+.stk-ib .stk-ib-foot .stk-link {
+    padding: 4px 7px;
+    border-radius: 7px;
+    color: var(--stk-muted);
+    background: transparent;
+    border: 0;
+    font-size: 0.8em;
+    opacity: 0.86;
+}
+
+.stk-ib .stk-ib-foot .stk-link:hover {
+    color: var(--stk-text);
+    background: var(--stk-ib-soft-hover);
+    opacity: 1;
+}
+
+/* Do not let generic Stork tab/card styles make the chat block feel like the window. */
+.stk-ib .stk-card {
+    box-shadow: none;
+}
+
+@container (max-width: 420px) {
+    .stk.stk-ib {
+        margin-block: 7px 4px;
+        border-radius: 11px;
+        font-size: 0.89em;
+    }
+
+    .stk-ib .stk-ib-head {
+        min-height: 44px;
+        padding: 6px 7px;
+        gap: 4px;
+    }
+
+    .stk-ib .stk-av.is-sm {
+        width: 25px;
+        height: 25px;
+        flex-basis: 25px;
+    }
+
+    .stk-ib .stk-ib-who > b {
+        max-width: 6.5em;
+        font-size: 0.9em;
+    }
+
+    .stk-ib .stk-ib-who > span {
+        font-size: 0.75em;
+    }
+
+    .stk-ib .stk-ib-mid {
+        min-width: 48px;
+    }
+
+    .stk-ib .stk-ib-body.is-brief {
+        padding: 6px;
+    }
+
+    .stk-ib .stk-ib-body.is-brief .stk-pn-head {
+        min-height: 36px;
+        padding: 5px 7px;
+    }
+
+    .stk-ib .stk-ib-body.is-brief .stk-pn-body {
+        padding: 4px 7px 7px;
+    }
+
+    .stk-ib .stk-ib-foot .stk-link {
+        min-height: 32px;
+        display: inline-flex;
+        align-items: center;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .stk-ib * {
+        transition: none !important;
+    }
+}
