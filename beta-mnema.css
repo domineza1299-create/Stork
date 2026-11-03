@@ -1,0 +1,59 @@
+@import url("./beta-ui.css");
+
+/*
+ * Stork beta: larger phone-first popup shell inspired by the comfortable Mnema layout.
+ * Only the outer window and scrolling change; Stork cards and mechanics stay untouched.
+ */
+
+.popup:has(.stk) {
+    width: min(96vw, 980px);
+    max-width: 96vw;
+    height: min(92dvh, 940px);
+    max-height: 92dvh;
+    display: flex;
+    flex-direction: column;
+}
+
+.popup:has(.stk) .popup-body,
+.popup:has(.stk) .popup-content {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+}
+
+/* Give the Stork content a little more room so it feels like a panel, not a tiny dialog. */
+.popup:has(.stk) .stk {
+    width: 100%;
+    box-sizing: border-box;
+}
+
+@media (max-width: 600px) {
+    .popup:has(.stk) {
+        width: calc(100vw - 18px);
+        max-width: calc(100vw - 18px);
+        height: calc(100dvh - 34px);
+        max-height: calc(100dvh - 34px);
+        margin: 8px auto;
+        border-radius: 18px;
+    }
+
+    .popup:has(.stk) .popup-body,
+    .popup:has(.stk) .popup-content {
+        padding-bottom: max(10px, env(safe-area-inset-bottom, 0px));
+        -webkit-overflow-scrolling: touch;
+    }
+}
+
+/* Very small screens: keep a tiny safe margin rather than touching the browser edges. */
+@media (max-width: 380px) {
+    .popup:has(.stk) {
+        width: calc(100vw - 10px);
+        max-width: calc(100vw - 10px);
+        height: calc(100dvh - 20px);
+        max-height: calc(100dvh - 20px);
+        margin: 5px auto;
+        border-radius: 15px;
+    }
+}
