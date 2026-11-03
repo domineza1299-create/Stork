@@ -3,9 +3,9 @@
     "loading_order": 101,
     "requires": [],
     "optional": [],
-    "js": "index.js",
-    "css": "beta-mnema.css",
+    "js": "beta-entry.js",
+    "css": "beta-sections.css",
     "author": "Даша",
-    "version": "0.20.2-beta.3",
+    "version": "0.20.2-beta.4",
     "homePage": ""
 }
