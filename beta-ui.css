@@ -1,0 +1,280 @@
+@import url("./style.css");
+
+/*
+ * Stork beta visual pass.
+ * Keeps the original theme and mechanics, but reduces visual noise and improves mobile readability.
+ */
+
+.stk,
+#stork_bar,
+.stk-toasts {
+    --stk-muted: color-mix(in srgb, var(--stk-text) 72%, transparent);
+    --stk-line: color-mix(in srgb, var(--stk-text) 9%, transparent);
+    --stk-line-strong: color-mix(in srgb, var(--stk-text) 17%, transparent);
+    --stk-glass: color-mix(in srgb, var(--stk-text) 4%, transparent);
+    --stk-glass-hover: color-mix(in srgb, var(--stk-text) 7%, transparent);
+    --stk-surface-raised: color-mix(in srgb, var(--stk-text) 6%, transparent);
+    --stk-radius: 11px;
+}
+
+/* calmer popup: denser background, less blur/saturation */
+.popup:has(.stk) {
+    background: color-mix(in srgb, var(--SmartThemeBlurTintColor, #1a1a1a) 96%, var(--SmartThemeBodyColor, #ddd) 1.5%);
+    backdrop-filter: blur(calc(var(--SmartThemeBlurStrength, 10px) + 8px)) saturate(115%);
+    border-color: color-mix(in srgb, var(--SmartThemeBodyColor, #ddd) 10%, transparent);
+    border-radius: 16px;
+}
+
+.stk {
+    gap: 10px;
+    font-size: 0.95em;
+    line-height: 1.5;
+}
+
+.stk-panel {
+    gap: 8px;
+}
+
+/* clearer hierarchy: one obvious card level, softer nested surfaces */
+.stk-card {
+    gap: 8px;
+    padding: 13px 14px;
+    background: color-mix(in srgb, var(--stk-text) 4.5%, transparent);
+    border-color: color-mix(in srgb, var(--stk-text) 10%, transparent);
+}
+
+.stk-card.is-alert {
+    border-color: color-mix(in srgb, var(--stk-pink) 38%, transparent);
+    background: color-mix(in srgb, var(--stk-pink) 4%, var(--stk-glass));
+}
+
+.stk-stats div,
+.stk-reading,
+.stk-semen,
+.stk-sketch,
+.stk-log-row {
+    background: var(--stk-surface-raised);
+}
+
+.stk-menu {
+    border: 0;
+    background: var(--stk-glass);
+}
+
+.stk-story-note {
+    background: color-mix(in srgb, var(--stk-pink) 6%, transparent);
+    border-left-color: color-mix(in srgb, var(--stk-pink) 42%, transparent);
+}
+
+/* ordinary actions are no longer all pills; segmented controls and tabs stay pill-shaped */
+.stk-btn {
+    border-radius: 9px;
+    padding: 6px 11px;
+}
+
+.stk-toast-act {
+    border-radius: 9px;
+}
+
+.stk-link {
+    border-radius: 8px;
+}
+
+/* secondary text: still quiet, but not tiny/washed out on phones */
+.stk-hint,
+.stk-field > span,
+.stk-legend,
+.stk-leg small,
+.stk-ib-who > span,
+.stk-tile small,
+.stk-muted,
+.stk-semen-note {
+    line-height: 1.42;
+}
+
+.stk-hint { font-size: 0.88em; }
+.stk-field > span { font-size: 0.86em; }
+.stk-legend { font-size: 0.85em; }
+.stk-leg small { font-size: 0.85em; }
+.stk-ib-who > span { font-size: 0.85em; }
+.stk-tile small { font-size: 0.82em; }
+.stk-sub { font-size: 0.8em; letter-spacing: 0.32px; }
+
+/* Mobile tabs: keep labels and scroll sideways instead of collapsing to mystery icons. */
+.stk-tabs {
+    justify-content: flex-start;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    scroll-snap-type: x proximity;
+}
+
+.stk-tabs::-webkit-scrollbar {
+    display: none;
+}
+
+.stk-tab {
+    flex: 0 0 auto;
+    min-width: max-content;
+    padding: 6px 10px;
+    scroll-snap-align: start;
+}
+
+.stk-tab span {
+    display: inline !important;
+    overflow: visible;
+    text-overflow: clip;
+}
+
+@container (max-width: 720px) {
+    .stk-tabs {
+        padding-inline: 4px;
+    }
+
+    .stk-tab {
+        min-height: 40px;
+    }
+}
+
+@container (max-width: 400px) {
+    .stk-ib .stk-tab .stk-ic {
+        display: inline-block;
+    }
+}
+
+/* Calendar: fewer competing borders/rings, same meaning at a glance. */
+.stk-cal > span {
+    background: color-mix(in srgb, var(--stk-text) 3.5%, transparent);
+}
+
+.stk-cal .is-period {
+    background: color-mix(in srgb, var(--stk-period) 27%, transparent);
+}
+
+.stk-cal .is-window {
+    background: color-mix(in srgb, var(--stk-pink) 9%, transparent);
+    box-shadow: none;
+}
+
+.stk-cal .is-ovulation {
+    background: color-mix(in srgb, var(--stk-pink) 25%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--stk-pink) 68%, transparent);
+}
+
+.stk-cal .is-warm {
+    background: color-mix(in srgb, var(--stk-warm) 11%, transparent);
+}
+
+.stk-cal .is-preg {
+    background: color-mix(in srgb, var(--stk-preg) 18%, transparent);
+}
+
+.stk-cal .is-future {
+    opacity: 0.72;
+}
+
+.stk-cal .is-today,
+.stk-cal .is-today.is-window,
+.stk-cal .is-today.is-ovulation {
+    box-shadow: inset 0 0 0 1.5px var(--stk-text);
+}
+
+.stk-cal .stk-mark {
+    filter: none;
+    opacity: 0.9;
+}
+
+/* Person rings stay as a Stork signature, just lighter and less dominant. */
+.stk-person {
+    gap: 12px;
+}
+
+.stk-rings {
+    width: 108px;
+}
+
+.stk-rings.is-lg {
+    width: 108px;
+}
+
+.stk-ring-bg {
+    stroke: color-mix(in srgb, var(--stk-text) 10%, transparent);
+}
+
+.stk-face {
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--stk-text) 14%, transparent);
+}
+
+@container (max-width: 520px) {
+    .stk-rings,
+    .stk-rings.is-lg {
+        width: 96px;
+    }
+
+    .stk-person {
+        gap: 10px;
+    }
+}
+
+/* In-chat block: slightly calmer shell and nested panels. */
+.stk.stk-ib {
+    border-color: color-mix(in srgb, var(--stk-text) 14%, transparent);
+    background: color-mix(in srgb, var(--SmartThemeBlurTintColor, #1a1a1a) 92%, var(--stk-text) 2%);
+}
+
+.stk-ib-body {
+    gap: 7px;
+}
+
+.stk-ib .stk-card {
+    border-color: color-mix(in srgb, var(--stk-text) 8%, transparent);
+}
+
+/* Toasts: keep the glass identity, remove the heavy glow. */
+.stk-toast {
+    gap: 9px;
+    border-color: color-mix(in srgb, var(--tone) 22%, var(--stk-line));
+    background:
+        radial-gradient(120% 150% at 0% 50%, color-mix(in srgb, var(--tone) 9%, transparent), transparent 66%),
+        color-mix(in srgb, var(--SmartThemeBlurTintColor, #1a1a1a) 94%, transparent);
+    backdrop-filter: blur(calc(var(--SmartThemeBlurStrength, 10px) + 6px)) saturate(115%);
+    box-shadow: 0 8px 20px rgb(0 0 0 / 0.2);
+    border-radius: 14px;
+}
+
+.stk-toast-ic {
+    background: color-mix(in srgb, var(--tone) 12%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tone) 28%, transparent);
+}
+
+.stk-toast-time {
+    opacity: 0.38;
+}
+
+/* Settings tiles read more like choices and less like separate floating cards. */
+.stk-tile {
+    border-color: color-mix(in srgb, var(--stk-text) 9%, transparent);
+    background: color-mix(in srgb, var(--stk-text) 3.5%, transparent);
+}
+
+.stk-tile.is-on {
+    border-color: color-mix(in srgb, var(--stk-pink) 45%, transparent);
+    background: color-mix(in srgb, var(--stk-pink) 7%, transparent);
+}
+
+/* Keep touch targets generous without visually inflating icons. */
+@media (pointer: coarse) {
+    .stk-pen,
+    .stk-icon-btn,
+    .stk-toast-x {
+        min-width: 40px;
+        min-height: 40px;
+    }
+
+    .stk-cal > span,
+    .stk-cal button,
+    .stk-tab {
+        min-height: 40px;
+    }
+}
