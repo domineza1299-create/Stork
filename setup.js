@@ -3,7 +3,7 @@
  * with sensible defaults for what they don't say. Pure: no SillyTavern imports, tested in Node.
  */
 import { createPregnancy, perimenopause } from './biology.js';
-import { extractClock, extractDate, guessAge, parseClock, setBabySex } from './engine.js';
+import { extractClock, extractDate, guessAge, guessClock, parseClock, setBabySex } from './engine.js';
 import { applyFindings } from './family.js';
 import { cleanKinks, ensureIntim } from './intimacy.js';
 
@@ -47,6 +47,7 @@ function pregnancyFromCards(f, day, u, rng) {
  * (a doctor, the story). A card can add them, never take them away.
  */
 function diagnosesFromCards(m, day, c) {
+    if (['low', 'normal', 'high'].includes(c.libido)) m.temperament = c.libido;
     if (c.varicocele) m.varicocele = true;
     if (c.vasectomy && (m.vasectomyDay === null || m.vasectomyDay === undefined)) m.vasectomyDay = day - 365;
 }
@@ -90,17 +91,29 @@ export function parseTypedClock(text) {
 export function setStoryClock(state, v) {
     let done = false;
     const iso = parseStoryDate(v.date);
-    if (iso) {
+    // the guessed date left in the field as it was is not a date the story set: it stays a guess, so the first
+    // date the story names still re-dates the calendar instead of counting months between them
+    const untouched = iso && !state.dateSure && iso === todayIso(state);
+    if (iso && !untouched) {
         anchorStartDate(state, iso);
         state.dateSure = true;
         done = true;
     }
+    if (untouched) done = true;
     const time = parseTypedClock(v.time);
     if (time !== null) {
         state.clock.minutes = time;
         done = true;
     }
     return done;
+}
+
+/** The story's date today as ISO, by its start date; null without one. */
+function todayIso(state) {
+    if (!ISO_DATE.test(String(state.startDate ?? ''))) return null;
+    const d = new Date(`${state.startDate}T12:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + state.clock.day);
+    return d.toISOString().slice(0, 10);
 }
 
 /** Today in the story is this ISO date: story day 0 moves so that the current day lands on it. */
@@ -187,7 +200,8 @@ export function setupFromAnalysis(state, analysis, cards, rng = Math.random) {
         anchorStartDate(state, headDate);
         state.dateSure = true;
     }
-    const time = extractClock(opening) ?? parseClock(start.time);
+    // a clock in the greeting, else the reading's time (exact or its best guess), else a time-of-day word in the greeting
+    const time = extractClock(opening) ?? parseClock(start.time) ?? guessClock(opening);
     if (time !== null) state.clock.minutes = time;
     if (a.story?.summary) state.storySummary = a.story.summary;
     // the world of the story: a doctor or a midwife looks after a pregnancy
@@ -303,6 +317,7 @@ export function applyPersonEdit(state, key, v) {
     } else {
         const m = person.male;
         if (v.fertility !== undefined && ['normal', 'low', 'sterile'].includes(v.fertility)) m.fertility = v.fertility;
+        if (['low', 'normal', 'high'].includes(v.temperament)) m.temperament = v.temperament;
         for (const k of ['smoker', 'drinker']) if (v[k] !== undefined) m[k] = !!v[k];
     }
     return state;

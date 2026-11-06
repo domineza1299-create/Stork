@@ -6,9 +6,10 @@
 import { saveChatDebounced } from '../../../../script.js';
 import { extension_settings, extensionNames, getContext } from '../../../extensions.js';
 import { realism } from './biology.js';
-import { buildStatus, cleanRpText, createState, MINUTES_PER_DAY, parseSkip, processReply, upgradeState } from './engine.js';
+import { buildStatus, cleanRpText, createState, MINUTES_PER_DAY, parseSkip, processReply, storyDate, upgradeState } from './engine.js';
 import { familyOptions } from './family.js';
 import { intimacyPrompt, isTimeskip } from './intimacy.js';
+import { clockNow, fromAlmanac } from './storyclock.js';
 
 export const MODULE = 'stork';
 const PROMPT_KEY = 'stork_status';
@@ -43,6 +44,9 @@ const defaultSettings = {
     memoryReplies: 20,
     // a Connection Manager profile id, or 'current' for the main connection; '' = not chosen yet (the first profile is taken)
     readProfile: '',
+    storyClock: true,
+    health: false,
+    healthSpeed: 1,
     sceneProfile: '',
     // the log keeps whole prompts too (big, and has the story's text)
     debugPrompts: false,
@@ -58,6 +62,8 @@ const defaultSettings = {
 export function applySwitches() {
     const s = settings();
     realism.erectionDrops = s?.erectionDrops !== false;
+    realism.health = s?.health === true && s?.readMode === 'analyzer';
+    realism.healthSpeed = Number(s?.healthSpeed) || 1;
     familyOptions.trackExes = s?.trackExes !== false;
 }
 
@@ -213,13 +219,25 @@ export function processMessage(index, textOverride = null, scene = null, { stric
     const before = stateBefore(index);
     // An analysis result is read together with the reply itself, so a time header in the text still counts
     const { state, tag } = processReply(before, textOverride === null ? message.mes : `${message.mes}
-${textOverride}`, Math.random, scene);
+${textOverride}`, Math.random, scene, { storyClock: replyClock(message) });
     message.extra ??= {};
     message.extra.stork ??= {};
     message.extra.stork[message.swipe_id ?? 0] = { hash, sig: storySig(message.mes), state, tagFound: tag.found, fromHints: textOverride !== null };
     if (textOverride !== null) saveChatDebounced();
     notify();
     return { tag, events: state.log.slice(before.log.length) };
+}
+
+/**
+ * The time line of a reply: the one Stork cut out of it, or Almanac's record when Almanac keeps the clock.
+ * null: the reading's own minutes count, as before.
+ */
+export function replyClock(message) {
+    const mode = clockMode();
+    if (mode === 'off') return null;
+    const swipe = message?.swipe_id ?? 0;
+    if (mode === 'almanac') return fromAlmanac(message?.extra?.almanac?.[swipe]);
+    return message?.extra?.storkClock?.[swipe] ?? null;
 }
 
 /** Skips shorter than a day are left to the reading of the reply: they change nothing in her cycle. */
@@ -234,7 +252,7 @@ export function processUserMessage(index) {
     const chat = getContext().chat ?? [];
     const message = chat[index];
     if (!message?.is_user) return null;
-    const minutes = parseSkip(message.mes);
+    const minutes = parseSkip(message.mes, stateBefore(index).clock.minutes);
     const existing = snapshotOf(message);
     if (minutes < MIN_PRE_SKIP) {
         // the skip was edited away
@@ -319,6 +337,7 @@ export const rereadLast = () => rereadHandler?.() ?? false;
 
 /** Other trackers that tell the story model the time themselves: with one of them on, Stork does not add a second clock. */
 const CLOCK_KEEPERS = [
+    { name: 'Almanac', folder: /(^|\/)Almanac$/i, on: () => extension_settings.almanac?.enabled !== false },
     { name: 'Mnema', folder: /(^|\/)(5555990|mnema)$/i, on: () => extension_settings.mnema?.enabled !== false },
     { name: 'Horae', folder: /(^|\/)(SillyTavern-)?Horae$/i, on: () => true },
 ];
@@ -350,8 +369,25 @@ export function intimacyText(state) {
     return intimacyPrompt(state, { userSkip: userSkipsNow(), erectionDrops: s.erectionDrops !== false });
 }
 
+/**
+ * Who keeps the story clock: 'almanac' (Almanac is on: Stork takes its time), 'stork' (the story model writes
+ * Stork's hidden time line), 'off' (the reading counts the minutes, as before).
+ */
+export function clockMode() {
+    if (otherClock() === 'Almanac') return 'almanac';
+    // Mnema or Horae may tell the model the time too: the rule makes every other time in the reply match the line
+    return settings().storyClock !== false ? 'stork' : 'off';
+}
+
 export function statusText(state, withTag = settings().readMode === 'tag') {
-    return buildStatus(state, { detailed: settings().detailed, neutral: settings().neutral, withTag, withTime: !otherClock(), extra: intimacyText(state) });
+    const own = clockMode() === 'stork';
+    const status = buildStatus(state, { detailed: settings().detailed, neutral: settings().neutral, withTag, withTime: !otherClock() && !own, extra: intimacyText(state) });
+    if (!own) return status;
+    // the story model keeps the clock: it gets the exact time now, with the year and the weekday
+    const date = storyDate(state);
+    const pad = n => String(n).padStart(2, '0');
+    const iso = date ? `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` : null;
+    return iso ? `${clockNow(iso, state.clock.minutes)}\n${status}` : status;
 }
 
 /** The state a running generation builds on; the macro must agree with the injected status. */

@@ -1,6 +1,6 @@
-import { eventSource, event_types, saveSettingsDebounced } from '../../../../script.js';
+import { eventSource, event_types, main_api, saveSettingsDebounced, substituteParams } from '../../../../script.js';
 import { getContext } from '../../../extensions.js';
-import { dateLabel, detectHints, stripTag, timeLabel } from './engine.js';
+import { abstinence, dateLabel, detectHints, isEmptyReply, stripTag, timeLabel } from './engine.js';
 import { analyzeScene, errorText, sceneToTag } from './scene.js';
 import { trace } from './diag.js';
 import { installLogCapture, logEvent } from './log.js';
@@ -8,10 +8,13 @@ import { ensureProfileChoice, forgetReplyCounts } from './connection.js';
 import {
     activeIn, changed, currentState, currentView, getGenerationState, initSettings, MODULE, onEnableNow, onReread, onRetry, onStateChange, processMessage,
     processUserMessage, readStatus, refreshStatus, sameReply, setGenerationState, setReadFailed, setReading, setStatus, settings, similarSig,
-    otherClock, skipBefore, stateBefore, statusText, storyLines, storyHash, storySig, storyText, updateCurrentState, VIEWS,
+    clockMode, otherClock, skipBefore, stateBefore, statusText, storyLines, storyHash, storySig, storyText, updateCurrentState, VIEWS,
 } from './store.js';
+import { clockRule, LINE_RE, parseClockLine, stripClockLine } from './storyclock.js';
+import { healthKnown } from './health.js';
+import { realism } from './biology.js';
 import { buildStatus, timelineText } from './engine.js';
-import { bedExcerpt, isTimeskip, memoryText, readingMode, sectionPrompt } from './intimacy.js';
+import { bedExcerpt, injuriesNow, isTimeskip, memoryText, readingMode, sectionPrompt } from './intimacy.js';
 import { labelOf, members } from './family.js';
 import { analyzeCards, readCards } from './cards.js';
 import { hasMinor, setupFromAnalysis } from './setup.js';
@@ -27,6 +30,7 @@ import { renderBlocks, resetBlock, scheduleBlocks, watchChat } from './block.js'
  * so the status comes from the state before that reply.
  */
 async function onGenerationAfterCommands(type) {
+    genType = type || 'normal';
     if (pendingReading) {
         await Promise.race([pendingReading, new Promise(resolve => setTimeout(resolve, READ_WAIT_MS))]);
     }
@@ -35,6 +39,7 @@ async function onGenerationAfterCommands(type) {
     const rewritesLast = ['swipe', 'regenerate', 'continue'].includes(type) && chat[last] && !chat[last].is_user;
     setGenerationState(rewritesLast ? stateBefore(last) : null);
     setStatus(getGenerationState() ?? currentState());
+    setClockRule();
 }
 
 // #endregion
@@ -55,18 +60,85 @@ function hideAllTags() {
 }
 
 /** Old replies keep their tags in the chat file, but the model never sees them. */
+const stripAll = text => stripClockLine(stripTag(text));
+
 function stripTagsFromPrompt(data) {
     for (const message of data?.chat ?? []) {
-        if (typeof message.content === 'string') message.content = stripTag(message.content);
+        if (typeof message.content === 'string') message.content = stripAll(message.content);
         else if (Array.isArray(message.content)) {
-            for (const part of message.content) if (part?.type === 'text') part.text = stripTag(part.text);
+            for (const part of message.content) if (part?.type === 'text') part.text = stripAll(part.text);
         }
+    }
+    LINE_RE.lastIndex = 0;
+    // the story model keeps the clock: the rule goes at the very end, after the chat (as in Almanac)
+    if (!data?.dryRun && Array.isArray(data?.chat) && wantsClockRule()) {
+        let at = data.chat.length;
+        while (at > 0 && data.chat[at - 1]?.role === 'assistant') at--;
+        data.chat.splice(at, 0, { role: 'system', content: substituteParams(clockRule({ missed: missedClockLine() })) });
     }
 }
 
 function stripTagsFromTextPrompt(data) {
-    if (typeof data?.prompt === 'string') data.prompt = data.prompt.replace(/<stork\b[^>]*\/?>(?:\s*<\/stork>)?/gi, '');
+    if (typeof data?.prompt !== 'string') return;
+    const rule = clockRule({ missed: false });
+    // old lines go; the example line inside Stork's own rule stays
+    data.prompt = data.prompt.replace(/<stork\b[^>]*\/?>(?:\s*<\/stork>)?/gi, '').replace(LINE_RE, x => (rule.includes(x.trim()) ? x : ''));
+    LINE_RE.lastIndex = 0;
 }
+
+// #region The story clock kept by the story model
+
+const CLOCK_RULE_KEY = 'stork_clock_rule';
+let genType = null;
+/** A generation that writes the story: not another extension's quiet request, not an impersonation. */
+const storyGeneration = () => !['quiet', 'impersonate'].includes(genType ?? 'normal');
+function wantsClockRule() {
+    return clockMode() === 'stork' && storyGeneration() && activeIn(getGenerationState() ?? currentState());
+}
+/** The latest reply came without its time line: the rule reminds the model. */
+function missedClockLine() {
+    const chat = getContext().chat ?? [];
+    for (let i = chat.length - 1; i >= 0; i--) {
+        const m = chat[i];
+        if (!m || m.is_user || m.is_system) continue;
+        return !!m.extra?.storkClock?.[m.swipe_id ?? 0]?.none;
+    }
+    return false;
+}
+/** Text completion has no message list: the rule sits at depth 0 instead. */
+function setClockRule() {
+    const on = main_api !== 'openai' && wantsClockRule();
+    getContext().setExtensionPrompt(CLOCK_RULE_KEY, on ? clockRule({ missed: missedClockLine() }) : '', 1, 0, false, 0);
+}
+
+/**
+ * Cuts the time line out of a reply (its text, its swipe, what is shown) and keeps it on the message.
+ * @returns {boolean} a line was found
+ */
+function takeClockLine(index) {
+    if (clockMode() !== 'stork') return false;
+    const message = getContext().chat?.[index];
+    if (!message || message.is_user || message.is_system) return false;
+    const swipe = message.swipe_id ?? 0;
+    const line = parseClockLine([message.mes, message.extra?.display_text].filter(Boolean).join('\n'));
+    LINE_RE.lastIndex = 0;
+    message.extra ??= {};
+    message.extra.storkClock ??= {};
+    if (!line) {
+        // a reply read before keeps the line it had; a new one without a line is noted, the reading counts its minutes
+        if (!message.extra.storkClock[swipe]) message.extra.storkClock[swipe] = { none: true, date: null, minutes: null, passed: null, why: null };
+        return false;
+    }
+    message.mes = stripClockLine(message.mes);
+    if (Array.isArray(message.swipes) && typeof message.swipes[swipe] === 'string') message.swipes[swipe] = stripClockLine(message.swipes[swipe]);
+    if (typeof message.extra.display_text === 'string') message.extra.display_text = stripClockLine(message.extra.display_text);
+    message.extra.storkClock[swipe] = line;
+    try { getContext().updateMessageBlock?.(index, message); } catch { /* not on screen */ }
+    trace(`ответ #${index}: время от РП-модели — ${line.raw}`);
+    return true;
+}
+
+// #endregion
 
 // #endregion
 
@@ -105,6 +177,10 @@ const READ_WAIT_MS = 30000;
 
 /** Readings running now, one per reply and swipe: the same reply is never read twice at once. */
 const readsInFlight = new Map();
+/** Replies left unread because they were empty: one that gets a text later is read then. */
+const emptySkipped = new Set();
+const EMPTY_WAIT_MS = 1500;
+
 /** The newest reading of each reply: an older one that comes back later must not overwrite it. */
 const latestRead = new Map();
 let readCount = 0;
@@ -148,6 +224,19 @@ async function readReplyNow(index, { force = false, strict = false, reason = '' 
     if (!message || message.is_user || message.is_system) return;
     const snapshot = message.extra?.stork?.[message.swipe_id ?? 0];
     if (!force && sameReply(snapshot, message.mes, { strict })) return;
+    // an empty answer of the model: no request, no change. A text that comes a moment later (an extension fills the
+    // reply, the stream ends late) is waited for once; a text that comes later still is read when it arrives
+    if (isEmptyReply(message.mes)) {
+        await new Promise(resolve => setTimeout(resolve, EMPTY_WAIT_MS));
+        const again = getContext().chat === chat ? chat[index] : null;
+        if (!again || isEmptyReply(again.mes)) {
+            emptySkipped.add(`${index}:${message.swipe_id ?? 0}`);
+            trace(`ответ #${index}: пустой ответ модели — не читаю, запроса нет, Stork ничего не меняет. Придёт текст (свайп, продолжение, правка) — прочитаю его`, 'warn');
+            if (force) notifyWarn('Ответ пустой — читать нечего', { timeOut: 3000 });
+            return;
+        }
+    }
+    emptySkipped.delete(`${index}:${message.swipe_id ?? 0}`);
 
     if (settings().readMode !== 'analyzer') {
         const result = processMessage(index, null, null, { strict });
@@ -180,6 +269,7 @@ async function readReplyNow(index, { force = false, strict = false, reason = '' 
             userName: before.people.user.name,
             charName: before.people.char.name,
             dateText: `${dateLabel(before)}, ${String(Math.floor(before.clock.minutes / 60)).padStart(2, '0')}:${String(before.clock.minutes % 60).padStart(2, '0')} (${timeLabel(before.clock.minutes)})`,
+            dateGuess: !before.dateSure,
             status: buildStatus(before, { detailed: true, withTag: false, guide: false }),
             timeline: timelineText(before, storyLines(index, Number(settings().memoryReplies) || 20)),
             earlier,
@@ -190,6 +280,10 @@ async function readReplyNow(index, { force = false, strict = false, reason = '' 
             familyKnown: familyLines(before),
             trackExes: settings().trackExes !== false,
             erectionDrops: settings().erectionDrops !== false,
+            // his turn-ons from his card: what may stir his desire in the story
+            turnOns: (before.intim?.kinks ?? []).filter(k => k.from !== 'persona').map(k => k.name).slice(0, 8).join(', '),
+            // illnesses and the mind, when health is on: what is tracked already, so the reader names the same
+            health: realism.health ? { known: healthKnown(before, { char: before.people.char.name, user: before.people.user.name }).replace(/\n/g, '; ') } : null,
         };
         const ask = (it, note = '') => analyzeScene({ ...input, intim: it, profileId: sceneProfile(before, it), reason: `${input.reason}${note}`, ...(note ? { replyKey: '' } : {}) });
         let scene;
@@ -223,7 +317,7 @@ async function readReplyNow(index, { force = false, strict = false, reason = '' 
         }
         const result = processMessage(index, sceneToTag(scene), scene);
         const after = stateBefore(index + 1);
-        trace(`ответ #${index} прочитан: ${sceneToTag(scene)} · ${timeMove(before, after, scene)}${intim ? ` · близость: ${scene.closeness ?? '—'}${director ? ' (режиссёр)' : intim.full ? ' (режиссёр пропущен: фильтр модели)' : ''}${after.intim?.scene?.visible ? `, сцена идёт: она ${after.intim.scene.user.climax}%, он ${after.intim.scene.char.climax}%` : ''}` : ''}`);
+        trace(`ответ #${index} прочитан: ${sceneToTag(scene)} · ${timeMove(before, after, scene)}${after.timeNote?.note ? ` · ${after.timeNote.note}` : ''}${intim ? ` · близость: ${scene.closeness ?? '—'}${director ? ' (режиссёр)' : intim.full ? ' (режиссёр пропущен: фильтр модели)' : ''}${after.intim?.scene?.visible ? `, сцена идёт: она ${after.intim.scene.user.climax}%, он ${after.intim.scene.char.climax}%` : ''}` : ''}`);
         setReading(null);
         refreshStatus();
         announce(result?.events);
@@ -268,7 +362,7 @@ function intimacyRequest(before, texts, userSkip) {
     })();
     return {
         full: true,
-        section: sectionPrompt({ scene: intim.scene, memory: memoryText(intim.history, 1200), kinks, profile, cards, voice: intim.voice ?? null, erectionDrops: s.erectionDrops !== false, userSkip }),
+        section: sectionPrompt({ scene: intim.scene, memory: memoryText(intim.history, 1200), kinks, profile, injuries: injuriesNow(before).map(x => `${x.name} — ${x.what}`).join('; '), cards, voice: intim.voice ?? null, erectionDrops: s.erectionDrops !== false, userSkip, abstain: abstinence(before, 'char') }),
     };
 }
 
@@ -392,6 +486,9 @@ const RECEIVED_REASON = { swipe: 'новый свайп', regenerate: 'реге�
 /** A new reply, or one continued: whatever it says now is read. One reply, one request. */
 async function onMessageReceived(messageId, type) {
     const index = Number(messageId);
+    if (type !== 'first_message' && type !== 'quiet' && type !== 'impersonate') takeClockLine(index);
+    // Almanac cuts its line and writes its record a moment after the reply arrives
+    if (clockMode() === 'almanac') await new Promise(resolve => setTimeout(resolve, 120));
     hideTagIn(messageId);
     logEvent('event', 'событие', `MESSAGE_RECEIVED #${index}${type ? ` (${type})` : ''}`);
     // the greeting is never read; other extensions' quiet generations add no message to read
@@ -417,6 +514,7 @@ async function onMessageSwiped(messageId) {
     refreshStatus();
     // a swipe already read keeps its reading, even if another extension has redrawn its text since
     if (pendingNew || readBefore) return;
+    takeClockLine(index);
     if (!activeIn(stateBefore(index)) && !(await autoEnable(index))) return;
     pendingReading = readReply(index, { reason: 'свайп на непрочитанный вариант' }).finally(() => { pendingReading = null; });
 }
@@ -428,6 +526,9 @@ async function onMessageEdited(messageId) {
     const message = getContext().chat?.[index];
     if (message?.is_user) return onMessageSent(index);
     logEvent('event', 'событие', `MESSAGE_EDITED #${index}`);
+    // an edited reply with a time line in it: the new line counts
+    if (parseClockLine(message?.mes)) { delete message.extra?.storkClock?.[message.swipe_id ?? 0]; takeClockLine(index); }
+    LINE_RE.lastIndex = 0;
     if (!activeIn(stateBefore(index)) && !(await autoEnable(index))) return;
     pendingReading = readReply(index, { strict: true, reason: 'правка ответа' }).finally(() => { pendingReading = null; });
 }
@@ -447,6 +548,12 @@ function onMessageUpdated(messageId) {
         return;
     }
     const snap = message.extra?.stork?.[message.swipe_id ?? 0];
+    // a reply that was empty when it came and has a text now: this is its first real reading
+    if (!snap && emptySkipped.has(`${index}:${message.swipe_id ?? 0}`) && !isEmptyReply(message.mes) && activeIn(stateBefore(index))) {
+        logEvent('event', 'событие', `MESSAGE_UPDATED #${index}: пустой ответ получил текст — читаю`);
+        pendingReading = readReply(index, { strict: true, reason: 'пустой ответ получил текст' }).finally(() => { pendingReading = null; });
+        return;
+    }
     logEvent('event', 'событие', `MESSAGE_UPDATED #${index}: сообщение обновило другое расширение или SillyTavern — без запроса${snap ? '' : ' (у ответа ещё нет записи Stork)'}`);
 }
 
@@ -554,6 +661,7 @@ jQuery(() => {
     watchChat();
 
     eventSource.on(event_types.GENERATION_AFTER_COMMANDS, onGenerationAfterCommands);
+    eventSource.on(event_types.GENERATION_STARTED, (type, _options, dryRun) => { if (!dryRun) genType = type || 'normal'; });
     eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, stripTagsFromPrompt);
     eventSource.on(event_types.GENERATE_AFTER_COMBINE_PROMPTS, stripTagsFromTextPrompt);
     eventSource.on(event_types.MESSAGE_RECEIVED, onMessageReceived);

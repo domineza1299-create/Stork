@@ -4,7 +4,7 @@
  * both use come from common.js, the buttons from handleAction in ui.js.
  */
 import { careOf, FEMALE_CONTRACEPTION, femaleState, laborProgress, pillState, pregnancyInfo } from './biology.js';
-import { absMinute, clockText, dateLabel, liveNow, shortDate, storyDate, timeLabel, withLive } from './engine.js';
+import { abstinence, abstinenceView, absMinute, maleAche, clockText, dateLabel, liveNow, shortDate, storyDate, timeLabel, withLive } from './engine.js';
 import {
     ACT_LABEL, agoWord, avatarUrl, babyWeight, capitalize, claimCard, clamp01, cycleFields, esc, femaleLevels, femaleTraits, icon, initials, KIND_ICON, knowsPregnancy,
     levelWord, maleLevels, monthGrid, nameOf, nextInCycle, personFields, pickBar, pregnancyLibidoWhy, readingLine, recentEvents, riskyLately, upcomingRows,
@@ -122,9 +122,20 @@ export function femaleCard(state, person, view = {}) {
     })}
         ${s.fertile && !pill.suppressed ? `<div class="stk-row stk-fertile">${icon('fa-heart')}фертильные дни · шанс зачатия сегодня ${Math.round(s.chanceToday * 100)}%</div>` : `<div class="stk-row stk-muted">${icon('fa-calendar-day')}${esc(nextInCycle(s, pill.suppressed))}</div>`}
         <div class="stk-row">${icon('fa-heart-pulse')}${esc(s.symptoms.join(', '))}</div>
+        ${abstinenceHtml(state, person.key)}
         ${storyNote(state, person.key)}
         <div class="stk-row stk-muted">${icon('fa-shield-halved')}контрацепция: ${esc(FEMALE_CONTRACEPTION[pill.effective]?.label ?? 'нет')}${traits.length ? ` · ${esc(traits.join(', '))}` : ''}</div>
     </div>`;
+}
+
+/** Without release: days and how much of what their nature bears, with a thin bar. */
+function abstinenceHtml(state, key) {
+    const a = abstinence(state, key);
+    const person = state.people[key];
+    const ache = person?.sex === 'male' ? maleAche(state, person) : null;
+    if (!a || (a.hours < 12 && !ache?.stage)) return '';
+    const v = abstinenceView(a, ache);
+    return `<div class="stk-row stk-abst is-${v.tone}" title="${esc(v.why)}">${icon('fa-hourglass-end')}<span>${esc(v.text)}</span><span class="stk-abst-bar"><span style="width:${a.pct}%"></span></span></div>`;
 }
 
 export function maleCard(state, person, view = {}) {
@@ -141,6 +152,7 @@ export function maleCard(state, person, view = {}) {
             { label: 'Эрекция', value: L.erectionOk ? 'в порядке' : 'может подвести', level: s.erection, tone: 'warm', why: L.erectionOk ? '' : L.erectionWhy },
         ],
     })}
+        ${abstinenceHtml(state, person.key)}
         ${L.left > 0 ? `<div class="stk-row stk-recover">${icon('fa-hourglass-half')}восстанавливается после оргазма: ещё ~${L.left} мин по времени истории</div>` : ''}
         ${storyNote(state, person.key)}
         <div class="stk-sub">Сперма</div>
@@ -182,11 +194,11 @@ function clockForm(state) {
     return `<div class="stk-clock stk-edit stk-time-edit">
         <div class="stk-time-fields">
             <input class="text_pole stk-time-in" data-f="time" type="text" inputmode="numeric" maxlength="5" placeholder="21:00" value="${esc(clockText(state.clock.minutes))}" aria-label="Время, чч:мм">
-            <input class="text_pole stk-date-in" data-f="date" type="text" inputmode="numeric" maxlength="10" placeholder="15.03.2025" value="${esc(date)}" aria-label="Дата, дд.мм.гггг">
+            <input class="text_pole stk-date-in" data-f="date" type="text" inputmode="numeric" maxlength="10" placeholder="${esc(date || '15.03.2025')}" value="${state.dateSure ? esc(date) : ''}" aria-label="Дата, дд.мм.гггг">
             <button type="button" class="stk-icon-btn is-primary" data-stk-act="time-save" title="Сохранить" aria-label="Сохранить">${icon('fa-check')}</button>
             <button type="button" class="stk-icon-btn" data-stk-act="time-cancel" title="Отмена" aria-label="Отмена">${icon('fa-xmark')}</button>
         </div>
-        <span class="stk-muted">время чч:мм, дата дд.мм.гггг · Enter — сохранить</span>
+        <span class="stk-muted">${state.dateSure ? 'время чч:мм, дата дд.мм.гггг' : 'дата пока примерная: впиши, если знаешь, или оставь пустой — Stork возьмёт её из истории'} · Enter — сохранить</span>
     </div>`;
 }
 

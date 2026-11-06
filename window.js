@@ -7,14 +7,15 @@ import { callGenericPopup, POPUP_TYPE } from '../../../popup.js';
 import { cycleInfo, ERAS, FEMALE_CONDITIONS, FEMALE_CONTRACEPTION, MALE_FERTILITY, PERIOD_FLOW, STORY_MODES } from './biology.js';
 import { analyzeCards, guessAge, readCards } from './cards.js';
 import { connectionManagerOn, CURRENT, describeChoice, ensureProfileChoice, errorText, getProfiles, requestModel } from './connection.js';
-import { advanceTime, applyEvent, dateLabel, extractClock, extractDate, MINUTES_PER_DAY, parseClock, storyDate } from './engine.js';
-import { applySwitches, currentState, currentView, enableNow, onStateChange, refreshStatus, rereadLast, settings, updateCurrentState, VIEWS } from './store.js';
+import { advanceTime, applyEvent, dateLabel, extractClock, extractDate, guessClock, MINUTES_PER_DAY, parseClock, storyDate } from './engine.js';
+import { applySwitches, currentState, currentView, enableNow, onStateChange, otherClock, refreshStatus, rereadLast, settings, updateCurrentState, VIEWS } from './store.js';
 import { ADULT_AGE, applySetupForm, ruDate, setPeriodStart } from './setup.js';
 import { capitalize, esc, icon, nameOf, years } from './common.js';
 import { eventLook, notify, notifyDone, notifyWarn } from './notify.js';
 import { downloadReport, downloadStoppedReport, stoppedDiagnosis } from './diag.js';
 import { clearLog, logCountText, logEvent, logListHtml, onLogChange } from './log.js';
 import { handleAction, onKeyActivate } from './ui.js';
+import { healthHtml } from './healthui.js';
 import * as classic from './classic.js';
 import { renderFamily } from './tree.js';
 
@@ -162,7 +163,7 @@ function renderSetup(state, view) {
     const cycleLength = preUser.cycle_length ?? f.cycleLength;
     const info = cycleInfo(f, state.clock.day);
     const pad = n => String(n).padStart(2, '0');
-    const fromAnalysis = extractClock(readCards().opening) ?? parseClock(pre?.start?.time);
+    const fromAnalysis = extractClock(readCards().opening) ?? parseClock(pre?.start?.time) ?? guessClock(readCards().opening);
     const minutes = fromAnalysis ?? state.clock.minutes;
     const startTime = `${pad(Math.floor(minutes / 60))}:${pad(minutes % 60)}`;
     const ageOf = key => people[key].age ?? (Number(view.manualAge?.[key]) || null);
@@ -284,9 +285,13 @@ function renderWaiting(state) {
 function renderJournal(state) {
     const entries = [...state.log].reverse().filter(e => settings().showRolls || e.kind !== 'roll');
     const rows = entries.map(e => `<div class="stk-log ${e.kind === 'roll' ? 'is-roll' : ''}"><span>${esc(dateLabel(state, e.day, { day: 'numeric', month: 'short' }))}</span><div>${esc(e.text)}</div></div>`).join('');
-    return `
+    const journal = `
         <label class="stk-check"><input type="checkbox" class="stk-set" data-k="showRolls" ${settings().showRolls ? 'checked' : ''}>показывать броски кубиков (спойлер)</label>
         <div class="stk-card">${rows || '<div class="stk-muted">Пока ничего не произошло.</div>'}</div>`;
+    if (!(settings().health && settings().readMode === 'analyzer')) return journal;
+    // health on: its cards first, the journal of everything below
+    return `${healthHtml(state)}
+        <details class="stk-card stk-hl-journal"><summary class="stk-card-title">${icon('fa-book-open')}Журнал событий</summary>${journal}</details>`;
 }
 
 /**
@@ -322,6 +327,14 @@ function profileSelect(compact = false) {
 /** How deep the analysis remembers the story: replies, one short line each. */
 const MEMORY_OPTIONS = [10, 20, 40, 80, 150];
 
+/** Who keeps the story clock: the story model's hidden line (as in Almanac), Almanac itself, or the reading. */
+function clockSwitch() {
+    const s = settings();
+    const other = otherClock();
+    if (other === 'Almanac') return `<div class="stk-hint">${icon('fa-hourglass-half')}Время ведёт Almanac: Stork берёт дату и время из него и своё правило не добавляет.</div>`;
+    return `<label class="stk-setting"><div><b>Время считает РП-модель</b><span class="stk-muted">в конце ответа она оставляет скрытую строку: дата, время, сколько прошло и на что (как в Almanac). Точнее анализа; строку Stork убирает из чата. Выключи — время считает анализ</span></div><input type="checkbox" class="stk-set" data-k="storyClock" ${s.storyClock !== false ? 'checked' : ''}></label>`;
+}
+
 /** How Stork reads the role-play: a separate request per reply through a chosen profile, or a hidden tag from the story model. */
 function readingCard() {
     const s = settings();
@@ -337,6 +350,7 @@ function readingCard() {
                     <option value="tag" ${!analyzer ? 'selected' : ''}>скрытая метка от РП-модели (бесплатно)</option>
                 </select>
             </label>
+            ${clockSwitch()}
             ${analyzer ? `
                 <div class="stk-field"><span>Профиль подключения для анализа</span>
                     <div class="stk-profile-row">
@@ -468,6 +482,10 @@ function renderSettings(state, view) {
             <div class="stk-card-title">${icon('fa-scale-balanced')}Реализм</div>
             ${toggle('erectionDrops', 'Падение эрекции', 'алкоголь, стресс, недосып и болезнь могут ослабить эрекцию; выключи — и у него она не подводит, остальное остаётся как было')}
             ${toggle('trackExes', 'Отслеживать бывших', 'бывшие партнёры попадают в древо; выключи — в древе только родственники')}
+            ${s.readMode === 'analyzer' ? toggle('health', 'Здоровье и психика', 'болезни тела и психики у обоих: течение по времени истории, лечение, врачи, рецидивы; вкладка «Здоровье» вместо журнала. Выключено — ничего не меняется, травмы ведутся как раньше') : `<div class="stk-hint">${icon('fa-circle-info')}Здоровье и психика работают только с анализом каждого ответа (раздел «Чтение РП»).</div>`}
+            ${s.health && s.readMode === 'analyzer' ? `<label class="stk-field"><span>Течение болезней</span><select class="text_pole stk-set" data-k="healthSpeed">
+                ${[['0.5', 'медленно ×0.5'], ['1', 'реализм ×1'], ['2', 'быстро ×2']].map(([v, l]) => `<option value="${v}" ${String(s.healthSpeed ?? 1) === v ? 'selected' : ''}>${l}</option>`).join('')}
+            </select></label>` : ''}
         </div>
         <div class="stk-card">
             <div class="stk-card-title">${icon('fa-bell')}Уведомления</div>
@@ -516,6 +534,8 @@ export async function openStork({ tab } = {}) {
         const waiting = !setup && (!settings().enabled || !state.setupDone || state.chatOff || state.minorBlocked);
         $root.find('.stk-tabs').toggle(!setup && !waiting);
         $root.find('.stk-tab').each((_, el) => $(el).toggleClass('is-on', el.dataset.tab === view.tab));
+        const journalTab = $root.find('.stk-tab[data-tab="journal"]');
+        journalTab.html(settings().health && settings().readMode === 'analyzer' ? `${icon('fa-notes-medical')}<span>Здоровье</span>` : `${icon('fa-book-open')}<span>Журнал</span>`);
         const html = waiting ? renderWaiting(state) : setup ? renderSetup(state, view) : {
             today: classic.renderToday,
             calendar: classic.renderCalendar,
@@ -608,7 +628,7 @@ export async function openStork({ tab } = {}) {
         notifyDone('Близость отмечена', { icon: 'fa-heart', tone: 'pink' });
     });
     $root.on('click', '.stk-do', function () {
-        act(state => applyEvent(state, { type: this.dataset.ev, who: this.dataset.who }));
+        act(state => applyEvent(state, { type: this.dataset.ev, who: this.dataset.who, manual: true }));
     });
     // Settings
     $root.on('change', '.stk-set', function () {

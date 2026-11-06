@@ -5,7 +5,7 @@
  */
 import { saveSettingsDebounced } from '../../../../script.js';
 import { careOf, cycleInfo, FEMALE_CONTRACEPTION, femaleState, laborProgress, pillState, pregnancyInfo } from './biology.js';
-import { absMinute, acceptPregnancyClaim, clockText, editPregnancyClaim, liveNow, maleSnapshot, maleVigor, recoveryLeft, rejectPregnancyClaim, removePregnancyByHand, setPregnancyByHand, shortDate, timeLabel, withLive } from './engine.js';
+import { abstinence, abstinenceView, absMinute, maleAche, acceptPregnancyClaim, clockText, desireWord, editPregnancyClaim, liveNow, maleDesire, maleSnapshot, maleVigor, recoveryLeft, rejectPregnancyClaim, removePregnancyByHand, setPregnancyByHand, shortDate, timeLabel, withLive } from './engine.js';
 import { activeIn, changed, currentState, readStatus, refreshStatus, retryRead, settings, updateCurrentState, VIEWS } from './store.js';
 import { applyPersonEdit, parseStoryDate, parseTypedClock, setPeriodStart, setStoryClock } from './setup.js';
 import {
@@ -16,6 +16,8 @@ import {
 import { calendarCore } from './classic.js';
 import { LIFESTYLE } from './biology.js';
 import { DYN } from './intimacy.js';
+import { spanText } from './storyclock.js';
+import { healthBriefRows } from './healthui.js';
 import { downloadProblemLog, downloadStopped, openStork } from './window.js';
 import { notify, notifyDone, notifyWarn } from './notify.js';
 import { handleFamilyAction } from './tree.js';
@@ -166,6 +168,14 @@ function statusLineHtml(state, rs) {
  * Folded infoblock: her on the left, him on the right (each with a word and a colour), the date and time between them.
  * Symmetric, so it reads at a glance and fits one line on a phone.
  */
+/** How much story time the latest reply took, next to the date; what took it — on hover. */
+function passHtml(state) {
+    const t = state.timeNote;
+    if (!t || !(t.passed > 0)) return '';
+    const title = [t.why, t.note, t.by === 'reading' ? 'посчитал анализ ответа' : t.by === 'almanac' ? 'время из Almanac' : 'время от РП-модели'].filter(Boolean).join(' · ');
+    return `<em class="stk-ib-pass" title="${esc(title)}">${esc(spanText(t.passed))}</em>`;
+}
+
 export function blockHeadHtml(state, open, reading) {
     const u = state.people.user;
     const c = state.people.char;
@@ -176,7 +186,7 @@ export function blockHeadHtml(state, open, reading) {
         : failed ? `<button type="button" class="stk-ib-mark is-failed" data-stk-act="retry" title="Анализ не прошёл: ${esc(failed.error)}. Повторить">${icon('fa-rotate-right')}</button>` : '';
     return `<div class="stk-ib-head" data-stk-act="block-toggle" role="button" tabindex="0" aria-expanded="${open}" title="${open ? 'Свернуть' : 'Развернуть'}">
         <div class="stk-ib-side">${avatarHtml('user', nameOf(u), 'sm')}<div class="stk-ib-who"><b>${esc(nameOf(u))}</b><span title="${esc(su.text)}">${dot(su.tone)}<span>${esc(su.short)}</span></span></div></div>
-        <div class="stk-ib-mid"><b>${mark}${clockText(state.clock.minutes)}</b><span>${esc(shortDate(state, state.clock.day, true))}${chevron()}</span></div>
+        <div class="stk-ib-mid"><b>${mark}${clockText(state.clock.minutes)}</b><span>${esc(shortDate(state, state.clock.day, true))}${passHtml(state)}${chevron()}</span></div>
         <div class="stk-ib-side is-right"><div class="stk-ib-who"><b>${esc(nameOf(c))}</b><span title="${esc(sc.text)}"><span>${esc(sc.short)}</span>${dot(sc.tone)}</span></div>${avatarHtml('char', nameOf(c), 'sm')}</div>
     </div>`;
 }
@@ -437,6 +447,17 @@ function briefNote(state, key) {
     return `<div class="stk-note${key === 'char' ? ' is-him' : ''}">${icon('fa-feather-pointed')}<span>${live.mood ? `<b>${esc(capitalize(live.mood))}.</b> ` : ''}${esc(first)}</span></div>`;
 }
 
+/** How long without release, from the second day on; not while they are together or he is alone with himself. */
+function abstinenceRow(state, key) {
+    if (state.intim?.scene?.visible || state.intim?.solo?.visible) return '';
+    const a = abstinence(state, key);
+    const person = state.people[key];
+    const ache = person?.sex === 'male' ? maleAche(state, person) : null;
+    if (!a || (a.days < 2 && !ache?.stage)) return '';
+    const v = abstinenceView(a, ache);
+    return li('fa-hourglass-end', `<span title="${esc(v.why)}">${esc(v.text)}</span>`, `is-${v.tone}`);
+}
+
 function briefHer(state, person, before, events, view) {
     const key = person.key;
     const editing = view.editPerson === key;
@@ -483,6 +504,7 @@ function briefHer(state, person, before, events, view) {
         }
     }
     rows.push(eventsHtml(events));
+    rows.push(abstinenceRow(state, key));
     rows.push(briefNote(state, key));
     return panel(key, personHead(state, person, { tools, sub: esc(sub), tone, alert: riskyLately(state) }), rows.join(''));
 }
@@ -501,7 +523,18 @@ function briefHim(state, person, before, events, view) {
     // drink, smoke, a sleepless night, stress of this reply: they are not in the journal, so they are read from his habits
     const had = before?.people?.[key]?.male?.lifestyle?.length ?? m.lifestyle.length;
     const fresh = [...new Set(m.lifestyle.slice(had).map(e => LIFESTYLE[e.type]?.label ?? e.type))].map(text => ({ text, warm: true }));
-    rows.push(eventsHtml([...fresh, ...events]));
+    // his desire is one row below (the journal's «желание сильное» would only say it twice)
+    rows.push(eventsHtml([...fresh, ...events.filter(e => e.kind !== 'desire')]));
+    // his desire: only when this reply moved it — a new level, or something in the story stirred it. One word for
+    // the level and what stirred it; the reasons behind it are in the window
+    if (!state.intim?.scene?.visible) {
+        const now = maleDesire(state, person, s);
+        const was = before?.people?.[key] ? maleDesire(before, before.people[key]).level : now.level;
+        const trigger = state.desire?.trigger;
+        const stirred = trigger && trigger !== before?.desire?.trigger;
+        if (desireWord(now.level) !== desireWord(was) || stirred) rows.push(li('fa-fire-flame-curved', `влечение ${esc(desireWord(now.level))}${stirred ? ` · завело: ${esc(trigger)}` : ''}`, 'is-pink'));
+    }
+    rows.push(abstinenceRow(state, key));
     rows.push(briefNote(state, key));
     const sub = s.expectingFather ? `${statusOf(state, person).text} · знает, что станет отцом` : statusOf(state, person).text;
     return panel(key, personHead(state, person, { tools, sub: esc(sub) }), rows.join(''));
@@ -518,7 +551,7 @@ export function renderBrief(state, before, view = {}) {
     const parts = settings().blockParts ?? {};
     const fresh = freshLog(state, before).filter(e => e.kind !== 'roll' && e.kind !== 'intimacy');
     const ofWho = key => fresh.filter(e => e.who === key && e.kind !== 'family')
-        .map(e => ({ text: withoutName(e.text, state.people[key]), warm: ['injury', 'labor'].includes(e.kind), icon: KIND_ICON[e.kind] }));
+        .map(e => ({ text: withoutName(e.text, state.people[key]), warm: ['injury', 'labor'].includes(e.kind), icon: KIND_ICON[e.kind], kind: e.kind }));
     const shared = [];
     for (const e of fresh.filter(x => x.kind === 'family' || !x.who)) shared.push(li(KIND_ICON[e.kind] ?? 'fa-circle-dot', esc(capitalize(e.text)), 'is-muted'));
     // the scene ended with this reply, or closeness happened without one
@@ -533,6 +566,14 @@ export function renderBrief(state, before, view = {}) {
     } else if (act && !isScene) {
         shared.push(li('fa-heart', `близость · ${esc(ACT_LABEL[act.protection] ?? act.protection)}${act.condomBroke ? ' · презерватив порвался' : ''}`, act.protection === 'none' || act.condomBroke ? 'is-pink' : 'is-muted'));
     }
+    // what the time of this reply went on, as the story model wrote it
+    const t = state.timeNote;
+    // how much passed is already next to the date in the head: here only what the time went on, one line of text
+    if (t?.why && t.passed > 0) shared.unshift(li('fa-hourglass-half', esc(capitalize(t.why)), 'is-muted'));
+    // the calendar was put right by the story's date: said once, under this reply
+    if (t?.note && /сверена с историей/.test(t.note)) shared.unshift(li('fa-calendar-check', esc(t.note), 'is-muted'));
+    // health: only what matters now
+    shared.push(...healthBriefRows(state, li));
     const people = [
         parts.user !== false && briefHer(state, state.people.user, before, ofWho('user'), view),
         parts.char !== false && briefHim(state, state.people.char, before, ofWho('char'), view),
@@ -632,6 +673,22 @@ export function handleAction(target, view, rerender) {
             view.pregRemove = false;
             notify('Беременность убрана, цикл идёт дальше', { icon: 'fa-rotate-left', tone: 'calm', timeOut: 3500 });
             break;
+        case 'health-cure':
+        case 'health-del':
+        case 'health-medstop': {
+            const { who, id } = target.dataset;
+            updateCurrentState(state => {
+                const p = state.health?.[who];
+                if (!p) return;
+                if (act === 'health-medstop') { p.meds = p.meds.filter(m => m.id !== id); return; }
+                const ill = p.ill.find(i => i.id === id);
+                if (!ill) return;
+                if (act === 'health-del') { p.ill = p.ill.filter(i => i.id !== id); p.meds.forEach(m => { if (m.forId === id) m.forId = null; }); return; }
+                if (ill.chronic) { ill.remission = true; ill.severity = 10; } else { ill.cured = true; ill.severity = 0; ill.relapse = null; }
+            });
+            notifyDone(act === 'health-cure' ? 'Отмечено: выздоровление' : act === 'health-del' ? 'Убрано' : 'Лекарство отменено', { icon: 'fa-notes-medical', timeOut: 2000 });
+            break;
+        }
         case 'time-edit': view.timeEdit = true; break;
         case 'time-cancel': view.timeEdit = false; break;
         case 'time-save': {

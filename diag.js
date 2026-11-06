@@ -8,9 +8,9 @@ import { cycleInfo } from './biology.js';
 import { describeChoice, requestHistory } from './connection.js';
 import { diagnose, scrub, scrubShape } from './diagnose.js';
 import { members } from './family.js';
-import { cleanRpText, dateLabel } from './engine.js';
+import { cleanRpText, dateLabel, isEmptyReply } from './engine.js';
 import { logEntries, logEvent, logText } from './log.js';
-import { activeIn, currentState, otherClock, readStatus, settings } from './store.js';
+import { activeIn, clockMode, currentState, otherClock, readStatus, settings } from './store.js';
 
 const cut = (text, max) => {
     const s = String(text ?? '');
@@ -153,7 +153,8 @@ function unreadReplies() {
     for (let i = chat.length - 1; i > firstUser && i >= chat.length - 20; i--) {
         const m = chat[i];
         if (m.is_user || m.is_system) continue;
-        if (!m.extra?.stork?.[m.swipe_id ?? 0]) out.push(i);
+        // an empty answer is not read on purpose: it is not a sign of trouble
+        if (!m.extra?.stork?.[m.swipe_id ?? 0] && !isEmptyReply(m.mes)) out.push(i);
     }
     return out.reverse();
 }
@@ -195,7 +196,9 @@ export async function buildStoppedReport() {
         out.push(`контекст: ${s.memoryReplies ?? 20} сообщений`);
     }
     out.push(`основное подключение: ${ctx.mainApi ?? '?'}${ctx.mainApi === 'openai' ? ` · ${ctx.getChatCompletionModel?.() ?? '?'}` : ''}`);
-    out.push(`статус в промпт: ${s.placement} · время ведёт: ${otherClock() || 'Stork'}`);
+    const clockBy = { almanac: 'Almanac', stork: 'РП-модель (скрытая строка Stork)', off: 'анализ ответа' }[clockMode()];
+    const lines = (ctx.chat ?? []).slice(-20).filter(m => !m.is_user && !m.is_system && m.extra?.storkClock);
+    out.push(`статус в промпт: ${s.placement} · время ведёт: ${clockBy}${clockMode() === 'stork' ? ` · ответов без строки времени: ${lines.filter(m => m.extra.storkClock[m.swipe_id ?? 0]?.none).length} из ${lines.length}` : ''}`);
     out.push(`Connection Manager: ${ctx.extensionSettings?.connectionManager ? 'есть' : 'нет'} · другие расширения: ${extensionNames.filter(n => !/Stork$/i.test(n)).map(n => n.replace(/^third-party\//, '')).join(', ') || 'нет'}`);
 
     section('Этот чат');

@@ -331,7 +331,7 @@ export function reserveByHours(orgasmMinutes, nowMinute) {
  * Switches of realism the user can turn off (set from the settings; plain values, so Node tests set them too).
  * erectionDrops false: drink, stress, tiredness or illness never weaken his erection; everything else stays real.
  */
-export const realism = { erectionDrops: true };
+export const realism = { erectionDrops: true, health: false, healthSpeed: 1 };
 
 /**
  * Everything about him today.

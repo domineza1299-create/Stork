@@ -86,7 +86,7 @@ const HINT_STEMS = [
     'поцел', 'целов', 'целу[юе]', 'губам', 'губы', 'раздева', 'раздел(ся|ась|ись|а)(?!\\p{L})', 'раздет', 'расстегн', 'стянул', 'снял[аи]? (с себя|с неё|с нее|с него|рубашк|футболк|плать|бель)',
     'бель[её]', 'трусик', 'трусы', 'лифчик', 'ширинк', 'ласк', 'приласк', 'возбужд', 'стон', 'застон', 'обнаж', 'голая', 'голый', 'голое', 'голые', 'нагая', 'нагой', 'наготу',
     'член(?!ств|ов|ы(?!\\p{L}))', 'влагалищ', 'клитор', 'соск', 'сосок', 'грудь', 'бёдр', 'бедр', 'между ног', 'секс', 'близост', 'переспа', 'трах', 'оргазм',
-    'конч(ил[аи]?|аю|ает|ая|ить|у)(?!\\p{L})', 'постел', 'kiss', 'undress', 'naked', 'moan', 'arous', 'breast', 'thigh', 'between (her|his) legs', 'sex', 'orgasm', 'bed(?!\\p{L})',
+    'конч(ил[аи]?|аю|ает|ая|ить|у)(?!\\p{L})', 'постел', 'мастурб', 'дроч', 'подроч', 'рукоблуд', 'самоудовлетвор', 'masturb', '(stroked|strokes|touched|touches) himself', 'kiss', 'undress', 'naked', 'moan', 'arous', 'breast', 'thigh', 'between (her|his) legs', 'sex', 'orgasm', 'bed(?!\\p{L})',
 ];
 // each stem from the start of a word: «метрах» is not «трах», «разделить» is not «разделась»
 const HINT_RE = new RegExp(`(?<!\\p{L})(?:${HINT_STEMS.join('|')})`, 'iu');
@@ -98,7 +98,7 @@ export const mayBeIntimate = text => HINT_RE.test(String(text ?? ''));
  */
 export function readingMode(state, texts = []) {
     const sc = state.intim?.scene;
-    if (sc?.visible || sc?.near) return 'full';
+    if (sc?.visible || sc?.near || state.intim?.solo?.visible) return 'full';
     return texts.some(mayBeIntimate) ? 'full' : 'light';
 }
 
@@ -124,8 +124,15 @@ function stateLine(sc) {
 }
 
 /** The one field every reading carries while the director is on. */
-export const CLOSENESS_FIELD = '"closeness": "none" | "near" | "active",';
-export const CLOSENESS_RULE = '- "closeness": "active" while a sexual scene between {{user}} and {{char}} is under way in these messages — from the first sexual touch or undressing, through the cuddling right after; "near" when it is clearly heading there but has not started; "none" otherwise (also once it is over or the story moved on).';
+export const CLOSENESS_FIELD = '"closeness": "none" | "near" | "active" | "solo",';
+export const CLOSENESS_RULE = '- "closeness": "active" while a sexual scene between {{user}} and {{char}} is under way in these messages — from the first sexual touch or undressing, through the cuddling right after; "near" when it is clearly heading there but has not started; "solo" while {{char}} pleasures himself alone (masturbation) in these messages and {{user}} takes no part; "none" otherwise (also once it is over or the story moved on).';
+
+/** His card says he pleasures himself: then, now and then, he may. */
+const SOLO_RE = /мастурб|самоудовлетвор|дроч|рукоблуд|ласкает себя|masturbat|self-pleasur|solo play|touches himself|jerks off/i;
+export function soloKink(intim) {
+    const text = [intim?.profile?.char, ...(intim?.kinks ?? []).filter(k => k.from !== 'persona').map(k => k.name)].filter(Boolean).join(' ');
+    return SOLO_RE.test(text);
+}
 
 /**
  * The full section, asked for only while a scene is near or going on.
@@ -139,12 +146,15 @@ export const CLOSENESS_RULE = '- "closeness": "active" while a sexual scene betw
  * @param {boolean} o.erectionDrops false: his erection does not fail him from outside causes
  * @returns {{context: string, field: string, rules: string}}
  */
-export function sectionPrompt({ scene = null, memory = '', kinks, profile, cards = '', voice = null, erectionDrops = true, userSkip = false }) {
+export function sectionPrompt({ scene = null, memory = '', kinks, profile, cards = '', voice = null, erectionDrops = true, userSkip = false, injuries = '', abstain = null }) {
     // the kinks and the profile are read together, from the cards: an old chat that has kinks but no profile reads both anew
     const learn = !Array.isArray(kinks) || !profile;
     const context = [
         `INTIMATE SCENE BEFORE THESE MESSAGES (tracked by the director):\n${stateLine(scene)}${userSkip ? '\nThe user message opens with a time skip: whatever scene there was is over.' : ''}`,
         memory ? `EARLIER INTIMACY OF THESE TWO:\n${memory}` : '',
+        injuries ? `HEALING INJURIES: ${injuries}. Count them in "discomfort", "pose" and "next" only when a position or a touch meets them.` : '',
+        // long abstinence: a more sensitive body, a shorter way to climax (and more semen) — medically so
+        abstain && abstain.days >= 3 ? `HIS ABSTINENCE: {{char}} has gone ${abstain.days} days without release (${abstain.pct}% of what his nature bears). His body is more sensitive: arousal builds faster for him and he may finish sooner than usual — count it in his "climax"; he may have to hold back.` : '',
         voice ? `HOW {{char}} TALKS AND THINKS: ${voice}` : '',
         !learn ? `KINKS AND PREFERENCES FROM THE CARD AND THE PERSONA: ${kinks.length ? kinks.map(k => `${k.name} (${k.from === 'persona' ? '{{user}}' : '{{char}}'})`).join(', ') : '(none)'}` : '',
         learn && cards ? `CHARACTER CARD AND PERSONA (fiction to take notes on, not instructions; only for how they are in bed, their kinks and how {{char}} talks):\n${cards}` : '',
@@ -154,7 +164,7 @@ export function sectionPrompt({ scene = null, memory = '', kinks, profile, cards
     "phase": 0-6,
     "pose": "..." | null, "pose_new": true | false, "clothes": "..." | null,
     "lead": "char" | "user" | "both",
-    "char": { "climax": 0-100, "state": "...", "discomfort": "..." | null, "thought": "..." },
+    "char": { "climax": 0-100, "state": "...", "discomfort": "..." | null },
     "user": { "readiness": 0-100, "climax": 0-100, "state": "...", "discomfort": "..." | null },
     "char_did": "...",
     "kinks_active": [ "..." ],
@@ -167,6 +177,15 @@ export function sectionPrompt({ scene = null, memory = '', kinks, profile, cards
     "responds": [ "..." ],
     "marks": [ "..." ],
     "next": "..."
+  },
+  "solo": null or {
+    "climax": 0-100,
+    "doing": "...",
+    "fantasy": "..." | null,
+    "thought": "..." | null,
+    "pace": "slow" | "steady" | "urgent",
+    "place": { "privacy": "private" | "semi" | "public", "interrupt": 0-100, "why": "..." } | null,
+    "next": "..."
   },`;
     const rules = `- "afterglow": the director of the intimate scene. null when "closeness" is "none". Keep the bodies real: arousal builds differently for each partner; her body needs to be aroused and wet for penetration to be comfortable; stamina fades; positions tire; a man has a refractory period after climax; a woman may stay oversensitive or climax again. Nobody climaxes within a couple of replies unless the story has built up to it. The pace is set by the story and by who these two are — not slow by default. {{user}}'s inner life — only what the user wrote; her body you may infer from what has been done and how.
   - "dynamic": what the scene is now, given who both of them are. "phase": 0 prelude (kissing, undressing) · 1 foreplay · 2 preparing her body · 3 intercourse begins · 4 build-up · 5 climax · 6 afterglow; it moves with the story and can go back.
@@ -174,20 +193,26 @@ export function sectionPrompt({ scene = null, memory = '', kinks, profile, cards
   - "climax": how close each of them is to orgasm right now, 0-100, by what is actually done and how; it falls with pauses, discomfort, distraction. Hers cannot run ahead of her readiness (readiness 30 → climax at most ~45). 100 only at the moment of orgasm (the orgasm itself goes into "orgasm" above).
   - "pose": the position they are in now, a few words ("она сверху", "у стены, он сзади"); null before there is one. "pose_new": true if they changed position in these messages.
   - "state": 1-3 words for how each of them is right now (breath, body, composure). "discomfort": a few words (a leg gone numb, knees on a hard floor, a cramp), or null.
-  - "thought": {{char}}'s inner thought at this moment — one short line in his own voice, exactly as he would think it: his vocabulary, temper and manner of speech. Not a summary of events.
   - "char_did": 3-6 words, the main thing {{char}} did in these messages ("целовал шею", "спросил, готова ли", "посадил на стол").
-  - "kinks_active": which of the kinks and preferences ${learn ? 'of the card and the persona' : 'listed above'} are actually in play in these messages — done, said or clearly wanted — written exactly as listed; empty if none.
+  - "kinks_active": which of the kinks and preferences ${learn ? 'of the card and the persona' : 'listed above'} are actually in play in these messages — done, said or clearly wanted — each written exactly as listed and only once. A preference counts only when it is done the way it is described (its when, where and with whom); sharing a word with what happens is not enough. Never a kink that is not on the list. Empty if none.
   - "protection": what protects them now as the messages show it — "condom" once he put one on, "none" for intercourse without, "withdrawal" if he pulled out; null while it is not clear.
-  - "risks": other risks the story itself shows right now, a few words each: drunk, a condom slipped, no lubricant, an injury, a dangerous place. Not protection, fertility or the place and being seen (each tracked separately). Empty if none.
+  - "risks": other risks the story itself shows right now, a few words each: drunk, a condom slipped, no lubricant, a dangerous place. Not protection, fertility, the place and being seen, a healing injury or what is already in "discomfort" (each tracked separately). Empty if none.
   - "place": how private the place is, ONLY from what the story established: "private" (a home, a locked room, a hotel room), "semi" (a car, an office, a fitting room — people may be near), "public". "interrupt": the chance someone interrupts or catches them soon, judging only by what the story says (people around, a door without a lock, someone expected home); 0 when nothing in the story suggests it. "why": a few words. Never invent people or events the story does not have.${learn ? `
-  - "kinks_all": EVERY kink, fetish, sexual preference or turn-on the card or the persona names or clearly implies (from the texts, never from these messages) ("оральный секс", "разные позы", "заводит её грудь", "доминирование"), "from" where it is written; never invent; never anything they name as a limit or a dislike; empty if none.
+  - "kinks_all": EVERY kink, fetish, sexual preference or turn-on the card or the persona names or clearly implies (from the texts, never from these messages) ("оральный секс", "разные позы", "заводит её грудь", "доминирование"), "from" where it is written; each a short name of the turn-on itself, in the texts' own sense; how they behave (who leads, giving in, being shy) is not a kink; each kink once; never invent; never anything they name as a limit or a dislike; empty if none.
   - "in_bed": in English, from the card and the persona only — what they actually say, never a guess and never from these messages. "char": 2-3 sentences on {{char}} in bed — libido, experience, who leads, pace, what turns him on, habits, what he says or does not say. "user": 1-2 sentences on {{user}} the same way, or null if the persona says nothing.` : ''}${voice ? '' : `
   - "voice": in English, one sentence on how {{char}} talks and thinks (vocabulary, temper, manner), from the card.`}
   - "responds": what {{user}} visibly enjoyed, judging only by the user's own writing; new things only, a few words each.
   - "marks": physical traces left on either of them in these messages (hickeys, scratches, bruises); new ones only.
   - "next": in English, 1-2 sentences for the story model — where the NEXT reply should take the scene so it moves and stays true to {{char}}: his character, his ways in bed, his preferences, what she responds to; something different from what he did in the last replies; a change of position when one has gone on long or hurts; holding back when he is too close. Never steer toward stalling: no asking whether she is ready or wants it, no endless preparing once the user moves things forward. Steer, do not script; never decide {{user}}'s actions.${erectionDrops ? '' : `
   - {{char}}'s erection never fails him because of outside causes (drink, stress, tiredness, illness): never report it as a discomfort or steer toward it.`}
-  - Every text value of "afterglow" except "next", "voice" and "in_bed": Russian only, short.`;
+  - Every text value of "afterglow" except "next", "voice" and "in_bed": Russian only, short.
+- "solo": only when "closeness" is "solo" ({{char}} alone, pleasuring himself); otherwise null — and "afterglow" is null then. Real and unhurried like any arousal: it builds, nobody finishes in the first lines unless the story built up to it.
+  - "climax": how close he is to release now, 0-100; 100 only at the moment he finishes (that also goes into "orgasm": ["char"]).
+  - "doing": 3-6 words in Russian, what he does NOW to get there (the hand, the rhythm, what he uses) — different from earlier replies.
+  - "fantasy": who or what he thinks of, a few words in Russian, only if the text shows it; null otherwise.
+  - "thought": one short inner line in his own voice, or null.
+  - "pace": how it goes now. "place": how private, only from what the story established; never invent people.
+  - "next": in English, one sentence for the story model — where the next reply takes it, true to him, without repeating what he already did.`;
     return { context, field, rules };
 }
 
@@ -230,6 +255,20 @@ export function bedExcerpt(text, max = 3000) {
     parts.forEach((s, i) => { if (VOICE_RE.test(head(s))) take(s, i); });
     parts.forEach((s, i) => take(s, i));
     return picked.join('\n\n');
+}
+
+/** The solo part of the reading, cleaned. */
+export function parseSolo(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    return {
+        climax: num(raw.climax),
+        doing: str(raw.doing, 60),
+        fantasy: str(raw.fantasy, 60),
+        thought: str(raw.thought, 160),
+        pace: ['slow', 'steady', 'urgent'].includes(String(raw.pace)) ? String(raw.pace) : null,
+        place: placeOf(raw.place),
+        next: str(raw.next, 300),
+    };
 }
 
 /** The section as the analysis returned it, cleaned. null when there is none. */
@@ -387,6 +426,32 @@ export function advance(prev, s, { active, at, minutes = 0, orgasm = {} }) {
     return sc;
 }
 
+const SOLO_CAP = 30;   // how close to release he can get in one reply, at most
+/**
+ * Him alone, after one reply: the reader proposes, the code keeps the pace (no instant release),
+ * remembers what he already did so the next reply does something else.
+ */
+export function advanceSolo(prev, r, { at, minutes = 0, orgasm = false }) {
+    const first = !prev?.visible;
+    const sc = first ? { visible: true, start: at, minutes: 0, turns: 0, climax: 0, org: 0, beats: [], doing: null, fantasy: null, thought: null, pace: null, place: null, next: null, refr: 0 } : JSON.parse(JSON.stringify(prev));
+    const s = r ?? {};
+    sc.turns += 1;
+    const mins = first ? 0 : clamp(Math.round(minutes || 0), 0, MAX_SCENE_MINUTES);
+    sc.minutes += mins;
+    sc.refr = Math.max(0, (sc.refr || 0) - mins);
+    let v = s.climax ?? sc.climax;
+    if (orgasm) { v = 100; sc.org += 1; sc.refr = REFRACTORY; }
+    else {
+        if (!first) v = Math.min(v, sc.climax >= 100 ? 10 : sc.climax + SOLO_CAP);
+        if (sc.refr > 0) v = Math.min(v, 10);
+        v = Math.min(v, first ? 60 : PRE_PEAK);
+    }
+    sc.climax = clamp(Math.round(v), 0, 100);
+    if (s.doing) { sc.doing = s.doing; sc.beats = [...(sc.beats ?? []), s.doing].slice(-MAX_BEATS); }
+    for (const k of ['fantasy', 'thought', 'pace', 'place', 'next']) if (s[k]) sc[k] = s[k];
+    return sc;
+}
+
 /** A finished scene in a few words, for the memory of later ones. */
 export function summarize(sc, endAt) {
     return {
@@ -453,7 +518,23 @@ export function applyIntimacy(state, scene, { at, minutes = 0 }) {
     } else if (s?.inBed && !intim.profile) intim.profile = s.inBed;
     if (s?.voice && !intim.voice) intim.voice = s.voice;
 
-    let closeness = ['none', 'near', 'active'].includes(scene?.closeness) ? scene.closeness : null;
+    let closeness = ['none', 'near', 'active', 'solo'].includes(scene?.closeness) ? scene.closeness : null;
+    // him alone: a solo of his own, never a scene with her
+    const solo = intim.solo?.visible ? intim.solo : null;
+    if (closeness === 'solo' && !scene?.intimacy) {
+        if (intim.scene?.visible) endScene(intim, at);
+        else intim.scene = null;
+        const orgasmChar = (scene?.orgasm ?? []).includes('char');
+        intim.solo = advanceSolo(solo, parseSolo(scene?.solo), { at, minutes, orgasm: orgasmChar });
+        intim.soloLast = at;
+        return solo ? null : 'solo';
+    }
+    if (solo) {
+        // over: the story moved on, or she came in and it became a scene with her
+        intim.solo = null;
+        intim.soloLast = at;
+        if (closeness === 'none' || closeness === null && !s) return 'end';
+    }
     // actual intercourse in Stork's own reading is a scene whatever the field says
     if (scene?.intimacy) closeness = 'active';
     if (closeness === null) closeness = s ? 'active' : 'none';
@@ -477,6 +558,9 @@ export function applyIntimacy(state, scene, { at, minutes = 0 }) {
     }
     const wasVisible = !!base?.visible;
     const sc = advance(base, s, { active: closeness === 'active', at, minutes: wasVisible ? minutes : 0, orgasm });
+    // the kinks in play are the cards' own, each once: a word the reading made up never reaches the story model
+    const known = Array.isArray(intim.kinks) ? intim.kinks.map(k => k.name) : [];
+    if (known.length && Array.isArray(sc.kinks)) sc.kinks = [...new Set(sc.kinks.map(k => bestKink(k, known)).filter(Boolean))];
     if (sc.visible) sc.everActive = true;
     else if (base?.everActive) sc.everActive = true;
     intim.scene = sc;
@@ -493,19 +577,60 @@ export function sameKink(a, b) {
     return sx.length > 0 && sx.some(w => sy.includes(w));
 }
 
-/** The kinks to show as chips: every kink of the card and the persona, the active ones lit. */
+const kinkStems = s => norm(s).split(' ').filter(w => w.length > 3).map(w => w.slice(0, 5));
+/** The kink of the list a named one is: exact first, then the most words in common (the shortest on a tie); null. */
+export function bestKink(name, list) {
+    const x = norm(name);
+    const exact = list.find(n => norm(n) === x);
+    if (exact) return exact;
+    const sx = kinkStems(name);
+    let best = null, score = 0;
+    for (const n of list) {
+        if (!sameKink(n, name)) continue;
+        const sy = kinkStems(n);
+        const common = sx.filter(w => sy.includes(w)).length;
+        // what is left over counts against it: «глубокий минет» is not «утренний минет спящему партнёру»
+        const s = (norm(n).includes(x) || x.includes(norm(n)) ? 2 : 0) + common - 0.25 * (sy.length - common);
+        if (s > score || (s === score && best && n.length < best.length)) { best = n; score = s; }
+    }
+    return score >= 0.5 ? best : null;
+}
+
+/**
+ * The kinks to show as chips: every kink of the card and the persona; each kink in play lights the one of them it is,
+ * never two at once. A kink that is not in the cards is not shown (while the cards are not read yet — what is in play).
+ */
 export function kinkChips(state) {
     const intim = state.intim ?? {};
     const active = intim.scene?.kinks ?? [];
-    const all = Array.isArray(intim.kinks) ? intim.kinks.map(k => k.name) : [];
-    const names = all.slice(0, 20);
-    for (const k of active) if (!names.some(n => sameKink(n, k))) names.push(k);
-    return names.slice(0, 20).map(name => ({ name, on: active.some(k => sameKink(name, k)) }));
+    const all = Array.isArray(intim.kinks) ? intim.kinks.map(k => k.name).slice(0, 20) : [];
+    if (!all.length) {
+        const seen = [];
+        for (const k of active) if (!seen.some(n => sameKink(n, k))) seen.push(k);
+        return seen.slice(0, 8).map(name => ({ name, on: true }));
+    }
+    const lit = new Set(active.map(k => bestKink(k, all)).filter(Boolean));
+    return all.map(name => ({ name, on: lit.has(name) }));
 }
 
 // #endregion
 
 // #region For the story model
+
+/** «ноет ушибленное колено» and «ушиб колена о столик» are the same thing: two word stems in common (one, if one is all). */
+const stems4 = t => String(t ?? '').toLowerCase().replace(/ё/g, 'е').split(/[^a-zа-я]+/).filter(w => w.length >= 4).map(w => w.slice(0, 4));
+export function sameThing(a, b) {
+    const x = stems4(a), y = stems4(b);
+    const common = x.filter(w => y.includes(w)).length;
+    return common >= 2 || (common >= 1 && Math.min(x.length, y.length) === 1);
+}
+
+/** Injuries not healed yet: «Нина — ссадина на колене». */
+export function injuriesNow(state) {
+    const now = (state.clock?.day ?? 0) * 1440 + (state.clock?.minutes ?? 0);
+    return (Array.isArray(state.injuries) ? state.injuries : []).filter(i => i.heals > now)
+        .map(i => ({ who: i.who, name: state.people?.[i.who]?.name || i.who, what: i.what }));
+}
 
 /** Limits the code sets for the next reply: only what the numbers forbid, never how he should behave. */
 export function guards(sc) {
@@ -559,6 +684,22 @@ export function intimacyPrompt(state, { userSkip = false, erectionDrops = true }
     if (!intim) return '';
     const sc = userSkip ? null : intim.scene;
     const firm = erectionDrops ? '' : ' His erection does not fail him because of drink, stress or tiredness.';
+    const solo = userSkip ? null : intim.solo;
+    if (solo?.visible) {
+        const L = ['[{{char}} is alone, pleasuring himself — guidance for writing it; never mention it.]'];
+        L.push(`Closeness to release: ${pct(solo.climax)} · ${solo.minutes} min in${solo.pace ? ` · ${solo.pace}` : ''}.${firm}`);
+        if (solo.fantasy) L.push(`On his mind: ${solo.fantasy}.`);
+        const own = portrait(intim).filter(l => l.startsWith('{{char}}'));
+        if (own.length) L.push(...own);
+        const place = placeLine(solo.place);
+        if (place) L.push(place);
+        if (solo.beats?.length) L.push(`Already done in the last replies: ${solo.beats.join('; ')} — something else now, the way he would.`);
+        L.push('Write it true to him — his pace, his habits, what he imagines — with a real body: it builds, it does not jump. {{user}} is not part of it: never write her actions, words or thoughts; if she comes in, that is for the user to write.');
+        if (solo.refr > 0) L.push(`He has just finished: about ${solo.refr} min before his body is ready again.`);
+        else if (solo.climax < 85) L.push(`He is only at ${solo.climax}%: no release in this reply.`);
+        if (solo.next) L.push(`This reply: ${solo.next}`);
+        return L.join('\n');
+    }
     if (sc?.visible) {
         const u = sc.user, c = sc.char;
         const L = ['[Intimate scene in progress — guidance for writing it; never mention it.]'];
@@ -575,6 +716,8 @@ export function intimacyPrompt(state, { userSkip = false, erectionDrops = true }
         const known = knownOf(intim.history, sc);
         if (known.length) L.push(`{{char}} already knows what {{user}} responds to: ${known.join(', ')} — he uses it the way a partner who remembers would.`);
         if (sc.beats?.length) L.push(`In the last replies he already: ${sc.beats.join('; ')} — do something different now.`);
+        const hurts = injuriesNow(state);
+        if (hurts.length) L.push(`Healing injuries: ${hurts.map(i => `${i.name} — ${i.what}`).join('; ')}. They matter only where the body meets them — kneeling on a scraped knee, a grip on a bruised wrist, weight on a sore side: then {{char}} notices and adapts as he would (another position, a lighter hand). Not a topic, not in every reply.`);
         L.push('Bodies are real: breath, stamina, muscles, wetness, positions that tire. Never speak or decide for {{user}}.');
         L.push(NO_TEMPLATE);
         L.push(...guards(sc));

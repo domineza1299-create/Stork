@@ -30,13 +30,14 @@ const RELATIONS = ['parent', 'child', 'sibling', 'spouse', 'partner', 'ex', 'gra
  * @param {boolean} [input.trackExes] false: no exes on the tree
  * @param {boolean} [input.erectionDrops] false: outside causes never weaken his erection
  */
-export function buildScenePrompt({ userName, charName, dateText, status, timeline = '', earlier, userMessage, reply, skipCounted = false, intim = null, familyKnown = '', trackExes = true, erectionDrops = true }) {
+export function buildScenePrompt({ userName, charName, dateText, status, timeline = '', earlier, userMessage, reply, skipCounted = false, intim = null, familyKnown = '', trackExes = true, erectionDrops = true, turnOns = '', health = null, dateGuess = false }) {
     const relations = RELATIONS.filter(r => trackExes || r !== 'ex').map(r => `"${r}"`).join(' | ');
     const full = intim?.full ? intim.section : null;
     return `${timeline ? `STORY SO FAR (what happened lately, by story time; the newest line is right before these messages):
 ${timeline}
 
-` : ''}Story time before these messages: ${dateText}. The scene goes on from there: a new day begins only if these messages move to it.${skipCounted ? `
+` : ''}Story time before these messages: ${dateText}. The scene goes on from there: a new day begins only if these messages move to it.${dateGuess ? `
+That date is only the tracker's guess. If these messages name the date, put it into "date"; the days between the guess and that date are NOT story time: never count them into "minutes".` : ''}${skipCounted ? `
 The time skip the user message opens with is ALREADY COUNTED: the time above is after it. "minutes" is only the time that passes after that, in the reply; the scene is set after the skip.` : ''}
 {{user}} = ${userName} (woman), {{char}} = ${charName} (man).
 ${status ? `
@@ -70,7 +71,7 @@ Return JSON:
   "past_intimacy": [ { "days_ago": number, "protection": "none" | "condom" | "pill_only", "finished_inside": true | false } ],
   "orgasm": [ "user" and/or "char" ],
   "lifestyle": [ { "type": ${LIFESTYLE_TYPES.map(t => `"${t}"`).join(' | ')}, "who": "user" | "char", "fever": true | false } ],
-  "injury": [ { "who": "user" | "char", "what": "a few words in Russian" } ],
+  "injury": [ { "who": "user" | "char", "what": "a few words in Russian", "heal_days": number } ],
   "pregnancy_test": true | false,
   "doctor_visit": true | false,
   "ultrasound": true | false,
@@ -79,21 +80,30 @@ Return JSON:
   "baby_sex": null | "girl" | "boy" | ["girl", "boy"],
   "pregnancy_claim": null or { "weeks": number or null, "days": number or null, "partner_knows": true | false, "quote": "the words that say it, up to 15 words, as written" },
   "diagnoses": [] — almost always empty; only if these messages show a doctor finding it or state it as a fact: some of ${DIAGNOSES.map(d => `"${d}"`).join(', ')},
-  "period": "started" | "ongoing" | null,
+  "period": "started" | "ongoing" | "over" | null,
+  "period_days_ago": number | null,
   "family": [ { "name": "the relative's own name, as written", "sex": "male" | "female" | null, "relation": ${relations}, "of": "user" | "char" | "the name of another relative" } ],
-  "missed_pill": true | false,
+  "missed_pill": true | false,${health ? `
+  "health": [ { "action": "illness_new" | "med_taken" | "med_stop" | "doctor_visit" | "cured" | "hospital" | "genetic_reveal", "who": "user" | "char", ... } ],` : ''}
   "emergency_pill": true | false,
   ${intim ? CLOSENESS_FIELD : ''}${full ? `
   ${full.field}` : ''}
   "people": {
     "user": { "energy": -3..3 or null, "libido": -3..3 or null, "mood": "1-3 words in Russian" or null, "note": "Russian, 1-2 sentences" or null },
-    "char": { the same, plus "sperm_note": "Russian, 1-2 sentences" or null }
+    "char": { the same, plus "sperm_note": "Russian, 1-2 sentences" or null, "desire_trigger": "a few words in Russian" or null, "desire_shown": "3-6 words in Russian" or null }
   }
 }
 Rules:
 - Service lines of other extensions ([MN: …], status blocks, trackers' tags) are not the story: never take the time, the date or events from them.
 - Count intimacy only for actual intercourse between {{user}} and {{char}} in these messages.
 - "scene_after_skip": true when the messages first jump forward in time and the scene with everything in it (closeness, drinking, a test, a doctor, an injury) comes after the jump ("four months later… he pours a whiskey"); false when things happen first and the time passes after them (they made love, then slept till morning), or when there is no jump.
+${health ? `- "health": illnesses of the body and the mind of {{user}} and {{char}} only — events that HAPPEN in these messages; empty if none. Never an injury (that goes into "injury"), never a pregnancy or its symptoms (the tracker has them). Already tracked: ${health.known || 'nothing'} — use the same names, never report those as new.
+  - "illness_new": someone falls ill or a mental condition shows ("name" in Russian, "type": "physical" | "mental", "severity": "mild" | "moderate" | "severe", "chronic": true | false, "fever": true | false, "about": one phrase in Russian on what it is, "care": ["Russian"], "meds": ["Russian, groups of medicines, no doses"]).
+  - "med_taken": took a dose ("med", "for" — the illness); also something nobody prescribed. "med_stop": quit a medicine ("med").
+  - "doctor_visit": a doctor or a therapist sees them ("diagnosis" — what the doctor said, "prescribed": [{ "name", "schedule", "days" }], "next_visit_days": number or null, "about", "care").
+  - "cured": the illness ends in the story ("name"). "hospital": "state": "admit" | "discharge". "genetic_reveal": tests show a hereditary risk ("name", "risk" 1-95, "type").
+` : ''}- "injury": only a NEW injury these messages cause. The healing injuries in the tracker above are already known: never report them again, even in other words. "heal_days": how long it takes to heal (a scratch 3-5, a bruise 7-10, a cut 7, a sprain 14, a fracture 40+).
+- "pregnancy_test", "doctor_visit", "ultrasound": true only when it BEGINS in these messages. A visit or a test that was already going on in the earlier reply (the same appointment continues, they talk about its results) is not a new one: false.
 - "illness" only for a sickness with a raised temperature (flu, an infection, a cold with fever) — then "fever": true. Injuries, bruises, cuts, pain, a hangover or tiredness are NOT an illness: put an injury into "injury", tiredness into "energy".
 - "pregnancy_claim": when these messages, the USER MESSAGE included, state as a fact that {{user}} is pregnant: she says or thinks it as something she knows, a positive test, a doctor confirms it, the narration says so. The user writes {{user}} herself, so her own words count even if the tracker says she is not pregnant. "weeks"/"days": the term the text names (months → weeks: 2 months ≈ 8 weeks; "two weeks of delay" ≈ 6 weeks), null if no term. "partner_knows": true if {{char}} knows in these messages. null when it is only a fear, a guess, a joke, a plan, a dream, a question, or nothing like that.
 - "family": almost always empty. Only relatives of {{user}} or {{char}} that these messages name or show for the first time, or a relation that changes now: "name is relation of of" (Галина — mother of {{char}}: { "name": "Галина", "sex": "female", "relation": "parent", "of": "char" }). "name" is the relative's own name exactly as the story gives it — never a relation word or a description («мама», «бабушка», «мать Игоря»); a relative the messages do not name is not listed; names in the language of the story. Someone already on the family tree is never listed again under another form of the name. When {{user}} and {{char}} marry, become a couple${trackExes ? ' or break up' : ''} in these messages: { "name": "char", "relation": ${trackExes ? '"spouse" | "partner" | "ex"' : '"spouse" | "partner"'}, "of": "user" }.${trackExes ? '' : ' Former partners (exes) are not tracked: never list them.'} Not friends, colleagues or a relative only mentioned in passing; a baby born in the story is counted by the tracker itself.${intim ? `
@@ -103,7 +113,8 @@ ${full.rules}` : ''}
 - "baby_sex": only while she is pregnant, and only when these messages state the baby's sex as a fact: a doctor or an ultrasound says it, she tells what the doctor said, the narration names it. A list for twins, one per baby. If it differs from the tracker, these messages win. null when the sex is not named, only hoped for, guessed or asked about; never invent it.
 - "partner_learns_pregnancy": true only when {{char}} learns in these messages that {{user}} is pregnant (she tells him, he sees a positive test, a doctor says it with him there); false if he already knew, if it is only a guess or a fear, or if nothing like that happened.
 - "past_intimacy": intercourse between {{user}} and {{char}} the messages speak of as already past and not shown in the story before ("three weeks ago we slept together", "they have been sleeping together since spring": the latest time), with how many days before the END of these messages it was; finished_inside true unless said otherwise; protection "none" unless said. Empty if nothing like that.
-- "period": "started" if her period begins in these messages, "ongoing" if they plainly show she has it now (she says so, blood, pads, he knows it is her period); null if it is only a guess, PMS, or not shown.
+- "period": "started" if her period begins in these messages, "ongoing" if they plainly show she has it now (she says so, blood, pads, he knows it is her period), "over" if the messages show it came and already ended (during a time skip: "a week in bed with her period", "her period is over"); null if it is only a guess, PMS, or not shown.
+- "period_days_ago": how many days before the END of these messages her period began — counted by the story time of these messages (a week-long skip that starts with her period: about 7). 0 when it begins right now; null when "period" is null.
 - "diagnoses": only what a doctor finds in these messages or what the story states as a fact, never a guess from symptoms. {{char}}: "varicocele"; "vasectomy" if he had one before; "vasectomy_now" if he has the operation in these messages. {{user}}: "pcos", "endometriosis". Empty if nothing like that.
 - "people": how each of them is RIGHT NOW. energy and libido: compared with their usual level as the story shows it now (0 as usual, −3 drained or not in the mood at all, +3 full of energy or burning with desire); null if the messages show nothing about it.
 - "note" is a conclusion, not a retelling. The reader has just read the scene: never repeat what happened or what the person did. Say what the text leaves out: why this person is like this now, from the body. Put together the tracker data (cycle phase and its hormones, period, PMS, ovulation, pregnancy week, testosterone by the time of day, tiredness, recovery after a climax, alcohol, lack of sleep, illness, stress) and what the messages show. If they are irritable, angry, tearful, tired, cold or aroused, explain the bodily reason in plain words anyone understands: hormones, oestrogen, progesterone, testosterone, adrenaline, blood sugar are fine; no Latin, no clinical jargon. Where the body explains nothing, say what the state will likely lead to: what the person will need or want next. 1-2 short sentences in Russian, concise. Never invent events or symptoms that neither the tracker nor the messages support. null if nothing new.
@@ -111,6 +122,8 @@ ${full.rules}` : ''}
   Bad, a retelling: "Отнёсся к началу месячных у Нины спокойно: принёс воду и предложил обезболивающее."
   Good, a conclusion: "Вечером тестостерон ниже, напора нет, поэтому забота даётся ему легко; рядом с ней он сейчас скорее нежен, чем страстен."
   Good, a conclusion: "Раздражительность от ПМС: перед месячными падают эстроген и прогестерон, нервы тоньше, мелочи задевают сильнее."
+- "desire_trigger" (only {{char}}, outside an intimate scene): what in these messages stirred his desire for {{user}}${turnOns ? ` — by what his card says turns him on (${turnOns}), or by the moment itself` : ''}: a few words in Russian, as it happened in the text. null if nothing did; never invent one.
+- "desire_shown" (only {{char}}): if his desire for {{user}} showed in these messages, HOW it showed, 3-6 words in Russian, so later replies do not repeat it. null if it did not show.
 - "sperm_note" (only {{char}}): what the body state shown in these messages and in the tracker means for his sperm and his chance to make her pregnant now: alcohol, smoking, heat (sauna, a hot bath), fever, stress, lack of sleep, long abstinence, several orgasms in a row, recovery. A short medical conclusion in plain words, like a calm doctor would say it, no retelling of the scene, no Latin. Say what is affected now and what only later (sperm matures about 74 days, so today's drinking shows in 2-3 months${erectionDrops ? ', while erection and desire suffer right away' : ''}). 1-2 short sentences in Russian. null if nothing in these messages bears on it.${erectionDrops ? `
   Good: "Вечер с алкоголем на сперму сейчас почти не влияет — скажется месяца через два-три, а вот эрекция и выносливость сегодня будут слабее."` : `
   In this story {{char}}'s erection is never weakened by drink, stress, tiredness or illness: never say it is, in any note.

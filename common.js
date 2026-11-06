@@ -4,8 +4,9 @@
  * changes in one place. Only the layout around them differs between the two looks.
  */
 import { getContext } from '../../../extensions.js';
-import { careOf, cycleInfo, FEMALE_CONDITIONS, FEMALE_CONTRACEPTION, FEMALE_HABITS, MALE_FERTILITY, pillState } from './biology.js';
-import { dateLabel, liveNow, maleSnapshot, maleVigor, recoveryLeft, withLive } from './engine.js';
+import { FEMALE_CONDITIONS, FEMALE_CONTRACEPTION, FEMALE_HABITS, MALE_FERTILITY, careOf, cycleInfo, pillState, realism } from './biology.js';
+import { dateLabel, liveNow, maleDesire, maleSnapshot, maleVigor, recoveryLeft, temperamentOf, withLive } from './engine.js';
+import { healthOnBody } from './health.js';
 import { readStatus } from './store.js';
 
 // Persona avatar lives in personas.js; loaded lazily so a missing module never breaks Stork
@@ -16,7 +17,7 @@ import('../../../personas.js').then(m => { personas = m; }).catch(() => { });
 
 export const PHASE_TONE = { menstruation: 'period', follicular: 'calm', ovulation: 'fertile', luteal: 'calm', pms: 'warm' };
 export const ACT_LABEL = { none: 'без защиты', condom: 'презерватив', withdrawal: 'прерванный акт' };
-export const KIND_ICON = { family: 'fa-people-roof', doctor: 'fa-user-doctor', labor: 'fa-baby', injury: 'fa-bandage', recovered: 'fa-battery-full', event: 'fa-circle-dot' };
+export const KIND_ICON = { desire: 'fa-fire-flame-curved', family: 'fa-people-roof', doctor: 'fa-user-doctor', labor: 'fa-baby', injury: 'fa-bandage', recovered: 'fa-battery-full', emission: 'fa-moon', event: 'fa-circle-dot' };
 
 export const esc = text => String(text ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 export const icon = (name, extra = '') => `<i class="fa-solid ${name} stk-ic ${extra}"></i>`;
@@ -93,10 +94,11 @@ export const initials = name => String(name || '?').trim().split(/\s+/).slice(0,
 /** Her levels outside pregnancy, with the reasons in words. */
 export function femaleLevels(state, person, s) {
     const live = liveNow(state, person.key);
+    const ill = realism.health ? healthOnBody(state, person.key) : { desire: 0, energy: 0 };
     return {
         live,
-        libido: withLive(s.libido, live.libido),
-        energy: withLive(s.energy, live.energy),
+        libido: withLive(s.libido + ill.desire, live.libido),
+        energy: withLive(s.energy + ill.energy, live.energy),
         energyWhy: s.energy > 0.7 ? 'фаза даёт силы' : s.energy > 0.45 ? 'ровная' : 'фаза забирает силы',
         libidoWhy: `${s.phaseLabel}, ${s.libido > 0.8 ? 'на пике' : s.libido > 0.5 ? 'обычное для этих дней' : 'обычно ниже'}`,
     };
@@ -123,7 +125,8 @@ export function maleLevels(state, person) {
     const traits = [m.smoker ? 'курит' : '', m.drinker ? 'выпивает' : '', m.varicocele ? 'варикоцеле' : ''].filter(Boolean);
     const freshLabels = [...new Set(s.recent.filter(e => e.daysAgo <= 1).map(e => e.label))];
     const vigor = maleVigor(state, person, s);
-    const libido = withLive(s.libido, live.libido);
+    const desire = maleDesire(state, person, s);
+    const libido = desire.level;
     const hour = Math.floor(state.clock.minutes / 60);
     const dayWhy = hour >= 5 && hour < 12 ? 'утром тестостерон на пике' : hour >= 18 || hour < 5 ? 'к вечеру гормоны ниже' : 'днём ровно';
     // why the sperm numbers are what they are, with when it passes
@@ -139,7 +142,7 @@ export function maleLevels(state, person) {
         vigorWord: vigor > 0.85 ? 'на пике' : vigor > 0.65 ? 'в форме' : 'устал',
         vigorWhy: joinWhy(dayWhy, s.expectingFather ? 'будущий отец: гормоны ниже' : ''),
         libido,
-        libidoWhy: s.daysSinceLast === 0 ? 'после близости ниже' : s.daysSinceLast !== null && s.daysSinceLast >= 4 ? `${s.daysSinceLast} дн. без близости, поэтому выше` : '',
+        libidoWhy: desire.ru.join(', '),
         erectionOk,
         erectionWhy: freshLabels.length ? freshLabels.join(', ') : 'усталость или возраст',
         countWhy: joinWhy(
@@ -466,6 +469,9 @@ export function personFields(state, key, { long = false } = {}) {
                 ${age}
                 <label class="stk-field"><span>Фертильность</span><select class="text_pole" data-f="fertility">
                     ${Object.entries(MALE_FERTILITY).map(([k, v]) => `<option value="${k}" ${m.fertility === k ? 'selected' : ''}>${v.label}</option>`).join('')}
+                </select></label>
+                <label class="stk-field"><span>Темперамент</span><select class="text_pole" data-f="temperament">
+                    ${[['low', 'сдержанный'], ['normal', 'обычный'], ['high', 'горячий']].map(([k, l]) => `<option value="${k}" ${temperamentOf(state, p) === k ? 'selected' : ''}>${l}</option>`).join('')}
                 </select></label>
             </div>
             ${checks(`${check('smoker', m.smoker, 'курит')}${check('drinker', m.drinker, 'часто выпивает')}`)}

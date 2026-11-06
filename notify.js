@@ -134,6 +134,8 @@ export const notifyWarn = (text, options = {}) => notify(text, { icon: 'fa-trian
 export function eventLook(event) {
     const t = String(event?.text ?? '');
     if (event?.kind === 'labor') return { icon: 'fa-baby', tone: 'preg' };
+    if (event?.kind === 'desire') return { icon: 'fa-fire-flame-curved', tone: 'pink' };
+    if (event?.kind === 'emission') return { icon: 'fa-moon', tone: 'accent' };
     if (event?.kind === 'period_hint') return { icon: 'fa-droplet', tone: 'warm' };
     if (event?.kind === 'doctor') return { icon: 'fa-user-doctor', tone: 'accent' };
     if (event?.kind === 'injury') return { icon: 'fa-bandage', tone: 'warm' };

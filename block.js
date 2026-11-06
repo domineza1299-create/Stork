@@ -8,7 +8,9 @@ import { getContext } from '../../../extensions.js';
 import { activeIn, currentState, readStatus, settings, stateBefore } from './store.js';
 import { applyAutoFolds, blockHeadHtml, handleAction, onKeyActivate, renderBrief, renderCalendar, renderNow } from './ui.js';
 import { renderFamily } from './tree.js';
-import { sceneBlockHtml, sceneOpen, setSceneOpen } from './closeness.js';
+import { sceneBlockHtml, sceneOpen, setSceneOpen, soloBlockHtml } from './closeness.js';
+import { healthHtml } from './healthui.js';
+import { realism } from './biology.js';
 
 const OPEN_KEY = 'stork_block_open';
 /** The one infoblock and its view: tab, editing, picked day — survive re-renders. */
@@ -116,18 +118,16 @@ function place(mesEl, el) {
 
 /** «Кратко»: no tabs, only what this reply changed; the window has the rest. */
 function briefHtml(state, id) {
-    return `${renderBrief(state, stateBefore(id), view)}
-        <div class="stk-ib-foot">
-            <button type="button" class="stk-link" data-stk-act="open-window" data-tab="today"><i class="fa-solid fa-dove stk-ic"></i>Подробнее — в окне Stork</button>
-        </div>`;
+    return renderBrief(state, stateBefore(id), view);
 }
 const isBrief = () => settings().blockStyle !== 'full';
 
 function bodyHtml(state) {
     // a pregnancy has no tab of its own: it opens «Сейчас», first thing
     const tabs = [['now', 'fa-sun', 'Сейчас'], ['calendar', 'fa-calendar-days', 'Календарь'], ['family', 'fa-people-roof', 'Древо']];
+    if (realism.health) tabs.push(['health', 'fa-notes-medical', 'Здоровье']);
     if (!tabs.some(([id]) => id === view.tab)) view.tab = 'now';
-    const panel = view.tab === 'calendar' ? renderCalendar(state, view) : view.tab === 'family' ? renderFamily(state, view) : renderNow(state, view);
+    const panel = view.tab === 'calendar' ? renderCalendar(state, view) : view.tab === 'family' ? renderFamily(state, view) : view.tab === 'health' ? healthHtml(state) : renderNow(state, view);
     return `<nav class="stk-tabs">${tabs.map(([id, ic, label]) => `<button type="button" class="stk-tab${view.tab === id ? ' is-on' : ''}" data-stk-act="tab" data-tab="${id}"><i class="fa-solid ${ic} stk-ic"></i><span>${label}</span></button>`).join('')}</nav>
         <div class="stk-panel">${panel}</div>
         <div class="stk-ib-foot">
@@ -146,7 +146,7 @@ export function scheduleBlocks() {
 function sceneHtml(state, reading) {
     const s = settings();
     if (!s.intimacy || !s.intimacyBlock || s.readMode !== 'analyzer' || state.minorBlocked) return '';
-    return sceneBlockHtml(state, { open: sceneOpen(), reading, brief: s.blockStyle !== 'full' });
+    return sceneBlockHtml(state, { open: sceneOpen(), reading, brief: s.blockStyle !== 'full' }) || soloBlockHtml(state, { open: sceneOpen(), reading });
 }
 
 /** Draws (or removes) the infoblock. force: even while she is typing in its form. */

@@ -3591,3 +3591,173 @@ div.stk-log-row {
 .stk-btn.is-warn .stk-ic {
     color: var(--stk-warm);
 }
+
+
+/* how much story time the reply took, next to the date in the infoblock */
+.stk-ib-pass {
+    margin-left: 5px;
+    font-style: normal;
+    color: var(--stk-accent);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+/* an icon inside a scene chip (a healing injury) */
+.stk-ag-chip > .stk-ic {
+    margin-right: 4px;
+    font-size: 0.85em;
+}
+
+/* ═══ Him alone: the scene block in his colour, smaller and quieter ═══ */
+.stk-ag.is-solo {
+    --ag-tone: var(--stk-him, var(--stk-accent));
+}
+
+.stk-ag.is-solo .stk-ag-flame,
+.stk-ag.is-solo .stk-ag-mid > b {
+    color: var(--ag-tone);
+}
+
+.stk-ag.is-solo .stk-ag-track.is-climax > span,
+.stk-ag.is-solo .stk-ag-gauge.is-climax .stk-ag-gauge-l .stk-ic {
+    background: var(--ag-tone);
+}
+
+.stk-ag.is-solo .stk-ag-gauge.is-climax .stk-ag-gauge-l .stk-ic {
+    background: none;
+    color: var(--ag-tone);
+}
+
+.stk-ag.is-solo .stk-ag-side.is-right b {
+    font-variant-numeric: tabular-nums;
+    color: var(--ag-tone);
+}
+
+.stk-ag-kinks.is-facts .stk-ag-chip {
+    color: var(--stk-muted);
+    font-size: 0.76em;
+}
+
+/* his thought here is a side note, not the headline */
+.stk-ag-solo-thought {
+    color: var(--stk-muted);
+    font-size: 0.82em;
+    font-style: italic;
+    line-height: 1.4;
+}
+
+/* ═══ Health and psyche: the «Здоровье» tab and the infoblock ═══ */
+.stk-hl-person {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.stk-hl-ill,
+.stk-hl-med {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px 10px;
+    border-radius: 10px;
+    border: 1px solid var(--stk-line);
+    border-left: 3px solid var(--hl-tone, var(--stk-line-strong));
+    background: var(--stk-glass);
+}
+
+.stk-hl-ill.is-s0 { --hl-tone: color-mix(in srgb, var(--stk-accent) 55%, transparent); }
+.stk-hl-ill.is-s1 { --hl-tone: var(--stk-warm); }
+.stk-hl-ill.is-s2 { --hl-tone: color-mix(in srgb, #e0704f 85%, var(--stk-text)); }
+.stk-hl-ill.is-s3 { --hl-tone: color-mix(in srgb, #e04848 90%, var(--stk-text)); }
+.stk-hl-med { --hl-tone: color-mix(in srgb, var(--stk-him, var(--stk-accent)) 60%, transparent); }
+
+.stk-hl-head {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    min-width: 0;
+}
+
+.stk-hl-head > .stk-ic {
+    color: var(--hl-tone, var(--stk-muted));
+}
+
+.stk-hl-head b {
+    font-weight: 600;
+}
+
+.stk-hl-stage,
+.stk-hl-chip {
+    padding: 0 7px;
+    border-radius: 999px;
+    border: 1px solid var(--stk-line);
+    font-size: 0.78em;
+    line-height: 1.6;
+    white-space: nowrap;
+}
+
+.stk-hl-stage {
+    border-color: color-mix(in srgb, var(--hl-tone) 60%, transparent);
+    color: var(--hl-tone);
+}
+
+.stk-hl-tools {
+    display: inline-flex;
+    gap: 2px;
+    margin-left: auto;
+}
+
+.stk-hl-meta,
+.stk-hl-extra {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px 12px;
+    color: var(--stk-muted);
+    font-size: 0.86em;
+}
+
+.stk-hl-meta .stk-ic,
+.stk-hl-extra .stk-ic {
+    margin-right: 4px;
+    font-size: 0.9em;
+}
+
+.stk-hl-meta .is-warm,
+.stk-hl-extra .is-warm { color: var(--stk-warm); }
+.stk-hl-meta .is-good { color: color-mix(in srgb, #5fbf8a 80%, var(--stk-text)); }
+.stk-hl-meta .is-crit,
+.stk-hl-extra .is-crit { color: color-mix(in srgb, #e04848 90%, var(--stk-text)); font-weight: 600; }
+
+.stk-hl-ref {
+    font-size: 0.86em;
+}
+
+.stk-hl-ref > summary {
+    cursor: pointer;
+    color: var(--stk-muted);
+    list-style: none;
+}
+
+.stk-hl-ref > summary .stk-ic {
+    margin-right: 5px;
+}
+
+.stk-hl-ref > div {
+    margin-top: 4px;
+    line-height: 1.45;
+}
+
+.stk-hl-journal > summary {
+    cursor: pointer;
+    list-style: none;
+}
+
+/* Abstinence in the window: the words and a thin bar of how much their nature bears */
+.stk-abst { align-items: center; }
+.stk-abst > span:first-of-type { flex: 0 1 auto; }
+.stk-abst-bar { flex: 1 1 60px; max-width: 140px; height: 4px; border-radius: 2px; background: color-mix(in srgb, currentColor 15%, transparent); overflow: hidden; margin-left: auto; }
+.stk-abst-bar > span { display: block; height: 100%; border-radius: 2px; background: var(--stk-muted, currentColor); }
+.stk-abst.is-pink .stk-abst-bar > span { background: var(--stk-pink, #d97aa0); }
+.stk-abst.is-warm .stk-abst-bar > span { background: var(--stk-warm, #e0a050); }
+.stk-abst.is-warm { color: var(--stk-warm, #e0a050); }
