@@ -340,6 +340,9 @@ export function applyHealth(state, events, rng = Math.random, log = () => {}) {
                 break;
             }
             case 'med_taken': {
+                // «a pill», «some medicine» for nothing tracked: a passing moment of the story, not a course to keep
+                const named = String(ev.med ?? ev.name ?? '').trim();
+                if (/^(таблетк[аиуеой]*|лекарств[оаму]*|пилюл[ьяию]*|что-то|pill|medicine|meds)$/i.test(named) && !p.ill.some(i => !i.cured && !i.remission && sameName(i.name, ev.for))) break;
                 let med = p.meds.find(m => sameName(m.name, ev.med ?? ev.name));
                 // something from the cabinet nobody prescribed: self-treatment
                 if (!med) med = addMed(state, key, { name: ev.med ?? ev.name, forName: ev.for, schedule: 'по необходимости', days: 7, source: 'self' }, rng, log);

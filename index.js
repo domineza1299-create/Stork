@@ -356,7 +356,7 @@ function intimacyRequest(before, texts, userSkip) {
     if (!full) return { full: false };
     const kinks = Array.isArray(intim.kinks) ? intim.kinks : undefined;
     const profile = intim.profile ?? undefined;
-    const cards = kinks && profile ? '' : (() => {
+    const cards = kinks ? '' : (() => {
         const c = readCards();
         return [`{{char}} (${c.charName}):\n${bedExcerpt(c.charText, 3500)}`, `{{user}} (${c.userName}):\n${bedExcerpt(c.userText, 1800)}`].join('\n\n');
     })();

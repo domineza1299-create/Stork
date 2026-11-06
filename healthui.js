@@ -3,7 +3,7 @@
  * infoblock. Stork's look: cards, chips, Font Awesome. The brief shows only what matters now.
  */
 import { esc, icon, nameOf } from './common.js';
-import { activeInjuries } from './engine.js';
+import { absMinute, activeInjuries, injuryInfo } from './engine.js';
 import { activeIll, DAY_MIN, diseaseInfo, forecast, stageOf, STAGES } from './health.js';
 import { realism } from './biology.js';
 
@@ -91,7 +91,7 @@ function personHealth(state, key, opts) {
         rem.length ? `<span>${icon('fa-leaf')}ремиссия: ${esc(rem.map(i => i.name).join(', '))}</span>` : '',
         visit != null ? `<span class="${visit <= day ? 'is-warm' : ''}">${icon('fa-user-doctor')}к врачу: ${visit <= day ? 'пора' : `через ${days(visit - day)}`}</span>` : '',
         gens.length ? `<span>${icon('fa-dna')}предрасположенность: ${esc(gens.map(g => `${g.name} ${g.risk}%`).join(', '))}</span>` : '',
-        ...hurts.map(i => `<span class="is-warm">${icon('fa-bandage')}${esc(i.what)}</span>`),
+        ...hurts.map(i => { const x = injuryInfo(i, absMinute(state.clock)); return `<span class="${x.level >= 3 || x.fresh ? 'is-warm' : ''}" title="${esc(x.grade)} травма, зажило ${Math.round(x.healed * 100)}%">${icon('fa-bandage')}${esc(i.what)} · ${esc(x.stage)}, ещё ~${x.daysLeft} дн.</span>`; }),
     ].filter(Boolean);
     return `<div class="stk-card stk-hl-person">
         <div class="stk-card-title">${icon(key === 'user' ? 'fa-venus' : 'fa-mars')}${esc(nameOf(person))}</div>

@@ -118,3 +118,22 @@ export function scrubShape(data, names = []) {
     };
     return JSON.stringify(walk(value), null, 2);
 }
+
+/**
+ * The last guard before a report leaves the browser: whatever looks like a key, a token, a password or an address is
+ * cut out — even if a provider's error message echoed it. The model's name stays (gpt-5.6-sol is fine).
+ */
+export function redactSecrets(text) {
+    return String(text ?? '')
+        // keys of the known providers and a «Bearer …» header
+        .replace(/\b(?:sk|sk-ant|sk-proj|sk-or|rk|pk|gsk|xai|hf|ghp|gho|ghu|ghs|glpat|r8|nvapi|pplx|fw|csk)[-_][A-Za-z0-9_\-]{6,}/g, '[ключ скрыт]')
+        .replace(/\bAIza[0-9A-Za-z_\-]{20,}/g, '[ключ скрыт]')
+        .replace(/\b(Bearer|Basic|Token)\s+[A-Za-z0-9._~+/=\-]{8,}/gi, '$1 [скрыто]')
+        // «api_key: …», «"password": "…"», «x-api-key=…»
+        .replace(/((?:api[_-]?key|x-api-key|apikey|secret|token|access[_-]?token|password|passwd|authorization|auth)["']?\s*[:=]\s*["']?)(?!Bearer\b|Basic\b)[^\s"',;}]{4,}/gi, '$1[скрыто]')
+        // addresses: a custom endpoint or a proxy can carry a key in itself
+        .replace(/\b(?:https?|wss?):\/\/[^\s"'<>)\]]+/gi, '[адрес скрыт]')
+        .replace(/\b\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?\b/g, '[ip скрыт]')
+        // any long opaque run of letters and digits (a token, a session id)
+        .replace(/\b(?=[A-Za-z0-9_\-]*\d)(?=[A-Za-z0-9_\-]*[A-Za-z])[A-Za-z0-9_\-]{32,}\b/g, '[скрыто]');
+}

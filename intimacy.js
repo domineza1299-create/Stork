@@ -148,11 +148,12 @@ export function soloKink(intim) {
  */
 export function sectionPrompt({ scene = null, memory = '', kinks, profile, cards = '', voice = null, erectionDrops = true, userSkip = false, injuries = '', abstain = null }) {
     // the kinks and the profile are read together, from the cards: an old chat that has kinks but no profile reads both anew
-    const learn = !Array.isArray(kinks) || !profile;
+    // read once: the cards at setup give the list; only a chat that never had one reads them here, once
+    const learn = !Array.isArray(kinks);
     const context = [
         `INTIMATE SCENE BEFORE THESE MESSAGES (tracked by the director):\n${stateLine(scene)}${userSkip ? '\nThe user message opens with a time skip: whatever scene there was is over.' : ''}`,
         memory ? `EARLIER INTIMACY OF THESE TWO:\n${memory}` : '',
-        injuries ? `HEALING INJURIES: ${injuries}. Count them in "discomfort", "pose" and "next" only when a position or a touch meets them.` : '',
+        injuries ? `HEALING INJURIES: ${injuries}. Count one in "discomfort", "pose" or "next" only in the reply where a position or a touch actually presses it — not as a standing ache.` : '',
         // long abstinence: a more sensitive body, a shorter way to climax (and more semen) — medically so
         abstain && abstain.days >= 3 ? `HIS ABSTINENCE: {{char}} has gone ${abstain.days} days without release (${abstain.pct}% of what his nature bears). His body is more sensitive: arousal builds faster for him and he may finish sooner than usual — count it in his "climax"; he may have to hold back.` : '',
         voice ? `HOW {{char}} TALKS AND THINKS: ${voice}` : '',
@@ -191,8 +192,8 @@ export function sectionPrompt({ scene = null, memory = '', kinks, profile, cards
   - "dynamic": what the scene is now, given who both of them are. "phase": 0 prelude (kissing, undressing) · 1 foreplay · 2 preparing her body · 3 intercourse begins · 4 build-up · 5 climax · 6 afterglow; it moves with the story and can go back.
   - "readiness" (her only): her arousal and wetness — how ready her body is for sex. It rises with whatever arouses HER (touch, kisses, words, her kinks, the situation itself) and can rise fast when the story shows she is very turned on; it falls with discomfort, fear, cold, distraction. Low readiness with penetration means discomfort or pain.
   - "climax": how close each of them is to orgasm right now, 0-100, by what is actually done and how; it falls with pauses, discomfort, distraction. Hers cannot run ahead of her readiness (readiness 30 → climax at most ~45). 100 only at the moment of orgasm (the orgasm itself goes into "orgasm" above).
-  - "pose": the position they are in now, a few words ("она сверху", "у стены, он сзади"); null before there is one. "pose_new": true if they changed position in these messages.
-  - "state": 1-3 words for how each of them is right now (breath, body, composure). "discomfort": a few words (a leg gone numb, knees on a hard floor, a cramp), or null.
+  - "pose": the position they are in now, a few words ("она сверху", "у стены, он сзади"); null before there is one. "pose_new": true if they changed position in these messages. ${REACH} Steer "next" by it.
+  - "state": 1-3 words for how each of them is right now (breath, body, composure). "discomfort": a few words (a leg gone numb, knees on a hard floor, a cramp) — only what is felt NOW, in these messages; numbness and a stiff neck pass within minutes once the position changes or the body rests; null when it eased or the messages do not show it.
   - "char_did": 3-6 words, the main thing {{char}} did in these messages ("целовал шею", "спросил, готова ли", "посадил на стол").
   - "kinks_active": which of the kinks and preferences ${learn ? 'of the card and the persona' : 'listed above'} are actually in play in these messages — done, said or clearly wanted — each written exactly as listed and only once. A preference counts only when it is done the way it is described (its when, where and with whom); sharing a word with what happens is not enough. Never a kink that is not on the list. Empty if none.
   - "protection": what protects them now as the messages show it — "condom" once he put one on, "none" for intercourse without, "withdrawal" if he pulled out; null while it is not clear.
@@ -385,7 +386,7 @@ export function advance(prev, s, { active, at, minutes = 0, orgasm = {} }) {
         }
         sc.char.climax = clamp(Math.round(v), 0, 100);
         if (c.state) sc.char.state = c.state;
-        if (s) sc.char.discomfort = c.discomfort ?? null;
+        if (s) setDiscomfort(sc.char, c.discomfort ?? null, poseChanged(sc, r));
         if (c.thought) sc.char.thought = c.thought;
     }
     // her: readiness (arousal, wetness) first — how close she is to orgasm cannot run ahead of it
@@ -405,11 +406,12 @@ export function advance(prev, s, { active, at, minutes = 0, orgasm = {} }) {
         }
         sc.user.climax = clamp(Math.round(v), 0, 100);
         if (u.state) sc.user.state = u.state;
-        if (s) sc.user.discomfort = u.discomfort ?? null;
+        if (s) setDiscomfort(sc.user, u.discomfort ?? null, poseChanged(sc, r));
     }
 
     // the position: a new one starts its minutes anew; the same one tires the body
-    if (r.pose && (r.poseNew || !sc.pose || norm(r.pose) !== norm(sc.pose) && r.poseNew !== false)) sc.poseMin = Math.min(mins, 5);
+    sc.poseNow = poseChanged(sc, r);
+    if (sc.poseNow) sc.poseMin = Math.min(mins, 5);
     else if (sc.pose || r.pose) sc.poseMin = (sc.poseMin ?? 0) + mins;
     for (const k of ['pose', 'clothes', 'lead']) if (r[k]) sc[k] = r[k];
     if (r.protection) sc.protection = r.protection;
@@ -424,6 +426,21 @@ export function advance(prev, s, { active, at, minutes = 0, orgasm = {} }) {
     sc.responds = uniq([...sc.responds, ...(r.responds ?? [])], 8);
     sc.marks = uniq([...sc.marks, ...(r.marks ?? [])], 8);
     return sc;
+}
+
+/** A new position in this reading (the first one counts too). */
+const poseChanged = (sc, r) => !!r.pose && (!!r.poseNew || !sc.pose || (norm(r.pose) !== norm(sc.pose) && r.poseNew !== false));
+
+/**
+ * What hurts now. A numb neck or a leg eases once the position changes: the same complaint after a new position is
+ * dropped. A complaint told before is kept for the windows but not told to the story model again («fresh» false).
+ */
+function setDiscomfort(p, text, newPose) {
+    const before = p.discomfort;
+    let now = text;
+    if (now && before && newPose && sameThing(now, before)) now = null;
+    p.discomfort = now;
+    p.discomfortFresh = !!now && !(before && sameThing(now, before));
 }
 
 const SOLO_CAP = 30;   // how close to release he can get in one reply, at most
@@ -561,6 +578,7 @@ export function applyIntimacy(state, scene, { at, minutes = 0 }) {
     // the kinks in play are the cards' own, each once: a word the reading made up never reaches the story model
     const known = Array.isArray(intim.kinks) ? intim.kinks.map(k => k.name) : [];
     if (known.length && Array.isArray(sc.kinks)) sc.kinks = [...new Set(sc.kinks.map(k => bestKink(k, known)).filter(Boolean))];
+    if (sc.visible) kinkLife(sc, intim);
     if (sc.visible) sc.everActive = true;
     else if (base?.everActive) sc.everActive = true;
     intim.scene = sc;
@@ -603,41 +621,98 @@ export function bestKink(name, list) {
 export function kinkChips(state) {
     const intim = state.intim ?? {};
     const active = intim.scene?.kinks ?? [];
-    const all = Array.isArray(intim.kinks) ? intim.kinks.map(k => k.name).slice(0, 20) : [];
+    const all = Array.isArray(intim.kinks) ? intim.kinks.map(k => k.name).slice(0, 30) : [];
     if (!all.length) {
         const seen = [];
         for (const k of active) if (!seen.some(n => sameKink(n, k))) seen.push(k);
         return seen.slice(0, 8).map(name => ({ name, on: true }));
     }
-    const lit = new Set(active.map(k => bestKink(k, all)).filter(Boolean));
-    return all.map(name => ({ name, on: lit.has(name) }));
+    const lit = new Set([...active.map(k => bestKink(k, all)), ...Object.keys(intim.scene?.kinkLit ?? {})].filter(Boolean));
+    return intim.kinks.slice(0, 30).map(k => ({ name: k.name, from: k.from, on: lit.has(k.name) }));
 }
 
 // #endregion
 
 // #region For the story model
 
-/** «ноет ушибленное колено» and «ушиб колена о столик» are the same thing: two word stems in common (one, if one is all). */
+const KINK_LIT_TURNS = 3;      // a kink once in play stays lit this many replies: a scene is not one kink per message
+/** A number 0-1 from a string, the same every time: a re-read of the same reply rolls the same dice. */
+function dice(key) {
+    let h = 2166136261;
+    for (let i = 0; i < key.length; i++) { h ^= key.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return ((h >>> 0) % 10000) / 10000;
+}
+
+/**
+ * The kinks through a scene. What the reading saw stays lit a few replies (it does not blink on and off).
+ * And Stork's own dice: now and then one of their preferences not yet in this scene comes up as a cue for the story
+ * model — with the roll and the reason, so the model knows why now; never forced.
+ */
+function kinkLife(sc, intim) {
+    const list = Array.isArray(intim.kinks) ? intim.kinks : [];
+    sc.kinkLit ??= {};
+    sc.kinkUsed ??= [];
+    for (const k of Object.keys(sc.kinkLit)) if (--sc.kinkLit[k] <= 0) delete sc.kinkLit[k];
+    for (const k of sc.kinks ?? []) {
+        sc.kinkLit[k] = KINK_LIT_TURNS;
+        if (!sc.kinkUsed.includes(k)) sc.kinkUsed.push(k);
+    }
+    sc.cue = null;
+    if (!list.length || sc.phase < 1 || sc.char.refr > 0) return;
+    // the chance this reply: more as the scene warms up, less right after a cue, never while one is lit already
+    const lit = Object.keys(sc.kinkLit).length;
+    const chance = Math.max(0, Math.min(0.6, 0.18 + 0.06 * Math.min(sc.phase, 4) - 0.12 * lit - (sc.cueAt === sc.turns - 1 ? 0.2 : 0)));
+    const roll = dice(`${sc.id}:${sc.turns}`);
+    if (roll >= chance) return;
+    const fresh = list.filter(k => !sc.kinkUsed.includes(k.name) && !sc.kinkLit[k.name]);
+    if (!fresh.length) return;
+    const pick = fresh[Math.floor(dice(`${sc.id}:${sc.turns}:pick`) * fresh.length)];
+    const responded = (sc.responds ?? []).some(r => sameKink(r, pick.name));
+    const why = [`not yet in this scene`, responded ? '{{user}} already responded to something like it' : '', pick.from === 'persona' ? "it is {{user}}'s own preference" : "it is in {{char}}'s card"].filter(Boolean).join('; ');
+    sc.cue = { name: pick.name, who: pick.from === 'persona' ? 'user' : 'char', chance: Math.round(chance * 100), roll: Math.round(roll * 100), why };
+    sc.cueAt = sc.turns;
+}
+
+/** Her list of kinks edited by hand: remove one, add one (for him or for her), rename one. */
+export function editKinks(intim, { op, i, who, name }) {
+    intim.kinks = Array.isArray(intim.kinks) ? intim.kinks : [];
+    const clean = String(name ?? '').replace(/\s+/g, ' ').trim().slice(0, 40);
+    const from = who === 'user' ? 'persona' : 'card';
+    if (op === 'del' && intim.kinks[i]) intim.kinks.splice(i, 1);
+    else if (op === 'set' && clean && intim.kinks[i]) intim.kinks[i] = { ...intim.kinks[i], name: clean };
+    else if (op === 'add' && clean && !intim.kinks.some(k => k.from === from && norm(k.name) === norm(clean)) && intim.kinks.length < 30) intim.kinks.push({ name: clean, from, own: true });
+    return intim.kinks;
+}
+
+/** «ноет ушибленное колено» and «ушиб колена о столик» are the same thing: two word stems in common, or half of the shorter one. */
 const stems4 = t => String(t ?? '').toLowerCase().replace(/ё/g, 'е').split(/[^a-zа-я]+/).filter(w => w.length >= 4).map(w => w.slice(0, 4));
 export function sameThing(a, b) {
     const x = stems4(a), y = stems4(b);
     const common = x.filter(w => y.includes(w)).length;
-    return common >= 2 || (common >= 1 && Math.min(x.length, y.length) === 1);
+    return common >= 2 || (common >= 1 && common / Math.min(x.length, y.length) >= 0.5);
 }
 
-/** Injuries not healed yet: «Нина — ссадина на колене». */
-export function injuriesNow(state) {
+/**
+ * Injuries that still matter: any on the day it happened, later only what still really hurts (see noticeableInjuries
+ * in the engine, the same rule): «Нина — ссадина на колене». all: every one not healed yet.
+ */
+export function injuriesNow(state, { all = false } = {}) {
     const now = (state.clock?.day ?? 0) * 1440 + (state.clock?.minutes ?? 0);
-    return (Array.isArray(state.injuries) ? state.injuries : []).filter(i => i.heals > now)
-        .map(i => ({ who: i.who, name: state.people?.[i.who]?.name || i.who, what: i.what }));
+    return (Array.isArray(state.injuries) ? state.injuries : []).filter(i => i.heals > now).filter(i => {
+        if (all) return true;
+        const total = Math.max(1, i.heals - i.since), healed = (now - i.since) / total, days = total / 1440;
+        const level = days <= 5 ? 1 : days <= 10 ? 2 : days <= 21 ? 3 : 4;
+        return now - i.since < 12 * 60 || (level >= 3 && healed < 0.75) || (level === 2 && healed < 0.3);
+    }).map(i => ({ who: i.who, name: state.people?.[i.who]?.name || i.who, what: i.what }));
 }
 
 /** Limits the code sets for the next reply: only what the numbers forbid, never how he should behave. */
 export function guards(sc) {
     const out = [];
     if (sc.user.readiness < 50 && sc.phase >= 3) out.push(`{{user}} is not aroused and wet enough yet (${sc.user.readiness}%): penetration is uncomfortable for her, and her body shows it. What {{char}} does about it is his own — true to his character, not a pause in the story.`);
-    if (sc.user.discomfort) out.push(`{{user}} feels discomfort (${sc.user.discomfort}): it shows in her body and {{char}} notices it as he would.`);
-    if (sc.char.discomfort) out.push(`{{char}} feels discomfort (${sc.char.discomfort}).`);
+    // a discomfort is told when it comes, once: repeated every reply it became the topic of the scene
+    if (sc.user.discomfort && sc.user.discomfortFresh !== false) out.push(`{{user}} feels discomfort (${sc.user.discomfort}): it shows in her body and {{char}} notices it as he would — once, not in every reply.`);
+    if (sc.char.discomfort && sc.char.discomfortFresh !== false) out.push(`{{char}} feels discomfort (${sc.char.discomfort}) — it shows once; not a topic for the next replies.`);
     if (sc.pose && sc.phase >= 1 && (sc.poseMin ?? 0) >= POSE_TIRES) out.push(`They have been in this position (${sc.pose}) for about ${sc.poseMin} minutes: legs, knees or arms start to tire or go numb — a shift or a new position comes naturally when it fits.`);
     if (sc.char.refr > 0) out.push(`{{char}} has just climaxed: refractory period, about ${sc.char.refr} more minutes — he cannot climax again yet.`);
     if (sc.user.sensitive) out.push('{{user}} has just climaxed and is oversensitive: the same touch may now be too much.');
@@ -671,6 +746,9 @@ function portrait(intim) {
     if (his.length || hers.length) L.push('Let these shape what he does — one at a time, when the moment fits, not all at once.');
     return L;
 }
+
+/** Bodies in a position: whose hands are free and what they can reach. Said once, short, for both models. */
+const REACH = 'Hands follow the position: a hand is free only when it bears no weight and holds no one up. While inside her, {{char}} can reach between her legs only where the position leaves room in front of her (her on top, side by side, him behind her kneeling or standing); lying chest to chest on her, carrying her, or with both hands holding her, he cannot — then her own hand, another angle or another position does it.';
 
 const NO_TEMPLATE = 'Make this reply his own, not a template: vary what he does and how the reply ends. Do not end with {{char}} asking whether she is ready, wants it or is okay, and do not stall — when {{user}} moves things forward, he goes with her. End on an action, a sensation or his words.';
 
@@ -712,13 +790,17 @@ export function intimacyPrompt(state, { userSkip = false, erectionDrops = true }
         if (place) L.push(place);
         else if (sc.hindrance) L.push(`Mind the setting: ${sc.hindrance}.`);
         L.push(...portrait(intim));
-        if (sc.kinks?.length) L.push(`In play now: ${sc.kinks.join(', ')}.`);
+        const lit = Object.keys(sc.kinkLit ?? {});
+        if (lit.length) L.push(`In play in this scene: ${lit.join(', ')} — it may go on, change or fade as the scene does.`);
+        if (sc.cue) L.push(`A preference may come in now (Stork's dice: ${sc.cue.roll} under ${sc.cue.chance}%; why: ${sc.cue.why}): ${sc.cue.name} — ${sc.cue.who === 'user' ? "{{user}}'s, something {{char}} may offer her" : "{{char}}'s own"}. Only if it fits this moment and her lead, his way; if it does not fit, leave it.`);
         const known = knownOf(intim.history, sc);
         if (known.length) L.push(`{{char}} already knows what {{user}} responds to: ${known.join(', ')} — he uses it the way a partner who remembers would.`);
         if (sc.beats?.length) L.push(`In the last replies he already: ${sc.beats.join('; ')} — do something different now.`);
-        const hurts = injuriesNow(state);
+        // injuries: at the start of the scene and when a new position may meet them, not in every reply
+        const hurts = sc.turns <= 1 || sc.poseNow ? injuriesNow(state) : [];
         if (hurts.length) L.push(`Healing injuries: ${hurts.map(i => `${i.name} — ${i.what}`).join('; ')}. They matter only where the body meets them — kneeling on a scraped knee, a grip on a bruised wrist, weight on a sore side: then {{char}} notices and adapts as he would (another position, a lighter hand). Not a topic, not in every reply.`);
         L.push('Bodies are real: breath, stamina, muscles, wetness, positions that tire. Never speak or decide for {{user}}.');
+        if (sc.pose && sc.phase >= 3) L.push(REACH);
         L.push(NO_TEMPLATE);
         L.push(...guards(sc));
         if (sc.next) L.push(`This reply: ${sc.next}`);

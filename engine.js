@@ -374,10 +374,16 @@ function rollAct(state, act, rng) {
     if (!f || f.pregnancy || f.postpartum) return;
     const pill = pillState(f, act.day);
     // hormonal contraception used correctly: no ovulation, nothing to roll
-    if (pill.suppressed) return;
+    if (pill.suppressed) {
+        if (!act.past) note(state, woman, 'Зачатие: овуляции нет (контрацепция) — шансов нет', { model: false, kind: 'roll' });
+        return;
+    }
     const cycle = cycleOf(f, act.day);
     const ovulated = cycle.cycleStart + cycleInfo(cycle, act.day).ovulation - 1;
-    if (act.day < ovulated - 5 || act.day > ovulated) return;
+    if (act.day < ovulated - 5 || act.day > ovulated) {
+        if (!act.past) note(state, woman, 'Зачатие: не фертильные дни — шансов нет', { model: false, kind: 'roll' });
+        return;
+    }
     throwDice(state, woman, [act], ovulated, pill, rng, cycle.cycleStart);
 }
 
@@ -393,6 +399,23 @@ function markOrgasm(m, day, minute) {
     m.orgasms.push(minute);
     if (m.orgasms.length > 30) m.orgasms.splice(0, m.orgasms.length - 30);
     m.lastOrgasmMinute = minute;
+}
+
+/** An act still going on (he has not finished): replies within this long belong to it. */
+const OPEN_ACT_MINUTES = 120;
+const RISK_ORDER = ['condom', 'withdrawal', 'none'];
+/**
+ * Intercourse that ended without his climax inside (the scene is over, or long ago): its dice are thrown now,
+ * as a risk like withdrawal — what comes before the climax can still carry sperm.
+ */
+function closeOpenActs(state, rng, { all = false } = {}) {
+    const now = absMinute(state.clock);
+    for (const act of state.acts) {
+        if (!act.open || (!all && now - (act.lastMinute ?? act.minute) <= OPEN_ACT_MINUTES)) continue;
+        act.open = false;
+        if (act.protection === 'none') act.protection = 'withdrawal';
+        rollAct(state, act, rng);
+    }
 }
 
 /**
@@ -420,17 +443,27 @@ export function applyEvent(state, event, rng = Math.random) {
             const woman = Object.values(state.people).find(p => p.sex === 'female');
             const man = Object.values(state.people).find(p => p.sex === 'male');
             const protection = ACT_PROTECTION[event.protection] ? event.protection : 'none';
-            const act = { day, minute: absMinute(state.clock), protection, woman: woman?.key ?? null, force: event.force ?? null, condomBroke: false };
-            if (protection === 'condom' && (event.broke || rollCondomBreak(rng))) {
+            const now = absMinute(state.clock);
+            // the same intercourse over several replies is one act: its dice are thrown once, when he finishes
+            const going = [...state.acts].reverse().find(a => a.open && a.woman === (woman?.key ?? null) && now - (a.lastMinute ?? a.minute) <= OPEN_ACT_MINUTES);
+            const act = going ?? { day, minute: now, protection, woman: woman?.key ?? null, force: event.force ?? null, condomBroke: false };
+            if (going) {
+                // the riskiest of what happened counts: once without protection, it was without protection
+                act.protection = RISK_ORDER.indexOf(protection) > RISK_ORDER.indexOf(act.protection) ? protection : act.protection;
+                act.force = event.force ?? act.force;
+            } else note(state, null, `близость (${ACT_PROTECTION[protection].label})`, { model: false, kind: 'intimacy' });
+            act.lastMinute = now;
+            if (protection === 'condom' && !act.condomBroke && (event.broke || (!going && rollCondomBreak(rng)))) {
                 act.condomBroke = true;
                 note(state, man ?? woman, 'презерватив порвался');
             }
-            note(state, null, `близость (${ACT_PROTECTION[protection].label})`, { model: false, kind: 'intimacy' });
             // his recovery starts at his climax, not at the start of intercourse
-            if (man && !event.open) markOrgasm(man.male, day, absMinute(state.clock));
+            if (man && !event.open) markOrgasm(man.male, day, now);
             if (woman && man) {
-                state.acts.push(act);
-                rollAct(state, act, rng);
+                if (!going) state.acts.push(act);
+                act.open = !!event.open;
+                if (act.open) act.rolled = false;
+                else rollAct(state, act, rng);
             }
             break;
         }
@@ -464,7 +497,14 @@ export function applyEvent(state, event, rng = Math.random) {
             // the same period, nothing to move
             const storyStart = day - ago - (event.type === 'period_ongoing' && !ago ? 1 : 0);
             const ownStart = day - (now.cycleDay - 1);
-            if (Math.abs(ownStart - storyStart) <= 3 || Math.abs(ownStart - f.cycleLength - storyStart) <= 3) break;
+            if (Math.abs(ownStart - storyStart) <= 3 || Math.abs(ownStart - f.cycleLength - storyStart) <= 3) {
+                // the same period: when the story says on which day it began, the cycle takes that day exactly
+                if (event.daysAgo !== undefined && event.daysAgo !== null && ownStart !== storyStart && Math.abs(ownStart - storyStart) <= 3) {
+                    f.cycleStart = storyStart;
+                    f.syncedDay = day;
+                }
+                break;
+            }
             // The cycle was set by her or by the story lately: a period in its first half is far more likely a slip
             // of the story or of the analysis (a memory, a fear, last month) than the body. The cycle stays, she is
             // asked instead. Long unconfirmed (a skip of months, never set): the story's period wins at once.
@@ -1317,7 +1357,7 @@ export function abstinence(state, key) {
         last = times.length ? Math.max(...times) : null;
     }
     const known = last !== null && last !== undefined;
-    const hours = Math.max(0, (now - (known ? last : 0)) / 60);
+    const hours = Math.max(0, (now - (known ? last : (state.since ?? 0))) / 60);
     const need = (person.sex === 'male' ? ABSTAIN_DAYS[temperamentOf(state, person)] ?? ABSTAIN_DAYS.normal : HER_ABSTAIN_DAYS) * 24;
     return { hours, days: Math.floor(hours / 24), pct: Math.min(100, Math.round((hours / need) * 100)), known };
 }
@@ -1367,7 +1407,8 @@ function trackAche(state) {
     if (!man) return;
     const now = absMinute(state.clock);
     const sc = state.intim?.scene;
-    if (sc?.visible && (sc.char?.climax ?? 0) >= 50) state.edge = { at: now };
+    // aroused close to the edge — in a scene, or in a petting that is only «near» — remembered until release
+    if ((sc?.visible || sc?.near) && (sc.char?.climax ?? 0) >= 45) state.edge = { at: now };
     else if (state.intim?.solo?.visible && (state.intim.solo.climax ?? 0) >= 50) state.edge = { at: now };
     if (state.edge && (man.male.lastOrgasmMinute ?? -Infinity) >= state.edge.at) state.edge = null;
     const ache = maleAche(state, man);
@@ -1603,6 +1644,40 @@ export function activeInjuries(state) {
     return injuriesOf(state).filter(i => i.heals > now);
 }
 
+/**
+ * How bad an injury is and how far it healed. The grade by its whole course (a scratch, a bruise, a sprain, a fracture);
+ * the stage by the share of it gone by. Pure: also for the windows.
+ * @returns {{ grade: string, gradeEn: string, level: number, stage: string, stageEn: string, healed: number, daysLeft: number, fresh: boolean }}
+ */
+export function injuryInfo(injury, now) {
+    const total = Math.max(1, injury.heals - injury.since);
+    const healed = Math.max(0, Math.min(1, (now - injury.since) / total));
+    const days = total / MINUTES_PER_DAY;
+    const [grade, gradeEn, level] = days <= 5 ? ['лёгкая', 'minor', 1] : days <= 10 ? ['средняя', 'moderate', 2] : days <= 21 ? ['серьёзная', 'serious', 3] : ['тяжёлая', 'severe', 4];
+    const fresh = now - injury.since < 12 * 60;
+    const [stage, stageEn] = fresh ? ['свежая', 'fresh'] : healed < 0.4 ? ['болит', 'still sore'] : healed < 0.75 ? ['заживает', 'healing'] : ['почти прошла', 'nearly healed'];
+    return { grade, gradeEn, level, stage, stageEn, healed, daysLeft: Math.max(0, Math.ceil((injury.heals - now) / MINUTES_PER_DAY)), fresh };
+}
+
+/**
+ * The injuries worth telling the story model now: any on the day it happened; later only what still really hurts —
+ * a serious one until well healed, a moderate one while still sore. A scratch or a bruise of yesterday is not news.
+ */
+export function noticeableInjuries(state) {
+    const now = absMinute(state.clock);
+    return activeInjuries(state).filter(i => {
+        const x = injuryInfo(i, now);
+        return x.fresh || (x.level >= 3 && x.healed < 0.75) || (x.level === 2 && x.healed < 0.3);
+    });
+}
+
+const NOT_INJURY = /затек|затёк|онемел|онемен|покалыва|мурашк|устал|утомл|крепатур|перегруж/i;
+const BODY_REGIONS = [/ног|икр|голен|стоп|ступн|лодыж|пятк|бедр/i, /колен/i, /рук|кист|запяст|локт|плеч|пальц/i, /спин|поясниц|лопат/i, /(?<!\p{L})ше[ияюей]|шейн/iu, /голов|лиц|(?<!\p{L})лб|лоб|скул|губ|(?<!\p{L})нос|глаз|бров/iu, /груд|ребр/i, /живот/i, /ягодиц|(?<!\p{L})поп/iu];
+/** Both about the same part of the body: «перегруженные икры» and «перенапряжение мышц ног». */
+function sameRegion(a, b) {
+    return BODY_REGIONS.some(re => re.test(a) && re.test(b));
+}
+
 /** Injuries are noted, not turned into an illness: a bruise does not give a fever. */
 function applyInjuries(state, injuries) {
     const now = absMinute(state.clock);
@@ -1611,8 +1686,10 @@ function applyInjuries(state, injuries) {
         const person = state.people[item?.who];
         const what = typeof item?.what === 'string' ? item.what.trim().slice(0, 80) : '';
         if (!person || !what) continue;
-        // the same bruise told again in the next reply is not a new one
-        if (state.injuries.some(i => i.who === person.key && sameInjury(i.what, what))) continue;
+        // numbness, tiredness, muscles sore from effort pass by themselves: not an injury to carry for days
+        if (NOT_INJURY.test(what)) continue;
+        // the same bruise told again in the next reply is not a new one; nor another word for the same place that day
+        if (state.injuries.some(i => i.who === person.key && (sameInjury(i.what, what) || (now - i.since < MINUTES_PER_DAY && sameRegion(i.what, what))))) continue;
         state.injuries.push({ who: person.key, what, since: now, heals: now + healDays(what, item.heal_days) * MINUTES_PER_DAY });
         note(state, person, `${person.name || 'Он'}: ${what}`, { model: false, kind: 'injury' });
     }
@@ -1620,10 +1697,13 @@ function applyInjuries(state, injuries) {
 
 /** For the story model: healing injuries, to matter only where the body meets them. */
 function injuryLine(state) {
-    const list = activeInjuries(state);
+    // a scene has its own word on them (once, and when a position meets them): not in every reply here too
+    if (state.intim?.scene?.visible) return '';
+    const now = absMinute(state.clock);
+    const list = noticeableInjuries(state);
     if (!list.length) return '';
-    const items = list.map(i => `${state.people[i.who]?.name || i.who} — ${i.what}`).join('; ');
-    return `Healing injuries: ${items}. They show only where the body meets them — a touch, a movement, a position — never as a topic of their own.`;
+    const items = list.map(i => { const x = injuryInfo(i, now); return `${state.people[i.who]?.name || i.who} — ${i.what} (${x.gradeEn}, ${x.stageEn})`; }).join('; ');
+    return `Healing injuries: ${items}. They show only where the body meets them — a touch, a movement, a position — never as a topic of their own, and not in every reply.`;
 }
 
 // #endregion
@@ -1801,6 +1881,7 @@ export function processReply(previousState, replyText, rng = Math.random, scene 
     if (wasRecovering && recoveryLeft(state) <= 0 && man?.sex === 'male') {
         note(state, man, `${man.name || 'Он'}: силы восстановились`, { model: false, kind: 'recovered' });
     }
+    closeOpenActs(state, rng, { all: !state.intim?.scene?.visible });
     trackAche(state);
     state.pending = freshPending(state);
     return { state, tag: { ...tag, clock } };

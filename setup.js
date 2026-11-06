@@ -7,16 +7,21 @@ import { extractClock, extractDate, guessAge, guessClock, parseClock, setBabySex
 import { applyFindings } from './family.js';
 import { cleanKinks, ensureIntim } from './intimacy.js';
 
-/** The kinks of the card and the persona and how he talks: read once, for the intimate scenes. */
-function intimacyFromCards(state, a) {
+/**
+ * The kinks of the card and the persona and how he talks: read once, for the intimate scenes. Read again by her button:
+ * the kinks she added by hand stay.
+ */
+export function intimacyFromCards(state, a) {
     const intim = ensureIntim(state);
     const kinks = cleanKinks(a?.kinks);
-    if (kinks) intim.kinks = kinks;
-    const bed = a?.in_bed;
-    if (kinks && bed && typeof bed === 'object') {
-        const clip = (v, n) => (typeof v === 'string' && v.trim() && !/^null$/i.test(v.trim()) ? v.trim().slice(0, n) : null);
-        intim.profile = { char: clip(bed.char, 500), user: clip(bed.user, 300) };
+    if (kinks) {
+        const own = (Array.isArray(intim.kinks) ? intim.kinks : []).filter(k => k.own && !kinks.some(x => x.name.toLowerCase() === k.name.toLowerCase()));
+        intim.kinks = [...kinks, ...own];
     }
+    const bed = a?.in_bed;
+    const clip = (v, n) => (typeof v === 'string' && v.trim() && !/^null$/i.test(v.trim()) ? v.trim().slice(0, n) : null);
+    // with the list read, the profile is set too (even empty): the director never asks the cards again
+    if (kinks) intim.profile = bed && typeof bed === 'object' ? { char: clip(bed.char, 500), user: clip(bed.user, 300) } : { char: null, user: null };
     if (typeof a?.voice === 'string' && a.voice.trim()) intim.voice = a.voice.trim().slice(0, 240);
 }
 
@@ -215,6 +220,8 @@ export function setupFromAnalysis(state, analysis, cards, rng = Math.random) {
     if (state.people.user.female.pregnancy?.cardSex) setBabySex(state, state.people.user.female.pregnancy.cardSex, { from: 'card' });
     state.setupDone = true;
     state.autoSetup = true;
+    // what Stork does not know of before this moment is counted from it (abstinence), not from midnight of day 0
+    state.since = state.clock.day * 1440 + state.clock.minutes;
     return state;
 }
 
@@ -278,6 +285,7 @@ export function applySetupForm(state, v, analysis = null, rng = Math.random) {
     if (analysis) intimacyFromCards(state, analysis);
     state.setupDone = true;
     state.chatOff = false;
+    state.since ??= state.clock.day * 1440 + state.clock.minutes;
     return state;
 }
 

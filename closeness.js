@@ -83,6 +83,15 @@ function placeHtml(sc) {
     return `<span class="stk-ag-detail${pl.interrupt >= 30 ? ' is-warm' : ''}">${icon(ic)}<span>${label}${pl.interrupt ? ` · помешать могут ~${pl.interrupt}%` : ''}${pl.why ? ` — ${esc(pl.why)}` : ''}</span></span>`;
 }
 
+/** Each of them on a line: all their kinks, the ones in play glowing softly. */
+function kinkRows(chips, herName, hisName) {
+    return [['card', hisName], ['persona', herName]].map(([from, who]) => {
+        const list = chips.filter(k => (k.from ?? 'card') === from);
+        if (!list.length) return '';
+        return `<div class="stk-ag-kinkrow"><span class="stk-ag-kwho">${esc(who)}</span><div class="stk-ag-kinks">${list.map(k => `<span class="stk-ag-chip is-kink${k.on ? ' is-on' : ''}"${k.on ? ' title="сейчас в сцене"' : ''}>${esc(k.name)}</span>`).join('')}</div></div>`;
+    }).join('');
+}
+
 const chipsHtml = (list, cls) => (list.length ? `<div class="stk-ag-kinks ${cls}">${list.join('')}</div>` : '');
 
 /**
@@ -120,9 +129,8 @@ export function sceneBlockHtml(state, { open = sceneOpen(), reading = false, bri
     const chips = kinkChips(state);
     const pains = painList.map(([who, d]) => `<span class="stk-ag-pain">${icon('fa-triangle-exclamation')}<span>${esc(who)}: ${esc(d)}</span></span>`).join('');
 
-    // «кратко»: both gauges, the position, the risks, the kinks in play now
+    // «кратко»: both gauges, the position, the risks, the kinks of each (the ones in play glowing)
     if (brief) {
-        const lit = chips.filter(k => k.on).map(k => `<span class="stk-ag-chip is-on">${esc(k.name)}</span>`);
         const notes = [her.sensitive ? `<span class="stk-ag-note">${icon('fa-bolt')}${esc(her.name)}: чувствительна после оргазма</span>` : '', him.refr > 0 ? `<span class="stk-ag-note">${icon('fa-hourglass-half')}${esc(him.name)}: передышка ~${him.refr} мин</span>` : ''].join('');
         return `<div class="stk-ag is-open is-brief">${head}
         <div class="stk-ag-body">
@@ -134,12 +142,12 @@ export function sceneBlockHtml(state, { open = sceneOpen(), reading = false, bri
             ${details ? `<div class="stk-ag-details">${details}</div>` : ''}
             ${pains ? `<div class="stk-ag-pains">${pains}</div>` : ''}
             ${chipsHtml([...hurts, ...risks], 'is-risks')}
-            ${chipsHtml(lit, 'is-lit')}
+            ${kinkRows(chips, her.name, him.name)}
         </div>
     </div>`;
     }
 
-    const kinks = chipsHtml(chips.map(k => `<span class="stk-ag-chip${k.on ? ' is-on' : ''}" title="${k.on ? 'сейчас в сцене' : 'из карточки или персоны'}">${esc(k.name)}</span>`), '');
+    const kinks = kinkRows(chips, her.name, him.name);
     return `<div class="stk-ag is-open">${head}
         <div class="stk-ag-body">
             <div class="stk-ag-pair">${personHtml(her, true)}${personHtml(him, false)}</div>
@@ -154,7 +162,10 @@ export function sceneBlockHtml(state, { open = sceneOpen(), reading = false, bri
 const PACE = { slow: 'неспешно', steady: 'ровно', urgent: 'на взводе' };
 /** Hours before this solo since his last release, and how many times today: from his own record. */
 function soloFacts(state, man, solo) {
-    const orgasms = (man.male.orgasms ?? []).filter(m => m < solo.start);
+    // his own release in this solo is not «before» it, wherever the reading put its minute
+    const all = [...(man.male.orgasms ?? [])].sort((a, b) => a - b);
+    if (solo.org > 0 || solo.refr > 0) all.splice(-1, 1);
+    const orgasms = all.filter(m => m < solo.start);
     const before = orgasms.length ? Math.max(...orgasms) : null;
     const day = state.clock.day;
     const today = (man.male.orgasms ?? []).filter(m => Math.floor(m / 1440) === day).length;

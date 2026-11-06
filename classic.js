@@ -133,7 +133,7 @@ function abstinenceHtml(state, key) {
     const a = abstinence(state, key);
     const person = state.people[key];
     const ache = person?.sex === 'male' ? maleAche(state, person) : null;
-    if (!a || (a.hours < 12 && !ache?.stage)) return '';
+    if (!a) return '';
     const v = abstinenceView(a, ache);
     return `<div class="stk-row stk-abst is-${v.tone}" title="${esc(v.why)}">${icon('fa-hourglass-end')}<span>${esc(v.text)}</span><span class="stk-abst-bar"><span style="width:${a.pct}%"></span></span></div>`;
 }
@@ -217,8 +217,7 @@ export function renderNow(state, view = {}) {
 }
 
 export function renderToday(state, view) {
-    return `${renderNow(state, view)}
-        <div class="stk-hint">${icon('fa-circle-info')}Stork сам следит за РП: время, близость, привычки, тесты. Карандаш у имени — поправить данные.</div>`;
+    return renderNow(state, view);
 }
 
 // #endregion
@@ -268,7 +267,7 @@ export function renderCalendar(state, view) {
             <div class="stk-card-title">${icon('fa-sliders')}Мой цикл</div>
             ${cycleFields(f)}
         </div>` : ''}
-        <div class="stk-hint">${icon('fa-circle-info')}${editable ? 'Нажми на прошедший день, чтобы отметить начало месячных. ' : ''}Будущие дни и прошлые циклы показаны как прогноз.</div>`;
+        ${editable ? `<div class="stk-hint">${icon('fa-circle-info')}Нажми на прошедший день — начало месячных.</div>` : ''}`;
 }
 
 // #endregion

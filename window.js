@@ -32,7 +32,27 @@ const TABS = [
  * Shows new story events as notifications (rolls stay secret); a tap opens the window.
  * «Нина: начались месячные» becomes the name above and «Начались месячные» below.
  */
+const announced = new Map();
+/** One story event is told once, however many readings carry it (her skip message and the reply after it). */
+function firstTime(e) {
+    const key = `${e.day}:${e.minutes ?? ''}:${e.who ?? ''}:${e.text}`;
+    const now = Date.now();
+    for (const [k, at] of announced) if (now - at > 10 * 60 * 1000) announced.delete(k);
+    if (announced.has(key)) return false;
+    announced.set(key, now);
+    return true;
+}
+
 export function announce(events) {
+    events = (events ?? []).filter(firstTime);
+    // the dice of conception, for her eyes only (the story model never hears of them): with the spoilers on
+    if (settings().showRolls) {
+        for (const e of (events ?? []).filter(x => x.kind === 'roll' && /зачати/i.test(x.text))) {
+            const yes = /получилось/.test(e.text) && !/не получилось/.test(e.text);
+            const text = e.text.replace(/^Бросок на зачатие:\s*/, 'шанс ').replace(/, получилось$/, ' — получилось').replace(/, не получилось$/, ' — не получилось').replace(/^Зачатие:\s*/, '');
+            notify(capitalize(text), { icon: yes ? 'fa-seedling' : 'fa-dice', tone: yes ? 'pink' : 'calm', title: 'Зачатие · спойлер', timeOut: 9000, onClick: () => openStork({ tab: 'journal' }) });
+        }
+    }
     if (!settings().toasts) return;
     const { people, clock } = currentState();
     const shown = (events ?? []).filter(e => !['roll', 'intimacy'].includes(e.kind));
@@ -86,7 +106,7 @@ function logCard() {
     return `
         <div class="stk-card stk-log-card">
             <div class="stk-card-title">${icon('fa-file-lines')}Журнал Stork<span class="stk-muted stk-log-count">${esc(logCountText())}</span></div>
-            <div class="stk-hint">${icon('fa-circle-info')}Всё, что Stork делает: каждый запрос к модели (зачем, через какой профиль, сколько ждали, что вернулось), события чата и ошибки. Живёт до перезагрузки страницы. Если что-то не так — скачай журнал и пришли файл; ключей API в нём нет.</div>
+            <div class="stk-hint">${icon('fa-circle-info')}Если что-то не так — скачай журнал и пришли. Ключей API в нём нет.</div>
             <label class="stk-check"><input type="checkbox" class="stk-set" data-k="debugPrompts" ${settings().debugPrompts ? 'checked' : ''}>записывать промпты целиком (журнал станет большим, в нём будет текст истории)</label>
             <div class="stk-actions">
                 <button type="button" class="stk-btn is-primary" data-stk-act="download-log">${icon('fa-download')}Скачать журнал</button>
@@ -219,7 +239,7 @@ function renderSetup(state, view) {
             <label class="stk-check"><input type="checkbox" class="stk-in" data-k="drinker" ${checked(preChar.drinker, m.drinker)}>часто выпивает</label>
             ${preChar.varicocele || m.varicocele ? `<div class="stk-row">${icon('fa-user-doctor')}варикоцеле: сперма слабее</div>` : ''}
             ${preChar.vasectomy || m.vasectomyDay !== null ? `<div class="stk-row">${icon('fa-scissors')}вазэктомия</div>` : ''}
-            <div class="stk-hint">${icon('fa-circle-info')}Варикоцеле и вазэктомию Stork берёт из карточки и из РП сам: если врач их найдёт или о них скажут по сюжету.</div>
+
         </div>
         <div class="stk-card">
             <div class="stk-card-title">${icon('fa-clock')}История</div>
@@ -332,7 +352,7 @@ function clockSwitch() {
     const s = settings();
     const other = otherClock();
     if (other === 'Almanac') return `<div class="stk-hint">${icon('fa-hourglass-half')}Время ведёт Almanac: Stork берёт дату и время из него и своё правило не добавляет.</div>`;
-    return `<label class="stk-setting"><div><b>Время считает РП-модель</b><span class="stk-muted">в конце ответа она оставляет скрытую строку: дата, время, сколько прошло и на что (как в Almanac). Точнее анализа; строку Stork убирает из чата. Выключи — время считает анализ</span></div><input type="checkbox" class="stk-set" data-k="storyClock" ${s.storyClock !== false ? 'checked' : ''}></label>`;
+    return `<label class="stk-setting"><div><b>Время считает РП-модель</b><span class="stk-muted">скрытая строка в ответе; выключи — считает анализ</span></div><input type="checkbox" class="stk-set" data-k="storyClock" ${s.storyClock !== false ? 'checked' : ''}></label>`;
 }
 
 /** How Stork reads the role-play: a separate request per reply through a chosen profile, or a hidden tag from the story model. */
@@ -366,7 +386,7 @@ function readingCard() {
                     </select>
                 </label>
                 ${!connectionManagerOn() ? `<div class="stk-hint is-warn">${icon('fa-triangle-exclamation')}Connection Manager выключен: профилей нет, доступно только основное подключение.</div>` : ''}`
-                : `<div class="stk-hint">${icon('fa-circle-info')}РП-модель в конце ответа ставит скрытую строчку. Бесплатно, но модель иногда забывает: тогда Stork предложит отметить сам.</div>`}
+                : `<div class="stk-hint">${icon('fa-circle-info')}Бесплатно, но модель иногда забывает метку.</div>`}
         </div>`;
 }
 
@@ -430,7 +450,7 @@ function viewCard() {
             <div class="stk-tiles" role="radiogroup">
                 ${tiles.map(([id, title, note]) => `<button type="button" class="stk-tile${current === id ? ' is-on' : ''}" role="radio" aria-checked="${current === id}" data-stk-act="view" data-view="${id}">${sketch(id)}<b>${title}</b><small>${note}</small></button>`).join('')}
             </div>
-            ${current === 'window' ? `<div class="stk-hint">${icon('fa-circle-info')}Stork работает как обычно, просто молча. Открыть — палочка → Stork или команда /stork.</div>` : ''}
+            ${current === 'window' ? `<div class="stk-hint">${icon('fa-circle-info')}Открыть — палочка → Stork или /stork.</div>` : ''}
             ${s.showBlock ? `
                 <div class="stk-sub">Где инфоблок</div>
                 <div class="stk-seg is-wide">
@@ -440,7 +460,6 @@ function viewCard() {
                 <div class="stk-seg is-wide">
                     ${[['brief', 'кратко'], ['full', 'подробно']].map(([v, l]) => `<button type="button" class="${(s.blockStyle ?? 'brief') === v ? 'is-on' : ''}" data-stk-act="block-auto" data-k="blockStyle" data-v="${v}">${l}</button>`).join('')}
                 </div>
-                <div class="stk-hint">${icon('fa-circle-info')}${(s.blockStyle ?? 'brief') === 'full' ? 'Подробно: шкалы, цикл, объяснения и вкладки «Календарь» и «Древо» прямо в чате.' : 'Кратко: только то, что изменилось в этом ответе — фаза, события, состояние каждого. Всё подробно — в окне Stork.'}</div>
                 <div class="stk-sub">Что в инфоблоке</div>
                 <div class="stk-checks">
                     ${partCheck('user', esc(nameOf(people.user)))}
@@ -454,16 +473,42 @@ function viewCard() {
         </div>`;
 }
 
+/**
+ * Their kinks, read once from the cards: his and hers, each can be renamed, removed or added by hand.
+ * Read again from the cards only by the button (one request).
+ */
+function kinksCard(state, view) {
+    if (!state.setupDone) return '';
+    const kinks = Array.isArray(state.intim?.kinks) ? state.intim.kinks : [];
+    const group = (from, key) => {
+        const items = kinks.map((k, i) => ({ ...k, i })).filter(k => (k.from === 'persona') === (from === 'persona'));
+        const chips = items.map(k => view.kinkEdit === k.i
+            ? `<span class="stk-edit stk-kink-form"><input class="text_pole" data-f="name" type="text" maxlength="40" value="${esc(k.name)}" aria-label="Кинк"><button type="button" class="stk-icon-btn is-primary" data-stk-act="kink-save" data-i="${k.i}" title="Сохранить" aria-label="Сохранить">${icon('fa-check')}</button><button type="button" class="stk-icon-btn" data-stk-act="kink-cancel" title="Отмена" aria-label="Отмена">${icon('fa-xmark')}</button></span>`
+            : `<span class="stk-kchip"><button type="button" class="stk-kchip-name" data-stk-act="kink-edit" data-i="${k.i}" title="Изменить">${esc(k.name)}</button><button type="button" class="stk-kchip-del" data-stk-act="kink-del" data-i="${k.i}" title="Убрать" aria-label="Убрать">${icon('fa-xmark')}</button></span>`).join('');
+        return `<div class="stk-kink-group">
+            <div class="stk-kink-who">${icon(key === 'user' ? 'fa-venus' : 'fa-mars')}${esc(nameOf(state.people[key]))}</div>
+            <div class="stk-kchips">${chips || '<span class="stk-muted">пусто</span>'}</div>
+            <span class="stk-edit stk-kink-form is-add"><input class="text_pole" data-f="name" type="text" maxlength="40" placeholder="добавить…" aria-label="Новый кинк"><button type="button" class="stk-icon-btn" data-stk-act="kink-add" data-who="${key}" title="Добавить" aria-label="Добавить">${icon('fa-plus')}</button></span>
+        </div>`;
+    };
+    return `<div class="stk-card stk-kinks-card">
+        <div class="stk-card-title">${icon('fa-heart-circle-bolt')}Кинки</div>
+        ${group('card', 'char')}
+        ${group('persona', 'user')}
+        <div class="stk-actions"><button type="button" class="stk-btn is-ghost" data-stk-act="kinks-reread" ${view.kinksReading ? 'disabled' : ''}>${icon(view.kinksReading ? 'fa-circle-notch' : 'fa-rotate', view.kinksReading ? 'fa-spin' : '')}Перечитать карточки</button></div>
+    </div>`;
+}
+
 function renderSettings(state, view) {
     const s = settings();
-    const toggle = (key, title, note) => `<label class="stk-setting"><div><b>${title}</b><span class="stk-muted">${note}</span></div><input type="checkbox" class="stk-set" data-k="${key}" ${s[key] ? 'checked' : ''}></label>`;
+    const toggle = (key, title, note = '') => `<label class="stk-setting"><div><b>${title}</b>${note ? `<span class="stk-muted">${note}</span>` : ''}</div><input type="checkbox" class="stk-set" data-k="${key}" ${s[key] ? 'checked' : ''}></label>`;
     return `
         ${readingCard()}
         ${viewCard()}
         <div class="stk-card">
             <div class="stk-card-title">${icon('fa-comments')}Для модели</div>
-            ${toggle('detailed', 'Подробный статус', 'самочувствие, влечение, малыш; выключи, чтобы экономить токены')}
-            ${toggle('neutral', 'Нейтральные слова', 'мягче формулировки, если провайдер строгий')}
+            ${toggle('detailed', 'Подробный статус', 'больше токенов')}
+            ${toggle('neutral', 'Нейтральные слова', 'для строгих провайдеров')}
             <label class="stk-field"><span>Куда ставить статус</span>
                 <select class="text_pole stk-set" data-k="placement">
                     <option value="inject" ${s.placement === 'inject' ? 'selected' : ''}>сам, перед последними сообщениями (лучше всего)</option>
@@ -473,23 +518,23 @@ function renderSettings(state, view) {
         </div>
         <div class="stk-card">
             <div class="stk-card-title">${icon('fa-fire-flame-curved')}Близость</div>
-            ${toggle('intimacy', 'Режиссёр близости', s.readMode === 'analyzer' ? 'ведёт интимную сцену: темп, готовность, «до оргазма»; в тот же анализ ответа, без отдельного запроса' : 'работает только с анализом каждого ответа (вкладка «Чтение РП» выше)')}
-            ${toggle('intimacyBlock', 'Блок сцены в чате', 'появляется под инфоблоком Stork, когда начинается близость, и уходит после')}
-            ${s.readMode === 'analyzer' && s.intimacy ? `<label class="stk-field"><span>Модель для откровенных сцен</span>${sceneProfileSelect()}</label>
-            <div class="stk-hint">${icon('fa-circle-info')}Пока идёт сцена, анализ уходит сюда. Нужна, если модель анализа отказывается читать откровенное (Gemini часто так делает): тогда Stork читает ответ без режиссёра и предупреждает.</div>` : ''}
+            ${toggle('intimacy', 'Режиссёр близости', s.readMode === 'analyzer' ? '' : 'нужен анализ каждого ответа')}
+            ${toggle('intimacyBlock', 'Блок сцены в чате')}
+            ${s.readMode === 'analyzer' && s.intimacy ? `<label class="stk-field"><span>Модель для откровенных сцен</span>${sceneProfileSelect()}</label>` : ''}
         </div>
+        ${s.intimacy ? kinksCard(state, view) : ''}
         <div class="stk-card">
             <div class="stk-card-title">${icon('fa-scale-balanced')}Реализм</div>
-            ${toggle('erectionDrops', 'Падение эрекции', 'алкоголь, стресс, недосып и болезнь могут ослабить эрекцию; выключи — и у него она не подводит, остальное остаётся как было')}
-            ${toggle('trackExes', 'Отслеживать бывших', 'бывшие партнёры попадают в древо; выключи — в древе только родственники')}
-            ${s.readMode === 'analyzer' ? toggle('health', 'Здоровье и психика', 'болезни тела и психики у обоих: течение по времени истории, лечение, врачи, рецидивы; вкладка «Здоровье» вместо журнала. Выключено — ничего не меняется, травмы ведутся как раньше') : `<div class="stk-hint">${icon('fa-circle-info')}Здоровье и психика работают только с анализом каждого ответа (раздел «Чтение РП»).</div>`}
+            ${toggle('erectionDrops', 'Падение эрекции', 'от алкоголя, стресса, недосыпа')}
+            ${toggle('trackExes', 'Отслеживать бывших')}
+            ${s.readMode === 'analyzer' ? toggle('health', 'Здоровье и психика', 'выключено — только травмы') : `<div class="stk-hint">${icon('fa-circle-info')}Здоровье и психика — только с анализом каждого ответа.</div>`}
             ${s.health && s.readMode === 'analyzer' ? `<label class="stk-field"><span>Течение болезней</span><select class="text_pole stk-set" data-k="healthSpeed">
                 ${[['0.5', 'медленно ×0.5'], ['1', 'реализм ×1'], ['2', 'быстро ×2']].map(([v, l]) => `<option value="${v}" ${String(s.healthSpeed ?? 1) === v ? 'selected' : ''}>${l}</option>`).join('')}
             </select></label>` : ''}
         </div>
         <div class="stk-card">
             <div class="stk-card-title">${icon('fa-bell')}Уведомления</div>
-            ${toggle('toasts', 'Уведомления о событиях', 'начались месячные, задержка, схватки')}
+            ${toggle('toasts', 'Уведомления о событиях')}
         </div>
         <div class="stk-card">
             <div class="stk-card-title">${icon('fa-comment-dots')}Этот чат</div>

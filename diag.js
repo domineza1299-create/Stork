@@ -6,7 +6,7 @@
 import { extensionNames, getContext } from '../../../extensions.js';
 import { cycleInfo } from './biology.js';
 import { describeChoice, requestHistory } from './connection.js';
-import { diagnose, scrub, scrubShape } from './diagnose.js';
+import { diagnose, redactSecrets, scrub, scrubShape } from './diagnose.js';
 import { members } from './family.js';
 import { cleanRpText, dateLabel, isEmptyReply } from './engine.js';
 import { logEntries, logEvent, logText } from './log.js';
@@ -95,7 +95,7 @@ export async function buildReport() {
 
     section('Настройки');
     out.push(`чтение РП: ${s.readMode === 'analyzer' ? 'анализ каждого ответа' : 'скрытая метка'}`);
-    out.push(`анализ через: ${describeChoice(s.readProfile)} (сохранено: ${s.readProfile || 'не выбрано'})`);
+    out.push(`анализ через: ${describeChoice(s.readProfile)}`);
     out.push(`основное подключение: ${ctx.mainApi ?? '?'} · ${ctx.onlineStatus ?? '?'}${ctx.mainApi === 'openai' ? ` · ${ctx.getChatCompletionModel?.() ?? '?'}` : ''}`);
     out.push(`статус для модели: ${s.placement}, подробный ${s.detailed}, мягкие слова ${s.neutral} · включён везде: ${s.enabled} · промпты в журнал: ${!!s.debugPrompts}`);
     out.push(`время в статусе для РП-модели: ${otherClock() ? `не передаётся, время ведёт ${otherClock()}` : 'передаётся'} · служебные строки [MN: …] и <horae> Stork не читает`);
@@ -123,7 +123,8 @@ export async function buildReport() {
 
 /** Saves the report as a .txt file. */
 export async function downloadReport() {
-    const text = await buildReport();
+    // no keys, tokens, passwords or addresses ever leave in it: only the names of the models
+    const text = redactSecrets(await buildReport());
     const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
@@ -239,7 +240,7 @@ export async function buildStoppedReport() {
 }
 
 export async function downloadStoppedReport() {
-    const text = await buildStoppedReport();
+    const text = redactSecrets(await buildStoppedReport());
     const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);

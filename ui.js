@@ -7,7 +7,8 @@ import { saveSettingsDebounced } from '../../../../script.js';
 import { careOf, cycleInfo, FEMALE_CONTRACEPTION, femaleState, laborProgress, pillState, pregnancyInfo } from './biology.js';
 import { abstinence, abstinenceView, absMinute, maleAche, acceptPregnancyClaim, clockText, desireWord, editPregnancyClaim, liveNow, maleDesire, maleSnapshot, maleVigor, recoveryLeft, rejectPregnancyClaim, removePregnancyByHand, setPregnancyByHand, shortDate, timeLabel, withLive } from './engine.js';
 import { activeIn, changed, currentState, readStatus, refreshStatus, retryRead, settings, updateCurrentState, VIEWS } from './store.js';
-import { applyPersonEdit, parseStoryDate, parseTypedClock, setPeriodStart, setStoryClock } from './setup.js';
+import { applyPersonEdit, intimacyFromCards, parseStoryDate, parseTypedClock, setPeriodStart, setStoryClock } from './setup.js';
+import { analyzeCards } from './cards.js';
 import {
     agoWord, avatarUrl, babyWeight, capitalize, claimCard, clamp01, cycleFields, cycleStrip, esc, femaleLevels, femaleTraits, icon, initials, irregularityWord,
     ACT_LABEL, KIND_ICON, knowsPregnancy, levelWord, maleLevels, nameOf, nextInCycle, personFields, pregnancyLibidoWhy, riskyLately,
@@ -15,7 +16,7 @@ import {
 } from './common.js';
 import { calendarCore } from './classic.js';
 import { LIFESTYLE } from './biology.js';
-import { DYN } from './intimacy.js';
+import { DYN, editKinks, ensureIntim } from './intimacy.js';
 import { spanText } from './storyclock.js';
 import { healthBriefRows } from './healthui.js';
 import { downloadProblemLog, downloadStopped, openStork } from './window.js';
@@ -88,6 +89,17 @@ function subFold(key, iconName, title, summary, body) {
 function bar(label, value, tone, word, title = '') {
     const v = Math.round(clamp01(value) * 100);
     return `<div class="stk-bar"${title ? ` title="${esc(title)}"` : ''}><span>${esc(label)}</span><div class="stk-track"><i class="t-${tone}" style="width:${v}%"></i></div><em>${esc(word)}</em></div>`;
+}
+
+/** Without release: a bar with days and how much of what their nature bears (and his body's word, when it speaks). */
+function abstinenceBar(state, key) {
+    const a = abstinence(state, key);
+    if (!a) return '';
+    const person = state.people[key];
+    const ache = person?.sex === 'male' ? maleAche(state, person) : null;
+    const v = abstinenceView(a, ache);
+    const when = a.days ? `${a.days} дн.` : `${Math.round(a.hours)} ч`;
+    return bar('Воздержание', a.pct / 100, a.pct >= 100 || (ache?.stage ?? 0) >= 2 ? 'warm' : 'pink', `${when} · ${a.pct}%`, `${v.why}${ache?.stage ? ` · ${ache.ru}` : ''}`);
 }
 
 /** A line of text with an icon. */
@@ -336,6 +348,7 @@ function femaleCard(state, person, view = {}) {
             ${bar('Энергия', energy, 'accent', levelWord(energy, true))}
             ${bar('Влечение', libido, 'pink', levelWord(libido))}
             <div class="stk-bar" title="${esc(`день ${s.cycleDay} из ${s.length}: ${phaseText}`)}"><span>Цикл</span>${cycleStrip(f, day)}<em>${s.cycleDay} из ${s.length}</em></div>
+            ${abstinenceBar(state, key)}
         </div>
         ${note}
         ${subFold(`${key}-fert`, 'fa-heart', 'Фертильность', fertSummary, `
@@ -361,6 +374,7 @@ function maleCard(state, person, view = {}) {
             ${bar('Бодрость', L.vigor, 'accent', L.vigorWord)}
             ${bar('Влечение', L.libido, 'pink', levelWord(L.libido))}
             ${bar('Эрекция', s.erection, 'preg', L.erectionOk ? 'в порядке' : 'ненадёжна', L.erectionOk ? '' : 'может подвести')}
+            ${abstinenceBar(state, key)}
         </div>
         ${L.left > 0 ? li('fa-hourglass-half', `восстанавливается после оргазма: ещё ~${L.left} мин по времени истории`, 'is-warm') : ''}
         ${storyNote(state, key)}
@@ -453,7 +467,7 @@ function abstinenceRow(state, key) {
     const a = abstinence(state, key);
     const person = state.people[key];
     const ache = person?.sex === 'male' ? maleAche(state, person) : null;
-    if (!a || (a.days < 2 && !ache?.stage)) return '';
+    if (!a || (a.days < 1 && !ache?.stage)) return '';
     const v = abstinenceView(a, ache);
     return li('fa-hourglass-end', `<span title="${esc(v.why)}">${esc(v.text)}</span>`, `is-${v.tone}`);
 }
@@ -689,6 +703,30 @@ export function handleAction(target, view, rerender) {
             notifyDone(act === 'health-cure' ? 'Отмечено: выздоровление' : act === 'health-del' ? 'Убрано' : 'Лекарство отменено', { icon: 'fa-notes-medical', timeOut: 2000 });
             break;
         }
+        case 'kink-edit': view.kinkEdit = Number(target.dataset.i); break;
+        case 'kink-cancel': view.kinkEdit = null; break;
+        case 'kink-del':
+        case 'kink-save':
+        case 'kink-add': {
+            const name = values().name;
+            if (act !== 'kink-del' && !String(name ?? '').trim()) return true;
+            updateCurrentState(state => editKinks(ensureIntim(state), { op: act === 'kink-del' ? 'del' : act === 'kink-save' ? 'set' : 'add', i: Number(target.dataset.i), who: target.dataset.who, name }));
+            view.kinkEdit = null;
+            break;
+        }
+        case 'kinks-reread': {
+            if (view.kinksReading) return true;
+            view.kinksReading = true;
+            analyzeCards(settings().readProfile, 'кинки: прочитать из карточек заново (по кнопке)')
+                .then(a => {
+                    if (!Array.isArray(a?.kinks)) throw new Error('модель не вернула список');
+                    updateCurrentState(state => intimacyFromCards(state, a));
+                    notifyDone('Кинки прочитаны заново', { icon: 'fa-heart-circle-bolt', timeOut: 2500 });
+                })
+                .catch(error => notifyWarn(`Не вышло прочитать карточки: ${error?.message ?? error}`, { timeOut: 6000 }))
+                .finally(() => { view.kinksReading = false; rerender(); });
+            break;
+        }
         case 'time-edit': view.timeEdit = true; break;
         case 'time-cancel': view.timeEdit = false; break;
         case 'time-save': {
@@ -773,6 +811,14 @@ export function onKeyActivate(event) {
     if (timeForm && event.target.tagName === 'INPUT' && (event.key === 'Enter' || event.key === 'Escape')) {
         event.preventDefault();
         timeForm.querySelector(`[data-stk-act="${event.key === 'Enter' ? 'time-save' : 'time-cancel'}"]`)?.click();
+        return;
+    }
+    // a kink typed in: Enter saves or adds, Escape closes the edit
+    const kinkForm = event.target?.closest?.('.stk-kink-form');
+    if (kinkForm && event.target.tagName === 'INPUT' && (event.key === 'Enter' || event.key === 'Escape')) {
+        event.preventDefault();
+        const sel = event.key === 'Escape' ? '[data-stk-act="kink-cancel"]' : '[data-stk-act="kink-save"], [data-stk-act="kink-add"]';
+        kinkForm.querySelector(sel)?.click();
         return;
     }
     if (event.key !== 'Enter' && event.key !== ' ') return;
