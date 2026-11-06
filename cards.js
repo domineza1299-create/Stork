@@ -33,9 +33,16 @@ export function readCards() {
         ['Scenario', fields.scenario],
         ["Creator's notes", fields.creatorNotes],
     ].filter(([, text]) => String(text ?? '').trim()).map(([title, text]) => `${title}:\n${clip(text)}`).join('\n\n');
-    // The real start of this chat: the greeting actually chosen, not only the card's default one
-    const first = (context.chat ?? []).find(m => !m.is_system);
-    const opening = first && !first.is_user ? clip(first.mes) : clip(fields.firstMessage);
+    // The real start of this chat: the greeting actually chosen, not only the card's default one — and her own first
+    // message, which often sets the scene itself («[OOC: декабрь, ночь…]»): Stork starts on it
+    const chat = (context.chat ?? []).filter(m => !m.is_system);
+    const first = chat[0];
+    const greeting = first && !first.is_user ? clip(first.mes) : clip(fields.firstMessage);
+    const start = first && !first.is_user ? 1 : 0;
+    const hers = [];
+    for (let i = start; i < chat.length && chat[i].is_user; i++) hers.push(chat[i].mes);
+    const herText = hers.length ? clip(hers.join('\n\n')) : '';
+    const opening = herText ? `${greeting}\n\n{{user}}'s first message:\n${herText}` : greeting;
     return {
         opening,
         charName: context.name2 ?? '',
@@ -57,7 +64,7 @@ ${cards.charText || '(empty)'}
 PERSONA ({{user}}, ${cards.userName}):
 ${cards.userText || '(empty)'}
 
-STORY OPENING (the first message of this chat):
+STORY OPENING (the greeting of this chat, then {{user}}'s first message when there is one — it may set the scene: the date, the season, the time):
 ${cards.opening || '(empty)'}
 
 Return JSON exactly in this shape:
@@ -77,7 +84,7 @@ Rules:
 - char "libido": his sexual temperament as the card describes it (a high libido, insatiable, hot-blooded → "high"; cold, indifferent, low drive → "low"); null if the card says nothing about it.
 - Booleans are true only when the texts say so; habits count when they are part of who the person is (smokes, drinks often), not a single scene.
 - contraception, cycle_length, cycle_day, flow: only if stated. cycle_day only if the texts say where she is in her cycle (period now, ovulation, period due soon).
-- "start" is when and where the story opening takes place. time: the time of day when the opening takes place — exact if stated; otherwise the most plausible one from the opening itself (darkness or daylight, a meal, "ночью", "после работы", a party in full swing, someone going to bed: late night ≈ 23:30, evening ≈ 19:00, morning ≈ 08:00) with "time_guessed": true; null only if nothing at all hints at it. date: if the opening or the card names it; if not, the most plausible date by the setting (year of the setting, season, holidays, school or work rhythm) with "date_guessed": true; null only if there is nothing to go on.
+- "start" is when and where the story opening takes place. When {{user}}'s first message sets it (even out of character, «[OOC: …]»: a month, a season, a year, «ночь»), that wins over the greeting and the card. time: the time of day when the opening takes place — exact if stated; otherwise the most plausible one from the opening itself (darkness or daylight, a meal, "ночью", "после работы", a party in full swing, someone going to bed: late night ≈ 23:30, evening ≈ 19:00, morning ≈ 08:00) with "time_guessed": true; null only if nothing at all hints at it. date: if the opening or the card names it; if not, the most plausible date by the setting (year of the setting, season, holidays, school or work rhythm) with "date_guessed": true; null only if there is nothing to go on.
 - "family": relatives of {{char}} and {{user}} the texts name: parents, siblings, children, a spouse or an ex, grandparents. "name is relation of of". If {{user}} and {{char}} are married or a couple: { "name": "char", "relation": "spouse" | "partner", "of": "user" }. "name" is the relative's own name exactly as the texts give it (a first name, with a patronymic or surname if given) — never a relation word or a description («мама», «бабушка», «мать Игоря»); a relative the texts never name is not listed. Names in the language the story opening is written in («Аня», not «Anya», for a story in Russian). Each relative once. Empty if none.
 - "kinks": every kink, fetish, sexual preference or turn-on the card or the persona names or clearly implies ("оральный секс", "разные позы", "заводит её грудь", "доминирование"), "from" where it is written. Each a short name of the turn-on itself, in the texts' own sense; how they behave (who leads, giving in, being shy) is not a kink. Each kink once. Never invent; never anything they name as a limit or a dislike. Empty if none.
 - "in_bed": from the card and the persona only. "char": {{char}} in bed — libido, experience, who leads, pace, what turns him on, habits, what he says or does not say. "user": {{user}} the same way. null for one the texts say nothing about.

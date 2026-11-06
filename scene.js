@@ -37,7 +37,7 @@ export function buildScenePrompt({ userName, charName, dateText, status, timelin
 ${timeline}
 
 ` : ''}Story time before these messages: ${dateText}. The scene goes on from there: a new day begins only if these messages move to it.${dateGuess ? `
-That date is only the tracker's guess. If these messages name the date, put it into "date"; the days between the guess and that date are NOT story time: never count them into "minutes".` : ''}${skipCounted ? `
+That date is only the tracker's guess. If these messages name the date, put it into "date"; if they make only the month or the season clear (December, deep winter, the New Year coming), put the most plausible date in it (the year of the setting). The days between the guess and that date are NOT story time: never count them into "minutes".` : ''}${skipCounted ? `
 The time skip the user message opens with is ALREADY COUNTED: the time above is after it. "minutes" is only the time that passes after that, in the reply; the scene is set after the skip.` : ''}
 {{user}} = ${userName} (woman), {{char}} = ${charName} (man).
 ${status ? `
