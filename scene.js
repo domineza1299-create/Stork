@@ -30,7 +30,7 @@ const RELATIONS = ['parent', 'child', 'sibling', 'spouse', 'partner', 'ex', 'gra
  * @param {boolean} [input.trackExes] false: no exes on the tree
  * @param {boolean} [input.erectionDrops] false: outside causes never weaken his erection
  */
-export function buildScenePrompt({ userName, charName, dateText, status, timeline = '', earlier, userMessage, reply, skipCounted = false, intim = null, familyKnown = '', trackExes = true, erectionDrops = true, turnOns = '', health = null, dateGuess = false }) {
+export function buildScenePrompt({ userName, charName, dateText, status, timeline = '', earlier, userMessage, reply, skipCounted = false, intim = null, familyKnown = '', trackExes = true, erectionDrops = true, turnOns = '', health = null, dateGuess = false, relNow = 'unknown' }) {
     const relations = RELATIONS.filter(r => trackExes || r !== 'ex').map(r => `"${r}"`).join(' | ');
     const full = intim?.full ? intim.section : null;
     return `${timeline ? `STORY SO FAR (what happened lately, by story time; the newest line is right before these messages):
@@ -71,7 +71,7 @@ Return JSON:
   "past_intimacy": [ { "days_ago": number, "protection": "none" | "condom" | "pill_only", "finished_inside": true | false } ],
   "orgasm": [ "user" and/or "char" ],
   "lifestyle": [ { "type": ${LIFESTYLE_TYPES.map(t => `"${t}"`).join(' | ')}, "who": "user" | "char", "fever": true | false } ],
-  "injury": [ { "who": "user" | "char", "what": "a few words in Russian", "heal_days": number } ],
+  "injury": [ { "who": "user" | "char", "what": "a few words in Russian", "heal_hours": number } ],
   "pregnancy_test": true | false,
   "doctor_visit": true | false,
   "ultrasound": true | false,
@@ -86,11 +86,13 @@ Return JSON:
   "missed_pill": true | false,${health ? `
   "health": [ { "action": "illness_new" | "med_taken" | "med_stop" | "doctor_visit" | "cured" | "hospital" | "genetic_reveal", "who": "user" | "char", ... } ],` : ''}
   "emergency_pill": true | false,
+  "relation": null or { "status": "strangers" | "acquaintances" | "friends" | "dating" | "couple" | "engaged" | "married" | "separated" | "divorced" | "exes", "met_now": true | false, "known_days": number | null, "together_days": number | null },
+  "kids_view": [ { "who": "user" | "char", "view": "wants" | "open" | "not_now" | "against", "said_to_other": true | false } ],
   ${intim ? CLOSENESS_FIELD : ''}${full ? `
   ${full.field}` : ''}
   "people": {
     "user": { "energy": -3..3 or null, "libido": -3..3 or null, "mood": "1-3 words in Russian" or null, "note": "Russian, 1-2 sentences" or null },
-    "char": { the same, plus "sperm_note": "Russian, 1-2 sentences" or null, "desire_trigger": "a few words in Russian" or null, "desire_shown": "3-6 words in Russian" or null }
+    "char": { the same, plus "sperm_note": "Russian, 1-2 sentences" or null, "desire_trigger": "a short complete phrase in Russian" or null, "desire_shown": "3-6 words in Russian" or null }
   }
 }
 Rules:
@@ -102,13 +104,15 @@ ${health ? `- "health": illnesses of the body and the mind of {{user}} and {{cha
   - "med_taken": took a dose ("med", "for" — the illness); also something nobody prescribed. "med_stop": quit a medicine ("med").
   - "doctor_visit": a doctor or a therapist sees them ("diagnosis" — what the doctor said, "prescribed": [{ "name", "schedule", "days" }], "next_visit_days": number or null, "about", "care").
   - "cured": the illness ends in the story ("name"). "hospital": "state": "admit" | "discharge". "genetic_reveal": tests show a hereditary risk ("name", "risk" 1-95, "type").
-` : ''}- "injury": only a NEW injury these messages cause — damage to the body (a bruise, a cut, a sprain, a burn, a fracture). A limb gone numb, tiredness, muscles sore from effort are not injuries (they go into "energy" or the scene's "discomfort"). The healing injuries in the tracker above are already known: never report them again, even in other words. "heal_days": how long it takes to heal (a scratch 3-5, a bruise 7-10, a cut 7, a sprain 14, a fracture 40+).
+` : ''}- "injury": only a NEW injury these messages cause — damage to the body (a bruise, a cut, a sprain, a burn, a fracture). A limb gone numb, tiredness, muscles sore from effort are not injuries (they go into "energy" or the scene's "discomfort"). The healing injuries in the tracker above are already known: never report them again, even in other words. "heal_hours": how long until it stops mattering, realistically and by how hard it was: a knocked finger or a light bump 1-6, a small bruise 24-72, a scratch or a graze 48-96, a cut 96-168, a sprain about 336, a fracture 1000+.
 - "pregnancy_test", "doctor_visit", "ultrasound": true only when it BEGINS in these messages. A visit or a test that was already going on in the earlier reply (the same appointment continues, they talk about its results) is not a new one: false.
 - "illness" only for a sickness with a raised temperature (flu, an infection, a cold with fever) — then "fever": true. Injuries, bruises, cuts, pain, a hangover or tiredness are NOT an illness: put an injury into "injury", tiredness into "energy".
 - "pregnancy_claim": when these messages, the USER MESSAGE included, state as a fact that {{user}} is pregnant: she says or thinks it as something she knows, a positive test, a doctor confirms it, the narration says so. The user writes {{user}} herself, so her own words count even if the tracker says she is not pregnant. "weeks"/"days": the term the text names (months → weeks: 2 months ≈ 8 weeks; "two weeks of delay" ≈ 6 weeks), null if no term. "partner_knows": true if {{char}} knows in these messages. null when it is only a fear, a guess, a joke, a plan, a dream, a question, or nothing like that.
 - "family": almost always empty. Only relatives of {{user}} or {{char}} that these messages name or show for the first time, or a relation that changes now: "name is relation of of" (Галина — mother of {{char}}: { "name": "Галина", "sex": "female", "relation": "parent", "of": "char" }). "name" is the relative's own name exactly as the story gives it — never a relation word or a description («мама», «бабушка», «мать Игоря»); a relative the messages do not name is not listed; names in the language of the story. Someone already on the family tree is never listed again under another form of the name. When {{user}} and {{char}} marry, become a couple${trackExes ? ' or break up' : ''} in these messages: { "name": "char", "relation": ${trackExes ? '"spouse" | "partner" | "ex"' : '"spouse" | "partner"'}, "of": "user" }.${trackExes ? '' : ' Former partners (exes) are not tracked: never list them.'} Not friends, colleagues or a relative only mentioned in passing; a baby born in the story is counted by the tracker itself.${intim ? `
 ${CLOSENESS_RULE}` : ''}${full ? `
 ${full.rules}` : ''}
+- "relation": null unless their relationship changes in these messages or they meet for the first time: "status" — what they are to each other now (a first date → "dating"; they agree to be together → "couple"; a proposal accepted → "engaged"; a wedding → "married"; a breakup → "exes"); "met_now": true when {{user}} and {{char}} meet for the very first time. The tracker knows their status before: ${relNow}. When it is "unknown", report their status now whatever happens, with "known_days" / "together_days" — how long they have known each other / been together, only if the story makes it clear (null otherwise).
+- "kids_view": only when someone states how they feel about having children in these messages (their own view, not a guess): "said_to_other" true if the other one heard it. Empty otherwise.
 - "pregnancy_facts": only while the tracker says she is pregnant and knows it: what these messages establish about this pregnancy that is worth remembering for its whole course — a symptom that stays (strong nausea, swelling), a complication or a threat, what a doctor or a midwife said, twins, a decision (to keep it, to hide it). Not a passing feeling of this scene, not what the tracker already says. Empty if nothing new.
 - "baby_sex": only while she is pregnant, and only when these messages state the baby's sex as a fact: a doctor or an ultrasound says it, she tells what the doctor said, the narration names it. A list for twins, one per baby. If it differs from the tracker, these messages win. null when the sex is not named, only hoped for, guessed or asked about; never invent it.
 - "partner_learns_pregnancy": true only when {{char}} learns in these messages that {{user}} is pregnant (she tells him, he sees a positive test, a doctor says it with him there); false if he already knew, if it is only a guess or a fear, or if nothing like that happened.
@@ -122,7 +126,7 @@ ${full.rules}` : ''}
   Bad, a retelling: "Отнёсся к началу месячных у Нины спокойно: принёс воду и предложил обезболивающее."
   Good, a conclusion: "Вечером тестостерон ниже, напора нет, поэтому забота даётся ему легко; рядом с ней он сейчас скорее нежен, чем страстен."
   Good, a conclusion: "Раздражительность от ПМС: перед месячными падают эстроген и прогестерон, нервы тоньше, мелочи задевают сильнее."
-- "desire_trigger" (only {{char}}, outside an intimate scene): what in these messages stirred his desire for {{user}}${turnOns ? ` — by what his card says turns him on (${turnOns}), or by the moment itself` : ''}: a few words in Russian, as it happened in the text. null if nothing did; never invent one.
+- "desire_trigger" (only {{char}}, outside an intimate scene): what in these messages stirred his desire for {{user}}${turnOns ? ` — by what his card says turns him on (${turnOns}), or by the moment itself` : ''}: a short complete phrase in Russian, 3-8 words, natural and whole (a phrase one would say, never a cut-off fragment or a list), as it happened in the text. null if nothing did; never invent one.
 - "desire_shown" (only {{char}}): if his desire for {{user}} showed in these messages, HOW it showed, 3-6 words in Russian, so later replies do not repeat it. null if it did not show.
 - "sperm_note" (only {{char}}): what the body state shown in these messages and in the tracker means for his sperm and his chance to make her pregnant now: alcohol, smoking, heat (sauna, a hot bath), fever, stress, lack of sleep, long abstinence, several orgasms in a row, recovery. A short medical conclusion in plain words, like a calm doctor would say it, no retelling of the scene, no Latin. Say what is affected now and what only later (sperm matures about 74 days, so today's drinking shows in 2-3 months${erectionDrops ? ', while erection and desire suffer right away' : ''}). 1-2 short sentences in Russian. null if nothing in these messages bears on it.${erectionDrops ? `
   Good: "Вечер с алкоголем на сперму сейчас почти не влияет — скажется месяца через два-три, а вот эрекция и выносливость сегодня будут слабее."` : `

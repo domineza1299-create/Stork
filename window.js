@@ -15,6 +15,8 @@ import { eventLook, notify, notifyDone, notifyWarn } from './notify.js';
 import { downloadReport, downloadStoppedReport, stoppedDiagnosis } from './diag.js';
 import { clearLog, logCountText, logEvent, logListHtml, onLogChange } from './log.js';
 import { handleAction, onKeyActivate } from './ui.js';
+import { bondScore } from './intimacy.js';
+import { kidsKnowledge } from './bond.js';
 import { healthHtml } from './healthui.js';
 import * as classic from './classic.js';
 import { renderFamily } from './tree.js';
@@ -113,7 +115,9 @@ function logCard() {
                 <button type="button" class="stk-btn is-warn" data-stk-act="stopped-report" title="Отчёт о том, почему Stork не отслеживает: без переписки и имён">${icon('fa-heart-crack')}Перестал отслеживать!</button>
                 <button type="button" class="stk-btn is-ghost stk-log-clear">${icon('fa-broom')}Очистить</button>
             </div>
-            <div class="stk-log-list">${logListHtml()}</div>
+            <details class="stk-fold-in stk-log-fold" data-stk-fold="log-list" ${classic.foldOpen('log-list') ? 'open' : ''}><summary>${icon('fa-list')}<span class="stk-muted">история событий</span>${icon('fa-chevron-down', 'stk-fold-chev')}</summary>
+                <div class="stk-log-list">${logListHtml()}</div>
+            </details>
         </div>`;
 }
 
@@ -379,7 +383,7 @@ function readingCard() {
                         ${iconBtn('stk-refresh-profiles', 'fa-rotate', 'Обновить список профилей')}
                     </div>
                 </div>
-                <div class="stk-hint ${used.startsWith('ОШИБКА') ? 'is-warn' : ''}">${icon(used.startsWith('ОШИБКА') ? 'fa-triangle-exclamation' : 'fa-plug')}Запросы идут: ${esc(used)}</div>
+                ${used.startsWith('ОШИБКА') ? `<div class="stk-hint is-warn">${icon('fa-triangle-exclamation')}${esc(used)}</div>` : ''}
                 <label class="stk-field"><span>Контекст сообщений</span>
                     <select class="text_pole stk-set" data-k="memoryReplies">
                         ${MEMORY_OPTIONS.map(n => `<option value="${n}" ${Number(s.memoryReplies ?? 20) === n ? 'selected' : ''}>${n} сообщений</option>`).join('')}
@@ -396,12 +400,6 @@ function manualCard(view) {
     return `
         <details class="stk-card stk-fold" ${view?.manualOpen ? 'open' : ''}>
             <summary>${icon('fa-screwdriver-wrench')}Поправить вручную</summary>
-            <div class="stk-sub">Время</div>
-            <div class="stk-actions">
-                <button type="button" class="stk-btn is-ghost stk-time" data-min="60">+1 ч</button>
-                <button type="button" class="stk-btn is-ghost stk-time" data-min="${MINUTES_PER_DAY}">+1 день</button>
-                <button type="button" class="stk-btn is-ghost stk-time" data-min="${MINUTES_PER_DAY * 7}">+1 неделя</button>
-            </div>
             <div class="stk-sub">Близость</div>
             <div class="stk-actions">
                 ${[['none', 'без защиты'], ['condom', 'презерватив'], ['withdrawal', 'прерванный']].map(([k, l]) => `<button type="button" class="stk-btn is-ghost stk-intimacy" data-p="${k}">${l}</button>`).join('')}
@@ -480,19 +478,25 @@ function viewCard() {
 function kinksCard(state, view) {
     if (!state.setupDone) return '';
     const kinks = Array.isArray(state.intim?.kinks) ? state.intim.kinks : [];
+    const exp = state.intim?.experience ?? {};
+    const expSeg = key => `<div class="stk-seg is-wide stk-exp-seg">${[['inexperienced', 'неопытный'], ['some', 'средний'], ['experienced', 'опытный']].map(([v, l]) => `<button type="button" class="${exp[key] === v ? 'is-on' : ''}" data-stk-act="exp-set" data-who="${key}" data-v="${v}">${l}</button>`).join('')}</div>`;
     const group = (from, key) => {
+        const other = key === 'user' ? 'он' : 'она';
         const items = kinks.map((k, i) => ({ ...k, i })).filter(k => (k.from === 'persona') === (from === 'persona'));
         const chips = items.map(k => view.kinkEdit === k.i
             ? `<span class="stk-edit stk-kink-form"><input class="text_pole" data-f="name" type="text" maxlength="40" value="${esc(k.name)}" aria-label="Кинк"><button type="button" class="stk-icon-btn is-primary" data-stk-act="kink-save" data-i="${k.i}" title="Сохранить" aria-label="Сохранить">${icon('fa-check')}</button><button type="button" class="stk-icon-btn" data-stk-act="kink-cancel" title="Отмена" aria-label="Отмена">${icon('fa-xmark')}</button></span>`
-            : `<span class="stk-kchip"><button type="button" class="stk-kchip-name" data-stk-act="kink-edit" data-i="${k.i}" title="Изменить">${esc(k.name)}</button><button type="button" class="stk-kchip-del" data-stk-act="kink-del" data-i="${k.i}" title="Убрать" aria-label="Убрать">${icon('fa-xmark')}</button></span>`).join('');
+            : `<span class="stk-kchip${k.known ? '' : ' is-unknown'}"><button type="button" class="stk-kchip-eye" data-stk-act="kink-known" data-i="${k.i}" title="${k.known ? `${other} знает — нажми, если нет` : `${other} пока не знает — нажми, если знает`}" aria-label="Знает ли">${icon(k.known ? 'fa-eye' : 'fa-eye-slash')}</button><button type="button" class="stk-kchip-name" data-stk-act="kink-edit" data-i="${k.i}" title="Изменить">${esc(k.name)}</button><button type="button" class="stk-kchip-del" data-stk-act="kink-del" data-i="${k.i}" title="Убрать" aria-label="Убрать">${icon('fa-xmark')}</button></span>`).join('');
         return `<div class="stk-kink-group">
             <div class="stk-kink-who">${icon(key === 'user' ? 'fa-venus' : 'fa-mars')}${esc(nameOf(state.people[key]))}</div>
-            <div class="stk-kchips">${chips || '<span class="stk-muted">пусто</span>'}</div>
-            <span class="stk-edit stk-kink-form is-add"><input class="text_pole" data-f="name" type="text" maxlength="40" placeholder="добавить…" aria-label="Новый кинк"><button type="button" class="stk-icon-btn" data-stk-act="kink-add" data-who="${key}" title="Добавить" aria-label="Добавить">${icon('fa-plus')}</button></span>
+            ${expSeg(key)}
+            ${chips ? `<div class="stk-kchips">${chips}</div>` : ''}
+            ${view.kinkAdd === key
+        ? `<span class="stk-edit stk-kink-form is-add"><input class="text_pole" data-f="name" type="text" maxlength="40" placeholder="что ${key === 'user' ? 'ей' : 'ему'} нравится…" aria-label="Новый кинк" autofocus><button type="button" class="stk-icon-btn is-primary" data-stk-act="kink-add" data-who="${key}" title="Добавить" aria-label="Добавить">${icon('fa-check')}</button><button type="button" class="stk-icon-btn" data-stk-act="kink-cancel" title="Отмена" aria-label="Отмена">${icon('fa-xmark')}</button></span>`
+        : `<div class="stk-kink-plus"><button type="button" data-stk-act="kink-open" data-who="${key}" title="Добавить" aria-label="Добавить кинк">${icon('fa-plus')}</button></div>`}
         </div>`;
     };
     return `<div class="stk-card stk-kinks-card">
-        <div class="stk-card-title">${icon('fa-heart-circle-bolt')}Кинки</div>
+        <div class="stk-card-title">${icon('fa-heart-circle-bolt')}Кинки<span class="stk-muted stk-bond" title="Притирка: как хорошо они знают друг друга в постели">${icon('fa-handshake-simple')}притирка <b>${bondScore(state.intim, kidsKnowledge(state))}</b></span></div>
         ${group('card', 'char')}
         ${group('persona', 'user')}
         <div class="stk-actions"><button type="button" class="stk-btn is-ghost" data-stk-act="kinks-reread" ${view.kinksReading ? 'disabled' : ''}>${icon(view.kinksReading ? 'fa-circle-notch' : 'fa-rotate', view.kinksReading ? 'fa-spin' : '')}Перечитать карточки</button></div>

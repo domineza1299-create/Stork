@@ -177,12 +177,17 @@ const READ_WAIT_MS = 30000;
 
 /** Readings running now, one per reply and swipe: the same reply is never read twice at once. */
 const readsInFlight = new Map();
+/** This chat, whichever way SillyTavern names it. */
+const currentChatId = () => { const c = getContext(); return c.getCurrentChatId?.() ?? c.chatId ?? null; };
+
 /** Replies left unread because they were empty: one that gets a text later is read then. */
 const emptySkipped = new Set();
 const EMPTY_WAIT_MS = 1500;
 
 /** The newest reading of each reply: an older one that comes back later must not overwrite it. */
 const latestRead = new Map();
+/** The same, by the message itself: another extension may insert a message (Mnema's summary) and move the indexes. */
+const latestByMessage = new WeakMap();
 let readCount = 0;
 
 /**
@@ -249,6 +254,8 @@ async function readReplyNow(index, { force = false, strict = false, reason = '' 
 
     const mine = ++readCount;
     latestRead.set(index, mine);
+    latestByMessage.set(message, mine);
+    const chatId = currentChatId();
     const before = stateBefore(index);
     const swipe = message.swipe_id ?? 0;
     const sigAsked = storySig(message.mes);
@@ -270,6 +277,7 @@ async function readReplyNow(index, { force = false, strict = false, reason = '' 
             charName: before.people.char.name,
             dateText: `${dateLabel(before)}, ${String(Math.floor(before.clock.minutes / 60)).padStart(2, '0')}:${String(before.clock.minutes % 60).padStart(2, '0')} (${timeLabel(before.clock.minutes)})`,
             dateGuess: !before.dateSure,
+            relNow: before.bond?.status ? `${before.bond.status}${before.bond.metAt === null || before.bond.metAt === undefined ? ', they have not met yet' : ''}` : 'unknown',
             status: buildStatus(before, { detailed: true, withTag: false, guide: false }),
             timeline: timelineText(before, storyLines(index, Number(settings().memoryReplies) || 20)),
             earlier,
@@ -304,10 +312,21 @@ async function readReplyNow(index, { force = false, strict = false, reason = '' 
             if (scene.closeness === undefined) scene.closeness = null;
         }
         // another chat opened, the reply was swiped or deleted, or a newer reading of it started: this answer is not for what is there now
-        const now = getContext().chat === chat ? chat[index] : null;
-        if (!now || (now.swipe_id ?? 0) !== swipe || latestRead.get(index) !== mine) {
+        // the reply is found by itself, not by its place: an extension may have inserted a message above it meanwhile
+        // (and the chat array itself may be replaced by an extension that rewrites the chat: then by its date and text)
+        const live = getContext().chat ?? [];
+        const sameChat = currentChatId() === chatId;
+        let at = sameChat ? live.indexOf(message) : -1;
+        if (at < 0 && sameChat) at = live.findIndex(m => !m.is_user && m.send_date === message.send_date && m.mes === message.mes);
+        const now = at >= 0 ? live[at] : null;
+        if (!now || (now.swipe_id ?? 0) !== swipe || (latestByMessage.get(now) ?? latestByMessage.get(message)) !== mine) {
             trace(`ответ #${index}: пока шёл анализ, ответ сменился или его читают заново, этот результат не нужен`);
             return;
+        }
+        if (at !== index) {
+            trace(`ответ #${index}: пока шёл анализ, другое расширение вставило сообщение выше — теперь это ответ #${at}, результат записан туда`);
+            if (readStatus().index === index) setReading(at);
+            index = at;
         }
         // Another extension may have rewritten the reply meanwhile (a picture in place of its tag, its own block).
         // The analysis was of the reply as the model wrote it, so it still counts: before, Stork read it again
@@ -362,7 +381,7 @@ function intimacyRequest(before, texts, userSkip) {
     })();
     return {
         full: true,
-        section: sectionPrompt({ scene: intim.scene, memory: memoryText(intim.history, 1200), kinks, profile, injuries: injuriesNow(before).map(x => `${x.name} — ${x.what}`).join('; '), cards, voice: intim.voice ?? null, erectionDrops: s.erectionDrops !== false, userSkip, abstain: abstinence(before, 'char') }),
+        section: sectionPrompt({ scene: intim.scene, memory: memoryText(intim.history, 1200), kinks, profile, injuries: injuriesNow(before).map(x => `${x.name} — ${x.what}`).join('; '), cards, voice: intim.voice ?? null, erectionDrops: s.erectionDrops !== false, userSkip, abstain: abstinence(before, 'char'), experience: intim.experience ?? null }),
     };
 }
 

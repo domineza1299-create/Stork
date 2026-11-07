@@ -3,7 +3,7 @@
  * Pure functions over a plain JSON state, so it is saved with chat messages and tested in Node.
  */
 import {
-    ACT_PROTECTION, careOf, hashUnit, realism, createPregnancy, cycleInfo, cycleReturnDay, EMERGENCY_PILL_FACTOR, EMERGENCY_PILL_WINDOW_DAYS, falseContractionsToday,
+    ACT_PROTECTION, FERTILE_AFTER, careOf, hashUnit, realism, createPregnancy, cycleInfo, cycleReturnDay, EMERGENCY_PILL_FACTOR, EMERGENCY_PILL_WINDOW_DAYS, falseContractionsToday,
     femaleConditionFactor, FEMALE_CONDITIONS, FEMALE_HABITS, femaleState, laborChance, laborProgress, LIFESTYLE, maleState, pillState, POSTPARTUM_RECOVERY_DAYS, PREGNANCY_DAYS, pregnancyInfo,
     rollCondomBreak, rollConception, rollCycles, rollTest, startLabor, stressDelay, ultrasoundShowsSex,
 } from './biology.js';
@@ -12,6 +12,7 @@ import { addBirths, applyFindings, emptyFamily, ensureFamily, mergeDuplicates } 
 import { applyIntimacy, ensureIntim, soloKink } from './intimacy.js';
 import { advanceByLine } from './storyclock.js';
 import { advanceHealth, applyHealth, healthOnBody, healthPrompt } from './health.js';
+import { applyBond, bondLine, ensureBond } from './bond.js';
 
 export const MINUTES_PER_DAY = 1440;
 const MAX_LOG = 200;
@@ -171,7 +172,7 @@ function processFemaleDay(state, person, rng) {
     const ovulated = day - 1;
     const pill = pillState(f, ovulated);
     if (cycleInfo(f, ovulated).relative === 0 && f.rolledCycle !== f.cycleStart && !pill.suppressed) {
-        const legacy = state.acts.filter(a => a.woman === person.key && a.rolled === undefined && a.day >= ovulated - 5 && a.day <= ovulated);
+        const legacy = state.acts.filter(a => a.woman === person.key && a.rolled === undefined && a.day >= ovulated - 5 && a.day <= ovulated + FERTILE_AFTER);
         if (legacy.length) {
             f.rolledCycle = f.cycleStart;
             for (const act of legacy) act.rolled = true;
@@ -380,7 +381,7 @@ function rollAct(state, act, rng) {
     }
     const cycle = cycleOf(f, act.day);
     const ovulated = cycle.cycleStart + cycleInfo(cycle, act.day).ovulation - 1;
-    if (act.day < ovulated - 5 || act.day > ovulated) {
+    if (act.day < ovulated - 5 || act.day > ovulated + FERTILE_AFTER) {
         if (!act.past) note(state, woman, 'Зачатие: не фертильные дни — шансов нет', { model: false, kind: 'roll' });
         return;
     }
@@ -1330,7 +1331,7 @@ export function maleDesire(state, person, s = maleSnapshot(state, person)) {
     if (tension > 0.12) {
         v += 0.3 * tension;
         const why = state.desire?.trigger;
-        ru.push(why ? `завело: ${why}` : 'накопилось напряжение');
+        ru.push(why || 'накопилось напряжение');
         en.push(`built up in the story${why ? ` (${why})` : ''}`);
     }
     const level = withLive(v, liveNow(state, person.key).libido);
@@ -1479,6 +1480,14 @@ function desireLine(state) {
  * near; his climax releases it all. How it showed is remembered, so the next reply finds another way.
  * When it crosses into «strong», the story model is told once.
  */
+/** A phrase cut to a length at a word, never in the middle of one. */
+export function clipWords(text, max) {
+    const t = String(text ?? '');
+    if (t.length <= max) return t;
+    const cut = t.slice(0, max);
+    return cut.slice(0, Math.max(cut.lastIndexOf(' '), Math.floor(max / 2))).replace(/[,;:\s]+$/, '');
+}
+
 function applyDesire(state, scene, startedAt, before) {
     const man = Object.values(state.people).find(p => p.sex === 'male');
     if (!man) return;
@@ -1486,7 +1495,7 @@ function applyDesire(state, scene, startedAt, before) {
     const now = absMinute(state.clock);
     let tension = tensionNow(state);
     const c = scene?.people?.char ?? {};
-    const trigger = typeof c.desire_trigger === 'string' && c.desire_trigger.trim() && !/^null$/i.test(c.desire_trigger.trim()) ? c.desire_trigger.trim().slice(0, 60) : null;
+    const trigger = typeof c.desire_trigger === 'string' && c.desire_trigger.trim() && !/^null$/i.test(c.desire_trigger.trim()) ? clipWords(c.desire_trigger.trim().replace(/[.;,\s]+$/, ''), 90) : null;
     if (trigger) { tension += 0.22; d.trigger = trigger; }
     const lib = Number(c.libido);
     if (lib > 0) tension += 0.06 * lib;
@@ -1495,13 +1504,13 @@ function applyDesire(state, scene, startedAt, before) {
     if (released) { tension = 0; d.trigger = null; d.shown = []; }
     d.tension = Math.min(1, tension);
     d.at = now;
-    const shown = typeof c.desire_shown === 'string' && c.desire_shown.trim() && !/^null$/i.test(c.desire_shown.trim()) ? c.desire_shown.trim().slice(0, 60) : null;
+    const shown = typeof c.desire_shown === 'string' && c.desire_shown.trim() && !/^null$/i.test(c.desire_shown.trim()) ? clipWords(c.desire_shown.trim(), 80) : null;
     if (shown && !released) d.shown = [...(d.shown ?? []), shown].slice(-4);
     state.desire = d;
     const after = maleDesire(state, man);
     if (before < DESIRE_STRONG && after.level >= DESIRE_STRONG && (d.notedAt === null || d.notedAt === undefined || now - d.notedAt > 12 * 60) && !state.intim?.scene?.visible) {
         d.notedAt = now;
-        note(state, man, `${man.name || 'Его'}: желание к ней сильное${d.trigger ? ` · завело: ${d.trigger}` : ''}`, { kind: 'desire' });
+        note(state, man, `${man.name || 'Его'}: желание к ней сильное${d.trigger ? ` — ${d.trigger}` : ''}`, { kind: 'desire' });
     }
 }
 
@@ -1613,14 +1622,24 @@ export function setBabySex(state, value, { from = 'story' } = {}) {
 
 // #region Injuries: noted once, heal in their own time
 
-const HEAL_DAYS = [[/перелом|сломан|трещин/i, 42], [/растяжен|вывих|связк|надрыв/i, 14], [/ожог/i, 10], [/синяк|ушиб|гематом|кровоподт/i, 8], [/порез|рана|рассеч|шов|швы/i, 7], [/ссадин|царапин|содран/i, 5], [/засос|укус|след/i, 4]];
-/** Days to heal: what the reading says, else by the word, else a week. */
-export function healDays(what, given) {
-    const n = Math.round(Number(given));
-    if (n >= 1 && n <= 90) return n;
-    for (const [re, days] of HEAL_DAYS) if (re.test(what)) return days;
-    return 7;
+/** Hours until it stops mattering, by the word; the first that fits wins. A knocked finger is hours, not a week. */
+const HEAL_HOURS = [
+    [/перелом|сломан|трещин/i, 42 * 24], [/растяжен|вывих|связк|надрыв/i, 14 * 24], [/ожог/i, 7 * 24],
+    [/порез|рана|рассеч|шов|швы/i, 5 * 24], [/гематом|кровоподт|сильн\S* ушиб|синяк/i, 4 * 24],
+    [/ссадин|царапин|содран/i, 3 * 24], [/засос|укус|след/i, 3 * 24],
+    [/стукну|ударил|задел|прищемил|ушибл\S* пал|ушиб\S* пал|ушибся|ушиблась|отбил/i, 3], [/ушиб/i, 2 * 24],
+];
+/** Hours to heal: what the reading says (hours, or days in older readings), else by the word, else a day. */
+export function healHours(what, { hours, days } = {}) {
+    const h = Number(hours);
+    if (hours !== null && hours !== undefined && Number.isFinite(h) && h > 0 && h <= 24 * 120) return h;
+    const d = Number(days);
+    if (days !== null && days !== undefined && Number.isFinite(d) && d >= 1 && d <= 90) return d * 24;
+    for (const [re, n] of HEAL_HOURS) if (re.test(what)) return n;
+    return 24;
 }
+/** Kept for the older code and tests: days, at least one. */
+export const healDays = (what, given) => Math.max(1, Math.round(healHours(what, { days: given }) / 24));
 const injuryStems = s => String(s ?? '').toLowerCase().split(/[^\p{L}\d]+/u).filter(w => w.length > 3).map(w => w.slice(0, 5));
 /** The same injury in other words: «ссадина на колене» and «ссадины на коленях»; not «синяк на руке» and «синяк на бедре». */
 export function sameInjury(a, b) {
@@ -1635,7 +1654,7 @@ function injuriesOf(state) {
     return state.log.filter(e => e.kind === 'injury').map(e => {
         const at = e.day * MINUTES_PER_DAY + (e.minutes ?? 0);
         const what = e.text.replace(/^[^:]*:\s*/, '');
-        return { who: e.who, what, since: at, heals: at + healDays(what) * MINUTES_PER_DAY };
+        return { who: e.who, what, since: at, heals: at + healHours(what) * 60 };
     });
 }
 /** Injuries not healed yet, newest last. */
@@ -1647,16 +1666,19 @@ export function activeInjuries(state) {
 /**
  * How bad an injury is and how far it healed. The grade by its whole course (a scratch, a bruise, a sprain, a fracture);
  * the stage by the share of it gone by. Pure: also for the windows.
- * @returns {{ grade: string, gradeEn: string, level: number, stage: string, stageEn: string, healed: number, daysLeft: number, fresh: boolean }}
+ * @returns {{ grade: string, gradeEn: string, level: number, stage: string, stageEn: string, healed: number, daysLeft: number, leftText: string, fresh: boolean }}
  */
 export function injuryInfo(injury, now) {
     const total = Math.max(1, injury.heals - injury.since);
     const healed = Math.max(0, Math.min(1, (now - injury.since) / total));
     const days = total / MINUTES_PER_DAY;
-    const [grade, gradeEn, level] = days <= 5 ? ['лёгкая', 'minor', 1] : days <= 10 ? ['средняя', 'moderate', 2] : days <= 21 ? ['серьёзная', 'serious', 3] : ['тяжёлая', 'severe', 4];
-    const fresh = now - injury.since < 12 * 60;
+    const [grade, gradeEn, level] = days <= 0.5 ? ['пустяк', 'trivial', 0] : days <= 5 ? ['лёгкая', 'minor', 1] : days <= 10 ? ['средняя', 'moderate', 2] : days <= 21 ? ['серьёзная', 'serious', 3] : ['тяжёлая', 'severe', 4];
+    // fresh: the first hours — less for a knock that passes in hours
+    const fresh = now - injury.since < Math.min(12 * 60, total / 2);
     const [stage, stageEn] = fresh ? ['свежая', 'fresh'] : healed < 0.4 ? ['болит', 'still sore'] : healed < 0.75 ? ['заживает', 'healing'] : ['почти прошла', 'nearly healed'];
-    return { grade, gradeEn, level, stage, stageEn, healed, daysLeft: Math.max(0, Math.ceil((injury.heals - now) / MINUTES_PER_DAY)), fresh };
+    const left = Math.max(0, injury.heals - now);
+    const leftText = left < MINUTES_PER_DAY ? `${Math.max(1, Math.round(left / 60))} ч` : `${Math.ceil(left / MINUTES_PER_DAY)} дн.`;
+    return { grade, gradeEn, level, stage, stageEn, healed, daysLeft: Math.max(0, Math.ceil(left / MINUTES_PER_DAY)), leftText, fresh };
 }
 
 /**
@@ -1690,7 +1712,7 @@ function applyInjuries(state, injuries) {
         if (NOT_INJURY.test(what)) continue;
         // the same bruise told again in the next reply is not a new one; nor another word for the same place that day
         if (state.injuries.some(i => i.who === person.key && (sameInjury(i.what, what) || (now - i.since < MINUTES_PER_DAY && sameRegion(i.what, what))))) continue;
-        state.injuries.push({ who: person.key, what, since: now, heals: now + healDays(what, item.heal_days) * MINUTES_PER_DAY });
+        state.injuries.push({ who: person.key, what, since: now, heals: now + Math.round(healHours(what, { hours: item.heal_hours, days: item.heal_days }) * 60) });
         note(state, person, `${person.name || 'Он'}: ${what}`, { model: false, kind: 'injury' });
     }
 }
@@ -1785,10 +1807,13 @@ export function buildStatus(state, { detailed = true, neutral = false, withTag =
     const date = storyDate(state);
     const when = date ? `${date.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })}, ${hh}:${mm}` : `story day ${state.clock.day + 1}, ${hh}:${mm}`;
     // withTime false: another tracker already tells the story model the time, and two clocks only confuse it
+    ensureBond(state);
     const lines = [`[Stork — the bodies of ${state.people.char.name || '{{char}}'} and ${state.people.user.name || '{{user}}'}; background for the story, not its topic${withTime ? ` | ${when}` : ''}]`];
     for (const person of [state.people.char, state.people.user]) {
         lines.push(person.sex === 'female' ? femaleLine(state, person, detailed) : maleLine(state, person, detailed));
     }
+    const them = bondLine(state);
+    if (them) lines.push(them);
     const hurts = injuryLine(state);
     if (hurts) lines.push(hurts);
     const want = desireLine(state);
@@ -1863,6 +1888,11 @@ export function processReply(previousState, replyText, rng = Math.random, scene 
         applyDesire(state, scene, startedAt, desireBefore);
         if (realism.health && Array.isArray(scene.health)) healthBody(state, applyHealth(state, scene.health, rng, healthLog(state)), rng);
         applyInjuries(state, scene.injury);
+        // who they are to each other now; a view on children said aloud
+        for (const change of applyBond(state, scene)) {
+            if (typeof change === 'string') note(state, null, `${state.people.user.name || 'Она'} и ${state.people.char.name || 'он'}: ${change}`, { model: false, kind: 'bond' });
+            else note(state, state.people[change.who], `${state.people[change.who]?.name || ''}: ${change.text}`, { model: false, kind: 'bond' });
+        }
         addPregnancyFacts(state, scene.pregnancy_facts);
         // a relative the story names for the first time, a wedding: onto the family tree
         for (const text of applyFindings(state, scene.family, 'story')) note(state, null, `Семья: ${text}`, { model: false, kind: 'family' });

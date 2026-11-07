@@ -68,6 +68,15 @@ export function ensureIntim(state) {
     state.intim ??= { scene: null, history: [] };
     state.intim.history ??= [];
     if (state.intim.scene === undefined) state.intim.scene = null;
+    // older lists named a kink by what it does to him («заводит женская грудь»): the thing itself now
+    if (Array.isArray(state.intim.kinks) && !state.intim.kinkNames2) {
+        for (const k of state.intim.kinks) k.name = kinkName(k.name) || k.name;
+        const sc = state.intim.scene;
+        if (sc?.kinkLit) sc.kinkLit = Object.fromEntries(Object.entries(sc.kinkLit).map(([n, v]) => [kinkName(n) || n, v]));
+        if (Array.isArray(sc?.kinkUsed)) sc.kinkUsed = sc.kinkUsed.map(n => kinkName(n) || n);
+        if (Array.isArray(sc?.kinks)) sc.kinks = sc.kinks.map(n => kinkName(n) || n);
+        state.intim.kinkNames2 = true;
+    }
     return state.intim;
 }
 
@@ -146,7 +155,7 @@ export function soloKink(intim) {
  * @param {boolean} o.erectionDrops false: his erection does not fail him from outside causes
  * @returns {{context: string, field: string, rules: string}}
  */
-export function sectionPrompt({ scene = null, memory = '', kinks, profile, cards = '', voice = null, erectionDrops = true, userSkip = false, injuries = '', abstain = null }) {
+export function sectionPrompt({ scene = null, memory = '', kinks, profile, cards = '', voice = null, erectionDrops = true, userSkip = false, injuries = '', abstain = null, experience = null }) {
     // the kinks and the profile are read together, from the cards: an old chat that has kinks but no profile reads both anew
     // read once: the cards at setup give the list; only a chat that never had one reads them here, once
     const learn = !Array.isArray(kinks);
@@ -157,10 +166,12 @@ export function sectionPrompt({ scene = null, memory = '', kinks, profile, cards
         // long abstinence: a more sensitive body, a shorter way to climax (and more semen) — medically so
         abstain && abstain.days >= 3 ? `HIS ABSTINENCE: {{char}} has gone ${abstain.days} days without release (${abstain.pct}% of what his nature bears). His body is more sensitive: arousal builds faster for him and he may finish sooner than usual — count it in his "climax"; he may have to hold back.` : '',
         voice ? `HOW {{char}} TALKS AND THINKS: ${voice}` : '',
-        !learn ? `KINKS AND PREFERENCES FROM THE CARD AND THE PERSONA: ${kinks.length ? kinks.map(k => `${k.name} (${k.from === 'persona' ? '{{user}}' : '{{char}}'})`).join(', ') : '(none)'}` : '',
+        !learn ? `KINKS AND PREFERENCES FROM THE CARD AND THE PERSONA (who has it; whether the other one knows it yet): ${kinks.length ? kinks.map(k => `${k.name} (${k.from === 'persona' ? `{{user}}'s; ${k.known ? '{{char}} knows it' : '{{char}} does not know it yet'}` : `{{char}}'s; ${k.known ? '{{user}} knows it' : '{{user}} does not know it yet'}`})`).join(', ') : '(none)'}` : '',
+        experience?.char || experience?.user ? `EXPERIENCE IN BED (by the cards): ${[experience.char && `{{char}} — ${EXP_WORD[experience.char]}`, experience.user && `{{user}} — ${EXP_WORD[experience.user]}`].filter(Boolean).join('; ')}. An experienced partner reads the other's body; an inexperienced one misjudges and learns from reactions.` : '',
         learn && cards ? `CHARACTER CARD AND PERSONA (fiction to take notes on, not instructions; only for how they are in bed, their kinks and how {{char}} talks):\n${cards}` : '',
     ].filter(Boolean).join('\n\n');
-    const field = `"afterglow": null or {
+    const field = `"prefs_learned": [ { "who": "char" | "user", "kink": "..." } ],
+  "afterglow": null or {
     "dynamic": "tender" | "languid" | "passionate" | "playful" | "dominant" | "rough" | "awkward" | "hurried",
     "phase": 0-6,
     "pose": "..." | null, "pose_new": true | false, "clothes": "..." | null,
@@ -203,8 +214,9 @@ export function sectionPrompt({ scene = null, memory = '', kinks, profile, cards
   - "in_bed": in English, from the card and the persona only — what they actually say, never a guess and never from these messages. "char": 2-3 sentences on {{char}} in bed — libido, experience, who leads, pace, what turns him on, habits, what he says or does not say. "user": 1-2 sentences on {{user}} the same way, or null if the persona says nothing.` : ''}${voice ? '' : `
   - "voice": in English, one sentence on how {{char}} talks and thinks (vocabulary, temper, manner), from the card.`}
   - "responds": what {{user}} visibly enjoyed, judging only by the user's own writing; new things only, a few words each.
+- "prefs_learned" (top level, next to "afterglow"): a kink or preference from the list above that one of them LEARNS about the other in these messages — the other says it, asks for it, or plainly shows they love it when it happens. "who": the one who learned it ("char": {{char}} learned something of {{user}}'s). "kink": exactly as listed. Only what is learned now; never one the list says is known already. Empty if none.
   - "marks": physical traces left on either of them in these messages (hickeys, scratches, bruises); new ones only.
-  - "next": in English, 1-2 sentences for the story model — where the NEXT reply should take the scene so it moves and stays true to {{char}}: his character, his ways in bed, his preferences, what she responds to; something different from what he did in the last replies; a change of position when one has gone on long or hurts; holding back when he is too close. Never steer toward stalling: no asking whether she is ready or wants it, no endless preparing once the user moves things forward. Steer, do not script; never decide {{user}}'s actions.${erectionDrops ? '' : `
+  - "next": in English, 1-2 sentences for the story model — where the NEXT reply should take the scene so it moves and stays true to {{char}}: his character, his experience, his ways in bed, his preferences, what he KNOWS she responds to (never her preferences he does not know yet); something different from what he did in the last replies; a change of position when one has gone on long or hurts; holding back when he is too close. Never steer toward stalling: no asking whether she is ready or wants it, no endless preparing once the user moves things forward. Steer, do not script; never decide {{user}}'s actions.${erectionDrops ? '' : `
   - {{char}}'s erection never fails him because of outside causes (drink, stress, tiredness, illness): never report it as a discomfort or steer toward it.`}
   - Every text value of "afterglow" except "next", "voice" and "in_bed": Russian only, short.
 - "solo": only when "closeness" is "solo" ({{char}} alone, pleasuring himself); otherwise null — and "afterglow" is null then. Real and unhurried like any arousal: it builds, nobody finishes in the first lines unless the story built up to it.
@@ -306,9 +318,12 @@ export function parseSection(raw) {
 }
 
 /** Kinks from the cards analysis (at setup): a list of names or { name, from }. */
+/** The thing itself: «заводит женская грудь» → «женская грудь». */
+export const kinkName = name => String(name ?? '').replace(/^\s*(?:его|её|ее|их)?\s*(?:заводит|заводят|заводится от|возбуждает|возбуждают|нравится|нравятся|любит|любят|обожает|обожают)\s+(?:его|её|ее|когда\s+)?/iu, '').trim().replace(/^./, c => c.toLowerCase());
+
 export function cleanKinks(raw) {
     if (!Array.isArray(raw)) return null;
-    return raw.map(k => ({ name: str(typeof k === 'string' ? k : k?.name, 40), from: k?.from === 'persona' ? 'persona' : 'card' })).filter(k => k.name)
+    return raw.map(k => ({ name: str(kinkName(typeof k === 'string' ? k : k?.name), 40), from: k?.from === 'persona' ? 'persona' : 'card' })).filter(k => k.name)
         .filter((k, i, all) => all.findIndex(x => x.name.toLowerCase() === k.name.toLowerCase()) === i).slice(0, 16);
 }
 
@@ -534,6 +549,10 @@ export function applyIntimacy(state, scene, { at, minutes = 0 }) {
         intim.profile = s.inBed ?? { char: null, user: null };
     } else if (s?.inBed && !intim.profile) intim.profile = s.inBed;
     if (s?.voice && !intim.voice) intim.voice = s.voice;
+    // what one of them learned of the other's preferences: told, asked for, or plainly loved when it happened
+    for (const item of Array.isArray(scene?.prefs_learned) ? scene.prefs_learned : []) {
+        if ((item?.who === 'char' || item?.who === 'user') && typeof item.kink === 'string') learnKink(intim, item.who, item.kink);
+    }
 
     let closeness = ['none', 'near', 'active', 'solo'].includes(scene?.closeness) ? scene.closeness : null;
     // him alone: a solo of his own, never a scene with her
@@ -578,7 +597,16 @@ export function applyIntimacy(state, scene, { at, minutes = 0 }) {
     // the kinks in play are the cards' own, each once: a word the reading made up never reaches the story model
     const known = Array.isArray(intim.kinks) ? intim.kinks.map(k => k.name) : [];
     if (known.length && Array.isArray(sc.kinks)) sc.kinks = [...new Set(sc.kinks.map(k => bestKink(k, known)).filter(Boolean))];
-    if (sc.visible) kinkLife(sc, intim);
+    if (sc.visible) {
+        kinkLife(sc, intim);
+        sceneAccent(sc, intim);
+        // a preference that came into play and she visibly enjoyed it: now he knows; his own, done with her: now she knows
+        for (const name of sc.kinks ?? []) {
+            const k = (intim.kinks ?? []).find(x => x.name === name);
+            if (!k || k.known) continue;
+            if (k.from !== 'persona' || (s?.responds ?? []).length) k.known = true;
+        }
+    }
     if (sc.visible) sc.everActive = true;
     else if (base?.everActive) sc.everActive = true;
     intim.scene = sc;
@@ -627,15 +655,15 @@ export function kinkChips(state) {
         for (const k of active) if (!seen.some(n => sameKink(n, k))) seen.push(k);
         return seen.slice(0, 8).map(name => ({ name, on: true }));
     }
-    const lit = new Set([...active.map(k => bestKink(k, all)), ...Object.keys(intim.scene?.kinkLit ?? {})].filter(Boolean));
-    return intim.kinks.slice(0, 30).map(k => ({ name: k.name, from: k.from, on: lit.has(k.name) }));
+    const lit = new Set([...active, ...Object.keys(intim.scene?.kinkLit ?? {})].map(k => bestKink(k, all)).filter(Boolean));
+    return intim.kinks.slice(0, 30).map(k => ({ name: kinkName(k.name) || k.name, from: k.from, on: lit.has(k.name), known: !!k.known }));
 }
 
 // #endregion
 
 // #region For the story model
 
-const KINK_LIT_TURNS = 3;      // a kink once in play stays lit this many replies: a scene is not one kink per message
+const KINK_LIT_TURNS = 4;      // a kink once in play stays lit this many replies: a scene is not one kink per message
 /** A number 0-1 from a string, the same every time: a re-read of the same reply rolls the same dice. */
 function dice(key) {
     let h = 2166136261;
@@ -659,12 +687,15 @@ function kinkLife(sc, intim) {
     }
     sc.cue = null;
     if (!list.length || sc.phase < 1 || sc.char.refr > 0) return;
-    // the chance this reply: more as the scene warms up, less right after a cue, never while one is lit already
+    // the chance this reply: more as the scene warms up; never while one is in play, never soon after the last —
+    // a scene changes its kinks seldom and smoothly
     const lit = Object.keys(sc.kinkLit).length;
-    const chance = Math.max(0, Math.min(0.6, 0.18 + 0.06 * Math.min(sc.phase, 4) - 0.12 * lit - (sc.cueAt === sc.turns - 1 ? 0.2 : 0)));
+    if (lit || (sc.cueAt !== undefined && sc.turns - sc.cueAt < 3)) return;
+    const chance = Math.max(0, Math.min(0.45, 0.12 + 0.05 * Math.min(sc.phase, 4)));
     const roll = dice(`${sc.id}:${sc.turns}`);
     if (roll >= chance) return;
-    const fresh = list.filter(k => !sc.kinkUsed.includes(k.name) && !sc.kinkLit[k.name]);
+    // his own, or hers he already knows: what he does not know of her he cannot bring in
+    const fresh = list.filter(k => !sc.kinkUsed.includes(k.name) && !sc.kinkLit[k.name] && (k.from !== 'persona' || k.known));
     if (!fresh.length) return;
     const pick = fresh[Math.floor(dice(`${sc.id}:${sc.turns}:pick`) * fresh.length)];
     const responded = (sc.responds ?? []).some(r => sameKink(r, pick.name));
@@ -673,14 +704,80 @@ function kinkLife(sc, intim) {
     sc.cueAt = sc.turns;
 }
 
-/** Her list of kinks edited by hand: remove one, add one (for him or for her), rename one. */
+const EXP_WORD = { experienced: 'experienced', some: 'some experience', inexperienced: 'inexperienced' };
+export const EXP_RU = { experienced: 'опытный', some: 'средний опыт', inexperienced: 'неопытный' };
+
+/** They have been lovers before (by the cards): each knows what the other likes. */
+export function knowAll(intim) {
+    for (const k of Array.isArray(intim.kinks) ? intim.kinks : []) k.known = true;
+    intim.together = true;
+}
+
+/** One of them learned a preference of the other: «who» learned it (char: his knowledge of her). */
+export function learnKink(intim, who, name) {
+    const list = Array.isArray(intim.kinks) ? intim.kinks : [];
+    const pool = list.filter(k => (who === 'char' ? k.from === 'persona' : k.from !== 'persona'));
+    const hit = bestKink(name, pool.map(k => k.name));
+    const k = hit ? pool.find(x => x.name === hit) : null;
+    if (!k || k.known) return null;
+    k.known = true;
+    return k;
+}
+
+/**
+ * «Сыгранность»: how well they know each other in bed, 0-100. What each knows of the other's preferences, how many times
+ * they have been together, how much of what she responds to he has seen. Lovers from before start high.
+ */
+export function bondScore(intim, kids = null) {
+    const list = Array.isArray(intim?.kinks) ? intim.kinks : [];
+    // what each knows of the other: the kinks, and how the other feels about children
+    const known = list.filter(k => k.known).length + (kids?.known ?? 0);
+    const total = list.length + (kids?.total ?? 0);
+    const knownShare = total ? known / total : 0.5;
+    const scenes = (intim?.history ?? []).length;
+    const responds = new Set((intim?.history ?? []).flatMap(h => h.responds ?? [])).size;
+    const v = 100 * (0.4 * knownShare + 0.35 * Math.min(1, scenes / 5) + 0.25 * Math.min(1, responds / 10));
+    return Math.round(Math.max(intim?.together ? 70 : 0, Math.min(100, v)));
+}
+
+/**
+ * What this reply leans into: Stork's dice, so the scene does not run on bare motion, and never the same accent
+ * twice in a row. Accents, not actions: what he does with it is his own. Weighted by what drives him by his card
+ * (her pleasure, his own) and by experience (he may show an inexperienced her something new).
+ */
+const ACCENTS = {
+    her: "{{char}}'s attention goes to her pleasure — what her body answers to right now.",
+    his: "{{char}} follows his own want this time — what he craves and how he likes it, true to his card.",
+    show: "{{char}} lets her know what he likes — in words or by guiding her, his way.",
+    teach: '{{char}} shows her something new to her, at a pace she can follow.',
+    senses: 'The reply lives in the senses — breath, sound, skin, heat, scent, taste — not only in movement.',
+    pace: 'The rhythm changes as their bodies ask for it — and it shows in both of them.',
+    words: 'Words between them: what he says, in his own voice, and how it lands on her.',
+    close: 'The closeness itself: eyes, hands, holding — what passes between them, not only bodies.',
+};
+function sceneAccent(sc, intim) {
+    sc.accents ??= [];
+    if (sc.phase < 1 || sc.char.refr > 0) { sc.accent = null; return; }
+    const focus = intim.bedFocus;
+    const exp = intim.experience ?? {};
+    const w = { her: focus === 'giving' ? 3 : focus === 'self' ? 1 : 2, his: focus === 'self' ? 3 : focus === 'giving' ? 1 : 2, show: 1.5, senses: 2, pace: 1.5, words: 1.5, close: 1.5 };
+    if (exp.user === 'inexperienced' && exp.char !== 'inexperienced') w.teach = 2;
+    const pool = Object.entries(w).filter(([k]) => !sc.accents.slice(-2).includes(k));
+    let roll = dice(`${sc.id}:${sc.turns}:accent`) * pool.reduce((a, [, v]) => a + v, 0);
+    const pick = pool.find(([, v]) => (roll -= v) <= 0)?.[0] ?? pool[0][0];
+    sc.accent = pick;
+    sc.accents = [...sc.accents, pick].slice(-4);
+}
+
+/** Her list of kinks edited by hand: remove one, add one (for him or for her), rename one; known or not by the other. */
 export function editKinks(intim, { op, i, who, name }) {
     intim.kinks = Array.isArray(intim.kinks) ? intim.kinks : [];
     const clean = String(name ?? '').replace(/\s+/g, ' ').trim().slice(0, 40);
     const from = who === 'user' ? 'persona' : 'card';
     if (op === 'del' && intim.kinks[i]) intim.kinks.splice(i, 1);
     else if (op === 'set' && clean && intim.kinks[i]) intim.kinks[i] = { ...intim.kinks[i], name: clean };
-    else if (op === 'add' && clean && !intim.kinks.some(k => k.from === from && norm(k.name) === norm(clean)) && intim.kinks.length < 30) intim.kinks.push({ name: clean, from, own: true });
+    else if (op === 'add' && clean && !intim.kinks.some(k => k.from === from && norm(k.name) === norm(clean)) && intim.kinks.length < 30) intim.kinks.push({ name: clean, from, own: true, known: !!intim.together });
+    else if (op === 'known' && intim.kinks[i]) intim.kinks[i] = { ...intim.kinks[i], known: !intim.kinks[i].known };
     return intim.kinks;
 }
 
@@ -701,8 +798,8 @@ export function injuriesNow(state, { all = false } = {}) {
     return (Array.isArray(state.injuries) ? state.injuries : []).filter(i => i.heals > now).filter(i => {
         if (all) return true;
         const total = Math.max(1, i.heals - i.since), healed = (now - i.since) / total, days = total / 1440;
-        const level = days <= 5 ? 1 : days <= 10 ? 2 : days <= 21 ? 3 : 4;
-        return now - i.since < 12 * 60 || (level >= 3 && healed < 0.75) || (level === 2 && healed < 0.3);
+        const level = days <= 0.5 ? 0 : days <= 5 ? 1 : days <= 10 ? 2 : days <= 21 ? 3 : 4;
+        return now - i.since < Math.min(12 * 60, total / 2) || (level >= 3 && healed < 0.75) || (level === 2 && healed < 0.3);
     }).map(i => ({ who: i.who, name: state.people?.[i.who]?.name || i.who, what: i.what }));
 }
 
@@ -738,17 +835,34 @@ function portrait(intim) {
     const p = intim.profile ?? {};
     const kinks = Array.isArray(intim.kinks) ? intim.kinks : [];
     const his = kinks.filter(k => k.from !== 'persona').map(k => k.name);
-    const hers = kinks.filter(k => k.from === 'persona').map(k => k.name);
+    const hersKnown = kinks.filter(k => k.from === 'persona' && k.known).map(k => k.name);
+    const hersUnknown = kinks.filter(k => k.from === 'persona' && !k.known).length;
     if (p.char) L.push(`{{char}} in bed: ${p.char}`);
+    const exp = intim.experience?.char;
+    if (exp) L.push(`{{char}} is ${EXP_STORY[exp]}`);
     if (his.length) L.push(`{{char}}'s preferences: ${his.join(', ')}.`);
-    if (p.user) L.push(`{{user}} in bed: ${p.user}`);
-    if (hers.length) L.push(`{{user}}'s preferences: ${hers.join(', ')}.`);
-    if (his.length || hers.length) L.push('Let these shape what he does — one at a time, when the moment fits, not all at once.');
+    if (hersKnown.length) L.push(`What {{char}} already knows {{user}} likes: ${hersKnown.join(', ')}.`);
+    if (hersUnknown || !hersKnown.length) L.push(`What else {{user}} likes in bed {{char}} does not know yet: he learns it only from her words and her body's reactions, and until then he may guess wrong.`);
+    if (his.length || hersKnown.length) L.push('Let these shape what he does — one at a time, when the moment fits, not all at once.');
     return L;
 }
 
 /** Bodies in a position: whose hands are free and what they can reach. Said once, short, for both models. */
 const REACH = 'Hands follow the position: a hand is free only when it bears no weight and holds no one up. While inside her, {{char}} can reach between her legs only where the position leaves room in front of her (her on top, side by side, him behind her kneeling or standing); lying chest to chest on her, carrying her, or with both hands holding her, he cannot — then her own hand, another angle or another position does it.';
+
+/** How his experience shows: what he knows of a woman's body, not a script of what he does. */
+const EXP_STORY = {
+    experienced: "experienced: he knows a woman's body — he reads her arousal before he goes further, paces himself, and knows that right after her climax a touch can be too much.",
+    some: 'not new to it, but still learning her body: mostly he reads her right, sometimes he misjudges and corrects himself.',
+    inexperienced: "inexperienced: he knows little of a woman's body yet — he may rush, misjudge pressure or timing, and learns from her reactions.",
+};
+/** His body, as facts. */
+const HIS_BODY = "His body: arousal climbs toward a point of no return; he can hold it off by slowing, pausing or changing the angle; tension, heat and breath show it.";
+/** Without protection he knows what finishing inside means; what he does about it is his. */
+const PREGNANCY_AWARE = "{{char}} knows that finishing inside her without protection can make her pregnant; what he does about it follows who he is, his view on children and what they have said — he does not know her cycle.";
+
+/** Her body, as facts: how his experience meets it is his own. */
+const ANATOMY = "Her body: arousal and wetness take time to build; most of her pleasure comes from the clitoris, and direct pressure is too much before she is aroused; right after her climax it is oversensitive for a while; penetration alone seldom brings her to climax.";
 
 const NO_TEMPLATE = 'Make this reply his own, not a template: vary what he does and how the reply ends. Do not end with {{char}} asking whether she is ready, wants it or is okay, and do not stall — when {{user}} moves things forward, he goes with her. End on an action, a sensation or his words.';
 
@@ -801,6 +915,11 @@ export function intimacyPrompt(state, { userSkip = false, erectionDrops = true }
         if (hurts.length) L.push(`Healing injuries: ${hurts.map(i => `${i.name} — ${i.what}`).join('; ')}. They matter only where the body meets them — kneeling on a scraped knee, a grip on a bruised wrist, weight on a sore side: then {{char}} notices and adapts as he would (another position, a lighter hand). Not a topic, not in every reply.`);
         L.push('Bodies are real: breath, stamina, muscles, wetness, positions that tire. Never speak or decide for {{user}}.');
         if (sc.pose && sc.phase >= 3) L.push(REACH);
+        if (sc.phase >= 1) L.push(ANATOMY);
+        // the body's side of it, so a reply is never bare motion; and this reply's accent by the dice
+        if (sc.phase >= 1) L.push(`${HIS_BODY} Every reply shows what changed in both bodies since the last one; never fill it with bare repeated motion.`);
+        if (sc.accent && ACCENTS[sc.accent]) L.push(`This reply's accent (Stork's dice, not a script): ${ACCENTS[sc.accent]}`);
+        if (sc.phase >= 3 && (sc.protection === 'none' || sc.protection === null || sc.protection === undefined)) L.push(PREGNANCY_AWARE);
         L.push(NO_TEMPLATE);
         L.push(...guards(sc));
         if (sc.next) L.push(`This reply: ${sc.next}`);

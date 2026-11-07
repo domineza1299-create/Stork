@@ -11,7 +11,8 @@
 import { esc, icon, nameOf } from './common.js';
 import { FEMALE_CONTRACEPTION, femaleState, pillState } from './biology.js';
 import { maleSnapshot } from './engine.js';
-import { DYN, injuriesNow, kinkChips, sameThing } from './intimacy.js';
+import { bondScore, DYN, injuriesNow, kinkChips, sameThing } from './intimacy.js';
+import { kidsKnowledge } from './bond.js';
 
 const OPEN_KEY = 'stork_scene_open';
 export const sceneOpen = () => {
@@ -56,7 +57,8 @@ export function riskChips(state) {
     const sc = state.intim?.scene;
     if (!sc) return [];
     const out = [];
-    const PROT = { none: ['без защиты', 'warm'], condom: ['презерватив', ''], withdrawal: ['прерванный акт', 'warm'] };
+    // risks are red; injuries (healing) stay yellow; her fertile days pink
+    const PROT = { none: ['без защиты', 'danger'], condom: ['презерватив', ''], withdrawal: ['прерванный акт', 'danger'] };
     if (PROT[sc.protection]) out.push({ text: PROT[sc.protection][0], tone: PROT[sc.protection][1] });
     const woman = Object.values(state.people ?? {}).find(p => p.sex === 'female');
     const f = woman?.female;
@@ -65,12 +67,12 @@ export function riskChips(state) {
         const pill = pillState(f, day);
         if (pill.effective !== 'none') {
             const label = FEMALE_CONTRACEPTION[pill.effective]?.label;
-            if (label) out.push({ text: label, tone: pill.missed ? 'warm' : '' });
+            if (label) out.push({ text: label, tone: pill.missed ? 'danger' : '' });
         }
         const s = femaleState(f, day);
         if (s.fertile && !pill.suppressed) out.push({ text: `фертильные дни · ${Math.round(s.chanceToday * 100)}%`, tone: 'pink' });
     }
-    for (const r of sc.risks ?? []) out.push({ text: r, tone: 'warm' });
+    for (const r of sc.risks ?? []) out.push({ text: r, tone: 'danger' });
     return out;
 }
 
@@ -83,14 +85,21 @@ function placeHtml(sc) {
     return `<span class="stk-ag-detail${pl.interrupt >= 30 ? ' is-warm' : ''}">${icon(ic)}<span>${label}${pl.interrupt ? ` · помешать могут ~${pl.interrupt}%` : ''}${pl.why ? ` — ${esc(pl.why)}` : ''}</span></span>`;
 }
 
-/** Each of them on a line: all their kinks, the ones in play glowing softly. */
-function kinkRows(chips, herName, hisName) {
-    return [['card', hisName], ['persona', herName]].map(([from, who]) => {
+/**
+ * Each of them on a line: all their kinks, the ones in play glowing softly; one the other does not know yet is dim
+ * and dashed. Above them, how well they know each other in bed.
+ */
+function kinkRows(chips, herName, hisName, bond = null) {
+    const rows = [['card', hisName, 'она'], ['persona', herName, 'он']].map(([from, who, other]) => {
         const list = chips.filter(k => (k.from ?? 'card') === from);
         if (!list.length) return '';
-        return `<div class="stk-ag-kinkrow"><span class="stk-ag-kwho">${esc(who)}</span><div class="stk-ag-kinks">${list.map(k => `<span class="stk-ag-chip is-kink${k.on ? ' is-on' : ''}"${k.on ? ' title="сейчас в сцене"' : ''}>${esc(k.name)}</span>`).join('')}</div></div>`;
+        return `<div class="stk-ag-kinkrow"><span class="stk-ag-kwho">${esc(who)}</span><div class="stk-ag-kinks">${list.map(k => `<span class="stk-ag-chip is-kink${k.on ? ' is-on' : ''}${k.known === false ? ' is-unknown' : ''}" title="${k.on ? 'сейчас в сцене' : k.known === false ? `${other} пока не знает` : `${other} знает`}">${esc(k.name)}</span>`).join('')}</div></div>`;
     }).join('');
+    return rows;
 }
+
+export const BOND_WORD = 'притирка';
+const BOND_TITLE = 'Притирка: как хорошо они знают друг друга в постели — что каждый знает о предпочтениях и отношении к детям другого, сколько раз были вместе';
 
 const chipsHtml = (list, cls) => (list.length ? `<div class="stk-ag-kinks ${cls}">${list.join('')}</div>` : '');
 
@@ -109,9 +118,11 @@ export function sceneBlockHtml(state, { open = sceneOpen(), reading = false, bri
     const nums = (p, isHer) => `${isHer ? `<span title="готовность">${icon('fa-droplet', 'stk-ag-i-ready')}${pct(p.readiness)}</span>` : ''}<span title="до оргазма">${icon('fa-star', 'stk-ag-i-climax')}${pct(p.climax)}%</span>`;
     const side = (p, right, isHer) => `<span class="stk-ag-side${right ? ' is-right' : ''}">
         <span class="stk-ag-who"><b>${esc(p.name)}</b><span class="stk-ag-nums">${nums(p, isHer)}</span></span></span>`;
+    // how well they know each other in bed: one number under the scene's mood, not another bar
+    const bond = bondScore(state.intim, kidsKnowledge(state));
     const head = `<div class="stk-ag-head" data-stk-act="ag-toggle" role="button" tabindex="0" aria-expanded="${open}" title="${open ? 'Свернуть сцену' : 'Развернуть сцену'}">
         ${side(her, false, state.people.user.sex === 'female')}
-        <span class="stk-ag-mid"><b>${reading ? `<span class="stk-ib-mark is-reading">${icon('fa-feather-pointed')}</span>` : icon('fa-fire-flame-curved', 'stk-ag-flame')}${esc(dyn)}</b><span>${sc.minutes} мин${icon('fa-chevron-down', 'stk-ag-chev')}</span></span>
+        <span class="stk-ag-mid"><b>${reading ? `<span class="stk-ib-mark is-reading">${icon('fa-feather-pointed')}</span>` : icon('fa-fire-flame-curved', 'stk-ag-flame')}${esc(dyn)}</b><span>${sc.minutes} мин · <span class="stk-ag-bond" title="${esc(BOND_TITLE)}">${icon('fa-handshake-simple')}${bond}</span>${icon('fa-chevron-down', 'stk-ag-chev')}</span></span>
         ${side(him, true, state.people.char.sex === 'female')}
     </div>`;
     if (!open) return `<div class="stk-ag">${head}</div>`;

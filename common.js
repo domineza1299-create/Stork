@@ -363,7 +363,6 @@ export function monthGrid(state, view, today) {
     const month = new Date(today.getFullYear(), today.getMonth() + (view.monthOffset ?? 0), 1);
     const dayOf = date => day + Math.round((date - new Date(today.getFullYear(), today.getMonth(), today.getDate())) / 86400000);
     const actDays = new Set(state.acts.map(a => a.day));
-    const testDays = new Set(state.rolls.filter(r => r.kind === 'test').map(r => r.day));
     const firstWeekday = (month.getDay() + 6) % 7;
     const daysInMonth = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
     const editable = !f.pregnancy && !f.postpartum;
@@ -386,7 +385,7 @@ export function monthGrid(state, view, today) {
         if (storyDay === day) classes.push('is-today');
         if (storyDay > day) classes.push('is-future');
         if (view.pickDay === storyDay) classes.push('is-picked');
-        const icons = `${actDays.has(storyDay) ? icon('fa-heart', 'stk-mark') : ''}${testDays.has(storyDay) ? icon('fa-vial', 'stk-mark') : ''}`;
+        const icons = actDays.has(storyDay) ? icon('fa-heart', 'stk-mark') : '';
         const marks = icons ? `<b class="stk-marks" aria-hidden="true">${icons}</b>` : '';
         const pickable = editable && storyDay <= day && day - storyDay <= 60;
         cells.push(pickable

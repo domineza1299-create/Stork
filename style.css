@@ -3854,3 +3854,260 @@ div.stk-log-row {
 :is(.stk, .stk-ib, .stk-ag) :is(b, strong, em)::after {
     content: none !important;
 }
+
+/* Risks are red, healing injuries stay yellow */
+.stk-ag-chip.is-danger {
+    border-color: color-mix(in srgb, #e05a5a 60%, transparent);
+    background: color-mix(in srgb, #e05a5a 12%, transparent);
+    color: color-mix(in srgb, #ff8a8a 80%, var(--stk-text)) !important;
+}
+
+/* «Сыгранность»: how well they know each other in bed */
+.stk-ag-gauge.is-bond .stk-ag-gauge-l .stk-ic { color: color-mix(in srgb, #c9a0f0 80%, var(--stk-text)); }
+.stk-ag-track.is-bond > span { background: color-mix(in srgb, #b58be0 75%, transparent); }
+.stk-ag-gauge.is-bond { margin-bottom: 6px; }
+
+/* a kink the other does not know yet: there, but quiet */
+.stk-ag-chip.is-kink.is-unknown:not(.is-on) {
+    border-style: dashed;
+    opacity: 0.6;
+}
+
+.stk-kchip-eye { border: none; background: transparent; color: var(--stk-muted); padding: 2px 2px 2px 8px; cursor: pointer; font-size: 0.78em; }
+.stk-kchip.is-unknown { border-style: dashed; }
+.stk-kchip.is-unknown .stk-kchip-name { color: var(--stk-muted); }
+.stk-bond { margin-left: auto; display: inline-flex; align-items: center; gap: 5px; font-size: 0.82em; font-weight: normal; }
+.stk-exp-seg { margin-bottom: 6px; max-width: 360px; }
+
+/* Stork's text is its own: a theme that justifies or hyphenates the chat must not tear its words apart */
+.stk-ib, .stk-ag, .stk {
+    text-align: left;
+    hyphens: manual;
+    word-break: normal;
+    overflow-wrap: break-word;
+}
+
+/* what the time of this reply went on: one quiet line at the top of the infoblock */
+.stk-pass-why {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin: 0 0 8px;
+    padding: 6px 10px;
+    border-radius: 10px;
+    background: var(--stk-glass);
+    color: var(--stk-muted);
+    font-size: 0.84em;
+    font-style: italic;
+    line-height: 1.35;
+}
+
+.stk-pass-why > .stk-ic {
+    flex: 0 0 auto;
+    font-style: normal;
+    opacity: 0.8;
+}
+
+/* «Они»: a line of small chips, and the children under it — compact, in Stork's look */
+.stk-them {
+    display: grid;
+    gap: 5px;
+    font-size: 0.82em;
+}
+
+.stk-them.is-block {
+    margin: 0 0 8px;
+}
+
+.stk-them-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+}
+
+.stk-them-chip {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 5px;
+    padding: 2px 9px;
+    border-radius: 999px;
+    border: 1px solid var(--stk-line);
+    background: var(--stk-glass);
+    white-space: nowrap;
+}
+
+.stk-them-chip > .stk-ic {
+    font-size: 0.85em;
+    color: var(--stk-pink);
+    opacity: 0.8;
+}
+
+.stk-them-chip.is-status {
+    border-color: color-mix(in srgb, var(--stk-pink) 45%, transparent);
+}
+
+.stk-them-chip b {
+    font-weight: 600;
+}
+
+.stk-them-l {
+    color: var(--stk-muted);
+}
+
+.stk-them-kids {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 3px 6px;
+    color: var(--stk-muted);
+    padding-left: 2px;
+}
+
+.stk-them-kids > .stk-ic {
+    font-size: 0.85em;
+    opacity: 0.8;
+}
+
+.stk-them-kid {
+    color: var(--stk-text);
+}
+
+.stk-them-dot {
+    opacity: 0.5;
+}
+
+.stk-them-hidden {
+    margin-left: 4px;
+    font-size: 0.8em;
+    color: var(--stk-muted);
+}
+
+/* how well they know each other in bed: a small number in the scene's head */
+.stk-ag-bond {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 3px;
+    color: color-mix(in srgb, #c9a0f0 80%, var(--stk-text));
+}
+
+.stk-ag-bond > .stk-ic {
+    font-size: 0.85em;
+}
+
+/* in the window: her, then «Они», then him on a phone; side by side on a wide screen, «Они» below both */
+.stk-duo > .stk-them-card {
+    grid-column: 1 / -1;
+    order: 3;
+}
+
+.stk-duo > .stk-card:last-child {
+    order: 2;
+}
+
+@container (max-width: 560px) {
+    .stk-duo > .stk-them-card,
+    .stk-duo > .stk-card:last-child {
+        order: 0;
+        grid-column: auto;
+    }
+}
+
+.stk-them-empty { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; font-size: 0.86em; }
+
+/* Folds inside the window's cards: closed by default, the title and a short summary always visible */
+.stk-fold-in > summary {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    cursor: pointer;
+    list-style: none;
+    padding: 2px 0;
+}
+
+.stk-fold-in > summary::-webkit-details-marker { display: none; }
+
+.stk-fold-in > summary > .stk-muted {
+    font-size: 0.86em;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.stk-fold-in > summary > .stk-fold-chev {
+    margin-left: auto;
+    font-size: 0.8em;
+    color: var(--stk-muted);
+    transition: transform 0.2s ease;
+}
+
+.stk-fold-in[open] > summary > .stk-fold-chev { transform: rotate(180deg); }
+.stk-fold-in > .stk-fold-body { margin-top: 8px; display: grid; gap: 6px; }
+.stk-card > .stk-fold-in + * { margin-top: 0; }
+.stk-them.is-in-card { margin-bottom: 4px; }
+
+/* in the infoblock «Они» sits in the middle */
+.stk-them.is-block .stk-them-chips,
+.stk-them.is-block .stk-them-kids {
+    justify-content: center;
+}
+
+/* a small «+» in the middle; the field comes when it is pressed */
+.stk-kink-plus { display: flex; justify-content: center; margin: 2px 0 4px; }
+.stk-kink-plus > button {
+    width: 26px; height: 26px; border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center;
+    border: 1px dashed var(--stk-line-strong); background: transparent; color: var(--stk-muted);
+    font-size: 0.75em; cursor: pointer;
+}
+.stk-kink-plus > button:hover { color: var(--stk-pink); border-color: var(--stk-pink); }
+
+/* «Они» at the bottom of the infoblock: one quiet centred line, the status in her colour, the rest as words */
+.stk-them-foot {
+    display: grid;
+    gap: 3px;
+    margin-top: 8px;
+    padding: 7px 12px 2px;
+    border-top: 1px solid var(--stk-line);
+    font-size: 0.82em;
+    color: var(--stk-muted);
+    text-align: center;
+}
+
+.stk-tf-line,
+.stk-tf-kids {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: baseline;
+    gap: 2px 7px;
+}
+
+.stk-tf-line b,
+.stk-tf-kids b {
+    color: var(--stk-text);
+    font-weight: 600;
+}
+
+.stk-tf-status {
+    color: var(--stk-pink) !important;
+}
+
+.stk-tf-ic {
+    font-size: 0.9em;
+    opacity: 0.7;
+    margin-right: 2px;
+}
+
+.stk-tf-dot {
+    font-style: normal;
+    opacity: 0.45;
+}
+
+.stk-tf-kids {
+    font-size: 0.94em;
+}
+
+.stk-tf-kids .stk-them-kid {
+    color: var(--stk-muted);
+}

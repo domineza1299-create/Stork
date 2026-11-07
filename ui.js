@@ -19,6 +19,7 @@ import { LIFESTYLE } from './biology.js';
 import { DYN, editKinks, ensureIntim } from './intimacy.js';
 import { spanText } from './storyclock.js';
 import { healthBriefRows } from './healthui.js';
+import { themHtml } from './themui.js';
 import { downloadProblemLog, downloadStopped, openStork } from './window.js';
 import { notify, notifyDone, notifyWarn } from './notify.js';
 import { handleFamilyAction } from './tree.js';
@@ -30,7 +31,7 @@ const FOLD_KEY = 'stork_folds';
 const FOLD_DEFAULT = {
     user: true, char: true, shared: true,
     'user-fert': false, 'user-more': false, 'char-sperm': false, 'char-more': false,
-    'cal-cycle': true, 'cal-mine': false,
+    'cal-cycle': false, 'cal-mine': false,
     'preg-baby': true, 'preg-mom': false, 'preg-doc': false,
 };
 let folds = null;
@@ -546,7 +547,9 @@ function briefHim(state, person, before, events, view) {
         const was = before?.people?.[key] ? maleDesire(before, before.people[key]).level : now.level;
         const trigger = state.desire?.trigger;
         const stirred = trigger && trigger !== before?.desire?.trigger;
-        if (desireWord(now.level) !== desireWord(was) || stirred) rows.push(li('fa-fire-flame-curved', `влечение ${esc(desireWord(now.level))}${stirred ? ` · завело: ${esc(trigger)}` : ''}`, 'is-pink'));
+        if (desireWord(now.level) !== desireWord(was) || stirred) rows.push(li('fa-fire-flame-curved', `влечение ${esc(desireWord(now.level))}`, 'is-pink'));
+        // what stirred him: a line of its own, with a heart
+        if (stirred) rows.push(`<div class="stk-li is-pink stk-stirred">${icon('fa-heart')}<span>${esc(capitalize(trigger))}</span></div>`);
     }
     rows.push(abstinenceRow(state, key));
     rows.push(briefNote(state, key));
@@ -582,8 +585,8 @@ export function renderBrief(state, before, view = {}) {
     }
     // what the time of this reply went on, as the story model wrote it
     const t = state.timeNote;
-    // how much passed is already next to the date in the head: here only what the time went on, one line of text
-    if (t?.why && t.passed > 0) shared.unshift(li('fa-hourglass-half', esc(capitalize(t.why)), 'is-muted'));
+    // how much passed is already next to the date in the head: here only what the time went on — at the very top
+    const passWhy = t?.why && t.passed > 0 ? `<div class="stk-pass-why">${icon('fa-hourglass-half')}<span>${esc(capitalize(t.why))}</span></div>` : '';
     // the calendar was put right by the story's date: said once, under this reply
     if (t?.note && /сверена с историей/.test(t.note)) shared.unshift(li('fa-calendar-check', esc(t.note), 'is-muted'));
     // health: only what matters now
@@ -592,7 +595,7 @@ export function renderBrief(state, before, view = {}) {
         parts.user !== false && briefHer(state, state.people.user, before, ofWho('user'), view),
         parts.char !== false && briefHim(state, state.people.char, before, ofWho('char'), view),
     ].filter(Boolean);
-    return `${claimCard(state)}${people.join('')}${parts.shared !== false ? shared.join('') : ''}`;
+    return `${passWhy}${claimCard(state)}${people.join('')}${parts.shared !== false ? shared.join('') : ''}${parts.shared !== false ? themHtml(state) : ''}`;
 }
 
 // #endregion
@@ -703,8 +706,33 @@ export function handleAction(target, view, rerender) {
             notifyDone(act === 'health-cure' ? 'Отмечено: выздоровление' : act === 'health-del' ? 'Убрано' : 'Лекарство отменено', { icon: 'fa-notes-medical', timeOut: 2000 });
             break;
         }
-        case 'kink-edit': view.kinkEdit = Number(target.dataset.i); break;
-        case 'kink-cancel': view.kinkEdit = null; break;
+        case 'bond-learn':
+            // the latest reply read anew: the reading reports who they are to each other when Stork does not know it
+            import('./index.js').then(m => {
+                if (m.rereadLatest()) notifyDone('Читаю последний ответ: Stork узнает, кто они друг другу', { icon: 'fa-people-arrows', timeOut: 4000 });
+                else notifyWarn('Нет ответа, который можно прочитать', { timeOut: 3000 });
+            });
+            return true;
+                case 'kink-edit': view.kinkEdit = Number(target.dataset.i); break;
+        case 'kink-known':
+            updateCurrentState(state => editKinks(ensureIntim(state), { op: 'known', i: Number(target.dataset.i) }));
+            break;
+        case 'exp-set': {
+            const { who, v } = target.dataset;
+            updateCurrentState(state => {
+                const intim = ensureIntim(state);
+                intim.experience ??= { char: null, user: null };
+                intim.experience[who] = intim.experience[who] === v ? null : v;
+            });
+            break;
+        }
+        case 'kink-cancel': view.kinkEdit = null; view.kinkAdd = null; break;
+        case 'kink-open':
+            view.kinkAdd = target.dataset.who;
+            view.kinkEdit = null;
+            rerender();
+            setTimeout(() => document.querySelector('.stk-kink-form.is-add input')?.focus(), 0);
+            return true;
         case 'kink-del':
         case 'kink-save':
         case 'kink-add': {
@@ -712,6 +740,7 @@ export function handleAction(target, view, rerender) {
             if (act !== 'kink-del' && !String(name ?? '').trim()) return true;
             updateCurrentState(state => editKinks(ensureIntim(state), { op: act === 'kink-del' ? 'del' : act === 'kink-save' ? 'set' : 'add', i: Number(target.dataset.i), who: target.dataset.who, name }));
             view.kinkEdit = null;
+            view.kinkAdd = null;
             break;
         }
         case 'kinks-reread': {

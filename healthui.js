@@ -91,7 +91,7 @@ function personHealth(state, key, opts) {
         rem.length ? `<span>${icon('fa-leaf')}ремиссия: ${esc(rem.map(i => i.name).join(', '))}</span>` : '',
         visit != null ? `<span class="${visit <= day ? 'is-warm' : ''}">${icon('fa-user-doctor')}к врачу: ${visit <= day ? 'пора' : `через ${days(visit - day)}`}</span>` : '',
         gens.length ? `<span>${icon('fa-dna')}предрасположенность: ${esc(gens.map(g => `${g.name} ${g.risk}%`).join(', '))}</span>` : '',
-        ...hurts.map(i => { const x = injuryInfo(i, absMinute(state.clock)); return `<span class="${x.level >= 3 || x.fresh ? 'is-warm' : ''}" title="${esc(x.grade)} травма, зажило ${Math.round(x.healed * 100)}%">${icon('fa-bandage')}${esc(i.what)} · ${esc(x.stage)}, ещё ~${x.daysLeft} дн.</span>`; }),
+        ...hurts.map(i => { const x = injuryInfo(i, absMinute(state.clock)); return `<span class="${x.level >= 3 || x.fresh ? 'is-warm' : ''}" title="${esc(x.grade)} травма, зажило ${Math.round(x.healed * 100)}%">${icon('fa-bandage')}${esc(i.what)} · ${esc(x.stage)}, ещё ~${esc(x.leftText)}</span>`; }),
     ].filter(Boolean);
     return `<div class="stk-card stk-hl-person">
         <div class="stk-card-title">${icon(key === 'user' ? 'fa-venus' : 'fa-mars')}${esc(nameOf(person))}</div>

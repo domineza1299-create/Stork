@@ -5,7 +5,8 @@
 import { createPregnancy, perimenopause } from './biology.js';
 import { extractClock, extractDate, guessAge, guessClock, parseClock, setBabySex } from './engine.js';
 import { applyFindings } from './family.js';
-import { cleanKinks, ensureIntim } from './intimacy.js';
+import { bondFromCards } from './bond.js';
+import { cleanKinks, ensureIntim, knowAll } from './intimacy.js';
 
 /**
  * The kinks of the card and the persona and how he talks: read once, for the intimate scenes. Read again by her button:
@@ -23,6 +24,12 @@ export function intimacyFromCards(state, a) {
     // with the list read, the profile is set too (even empty): the director never asks the cards again
     if (kinks) intim.profile = bed && typeof bed === 'object' ? { char: clip(bed.char, 500), user: clip(bed.user, 300) } : { char: null, user: null };
     if (typeof a?.voice === 'string' && a.voice.trim()) intim.voice = a.voice.trim().slice(0, 240);
+    // how experienced each is in bed, by the cards; and whether they have been lovers already (then they know each other)
+    const EXP = ['experienced', 'some', 'inexperienced'];
+    const exp = a?.experience ?? {};
+    intim.experience = { char: EXP.includes(exp.char) ? exp.char : intim.experience?.char ?? null, user: EXP.includes(exp.user) ? exp.user : intim.experience?.user ?? null };
+    if (a?.intimate_before === true) knowAll(intim);
+    if (['giving', 'self', 'balanced'].includes(a?.bed_focus?.char)) intim.bedFocus = a.bed_focus.char;
 }
 
 export const ADULT_AGE = 18;
@@ -209,6 +216,14 @@ export function setupFromAnalysis(state, analysis, cards, rng = Math.random) {
     const time = extractClock(opening) ?? parseClock(start.time) ?? guessClock(opening);
     if (time !== null) state.clock.minutes = time;
     if (a.story?.summary) state.storySummary = a.story.summary;
+    // who they are to each other and since when; what each thinks of children
+    bondFromCards(state, a);
+    // abstinence does not start at zero with the chat: their last time by the cards' logic
+    const ago = a.last_sex_days_ago ?? {};
+    const startAt = state.clock.day * 1440 + state.clock.minutes;
+    const daysOf = v => { if (v === null || v === undefined || v === '' || typeof v === 'boolean') return null; const n = Math.round(Number(v)); return Number.isFinite(n) && n >= 0 && n <= 3650 ? n : null; };
+    if (daysOf(ago.char) !== null && state.people.char.male) state.people.char.male.lastOrgasmMinute = startAt - daysOf(ago.char) * 1440 - 4 * 60;
+    if (daysOf(ago.user) !== null && state.people.user.female) state.people.user.female.lastOrgasmMinute = startAt - daysOf(ago.user) * 1440 - 4 * 60;
     // the world of the story: a doctor or a midwife looks after a pregnancy
     if (a.story?.era === 'past' || a.story?.era === 'modern') {
         state.era = a.story.era === 'past' ? 'traditional' : 'modern';

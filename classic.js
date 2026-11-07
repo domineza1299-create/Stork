@@ -4,11 +4,12 @@
  * both use come from common.js, the buttons from handleAction in ui.js.
  */
 import { careOf, FEMALE_CONTRACEPTION, femaleState, laborProgress, pillState, pregnancyInfo } from './biology.js';
+import { themHtml, themStatusWord } from './themui.js';
 import { abstinence, abstinenceView, absMinute, maleAche, clockText, dateLabel, liveNow, shortDate, storyDate, timeLabel, withLive } from './engine.js';
 import {
     ACT_LABEL, agoWord, avatarUrl, babyWeight, capitalize, claimCard, clamp01, cycleFields, esc, femaleLevels, femaleTraits, icon, initials, KIND_ICON, knowsPregnancy,
     levelWord, maleLevels, monthGrid, nameOf, nextInCycle, personFields, pickBar, pregnancyLibidoWhy, readingLine, recentEvents, riskyLately, upcomingRows,
-    pregnancyFacts, spermPanel, upcomingWhen, years,
+    pregnancyFacts, spermGrade, spermPanel, upcomingWhen, years,
 } from './common.js';
 
 // #region Cover with the avatar, tiles under it
@@ -155,10 +156,10 @@ export function maleCard(state, person, view = {}) {
         ${abstinenceHtml(state, person.key)}
         ${L.left > 0 ? `<div class="stk-row stk-recover">${icon('fa-hourglass-half')}восстанавливается после оргазма: ещё ~${L.left} мин по времени истории</div>` : ''}
         ${storyNote(state, person.key)}
-        <div class="stk-sub">Сперма</div>
-        ${spermPanel(state, person, L)}
         ${s.couvade ? `<div class="stk-row">${icon('fa-face-tired')}сопереживает беременности: хуже спит, подташнивает</div>` : ''}
-        <div class="stk-row stk-muted">${icon('fa-dna')}${esc(L.fertilityLine)}</div>
+        ${fold('sperm', `${icon('fa-dna')}Сперма<span class="stk-muted">плодовитость ${esc(spermGrade(s).word)} · запас ${Math.round(s.reserve * 100)}%</span>`, `
+            ${spermPanel(state, person, L)}
+            <div class="stk-row stk-muted">${icon('fa-dna')}${esc(L.fertilityLine)}</div>`)}
     </div>`;
 }
 
@@ -167,6 +168,25 @@ const upcoming = (state, woman) => upcomingRows(state, woman)
     .map(([d, ic, text]) => `<div class="stk-row">${icon(ic)}<span class="stk-up"><b>${esc(upcomingWhen(state, d))}</b><span class="stk-muted">${esc(text)}</span></span></div>`).join('');
 
 /** What is shared between them: closeness, the chance today, what comes next, what happened lately. */
+const FOLD_KEY = 'stork_folds';
+/** Which folds of the window she opened: remembered in this browser, closed by default. */
+export function foldOpen(key) {
+    try { return !!JSON.parse(localStorage.getItem(FOLD_KEY) ?? '{}')[key]; } catch { return false; }
+}
+if (typeof document !== 'undefined') {
+    document.addEventListener('toggle', event => {
+        const d = event.target;
+        if (!d?.matches?.('details[data-stk-fold]')) return;
+        try {
+            const all = JSON.parse(localStorage.getItem(FOLD_KEY) ?? '{}');
+            all[d.dataset.stkFold] = d.open;
+            localStorage.setItem(FOLD_KEY, JSON.stringify(all));
+        } catch { /* private mode: only for now */ }
+    }, true);
+}
+/** A part of a card folded away: its title and a short summary always visible. */
+const fold = (key, summary, body) => `<details class="stk-fold-in" data-stk-fold="${key}" ${foldOpen(key) ? 'open' : ''}><summary>${summary}${icon('fa-chevron-down', 'stk-fold-chev')}</summary><div class="stk-fold-body">${body}</div></details>`;
+
 export function sharedCard(state) {
     const day = state.clock.day;
     const rows = [];
@@ -178,11 +198,16 @@ export function sharedCard(state) {
     if (riskyLately(state)) rows.push(`<div class="stk-row stk-fertile">${icon('fa-seedling')}была близость без защиты в фертильные дни — беременность возможна</div>`);
     const next = upcoming(state, state.people.user);
     const recent = recentEvents(state, 3);
+    // «Они» (who they are to each other, since when, children) and «Вместе» in one card, folded by default
+    const them = themHtml(state, { card: true });
+    const status = state.bond?.status ? themStatusWord(state) : '';
+    const brief = [status, lastAct ? `близость ${agoWord(day - lastAct.day)}` : ''].filter(Boolean).join(' · ');
     return `<div class="stk-card stk-shared">
-        <div class="stk-card-title">${icon('fa-people-arrows')}Вместе</div>
-        ${rows.join('') || `<div class="stk-row stk-muted">${icon('fa-heart')}близости пока не было</div>`}
-        ${next ? `<div class="stk-sub">Ближайшее</div>${next}` : ''}
-        ${recent.length ? `<div class="stk-sub">Недавно</div>${recent.map(e => `<div class="stk-row">${icon(KIND_ICON[e.kind] ?? 'fa-circle-dot')}<span class="stk-muted">${esc(dateLabel(state, e.day, { day: 'numeric', month: 'short' }))}</span>${esc(e.text)}</div>`).join('')}` : ''}
+        ${fold('shared', `${icon('fa-people-arrows')}<b>Вместе</b>${brief ? `<span class="stk-muted">${esc(brief)}</span>` : ''}`, `
+            ${them}
+            ${rows.join('') || `<div class="stk-row stk-muted">${icon('fa-heart')}близости пока не было</div>`}
+            ${next ? `<div class="stk-sub">Ближайшее</div>${next}` : ''}
+            ${recent.length ? `<div class="stk-sub">Недавно</div>${recent.map(e => `<div class="stk-row">${icon(KIND_ICON[e.kind] ?? 'fa-circle-dot')}<span class="stk-muted">${esc(dateLabel(state, e.day, { day: 'numeric', month: 'short' }))}</span>${esc(e.text)}</div>`).join('')}` : ''}`)}
     </div>`;
 }
 
@@ -252,7 +277,6 @@ export function calendarCore(state, view, { upcomingDates = true } = {}) {
             <span><i class="is-warm"></i>ПМС</span>`}
             ${pregnant || f.postpartum ? '<span><i class="is-preg"></i>беременность</span>' : ''}
             <span>${icon('fa-heart')}близость</span>
-            ${careOf(state).canSeeSex ? `<span>${icon('fa-vial')}тест</span>` : ''}
         </div>
         ${pickBar(state, view)}`;
 }
@@ -264,8 +288,7 @@ export function renderCalendar(state, view) {
     return `
         ${calendarCore(state, view)}
         ${editable ? `<div class="stk-card stk-edit" data-key="user">
-            <div class="stk-card-title">${icon('fa-sliders')}Мой цикл</div>
-            ${cycleFields(f)}
+            ${fold('my-cycle', `${icon('fa-sliders')}<b>Мой цикл</b><span class="stk-muted">${f.cycleLength} дн., месячные ${f.periodLength} дн.</span>`, cycleFields(f))}
         </div>` : ''}
         ${editable ? `<div class="stk-hint">${icon('fa-circle-info')}Нажми на прошедший день — начало месячных.</div>` : ''}`;
 }

@@ -6,8 +6,13 @@
 
 // #region Constants
 
-/** Chance of conception from one unprotected act, by day relative to ovulation (Wilcox et al., 1995). */
-export const DAY_CHANCE = { '-5': 0.10, '-4': 0.16, '-3': 0.14, '-2': 0.27, '-1': 0.31, '0': 0.33 };
+/**
+ * Chance of conception from one unprotected act, by day relative to ovulation (Wilcox et al., 1995).
+ * The day after: the egg lives up to a day, and the day of ovulation itself is never known to the hour — a small chance.
+ */
+export const DAY_CHANCE = { '-5': 0.10, '-4': 0.16, '-3': 0.14, '-2': 0.27, '-1': 0.31, '0': 0.33, '1': 0.08 };
+/** The last day of the fertile window, after ovulation. */
+export const FERTILE_AFTER = 1;
 
 /** Multipliers for a single act. */
 export const ACT_PROTECTION = {
@@ -159,7 +164,7 @@ export function cycleInfo(f, day) {
     else phase = 'luteal';
 
     const relative = cycleDay - ovulation;
-    const fertile = relative >= -5 && relative <= 0;
+    const fertile = relative >= -5 && relative <= FERTILE_AFTER;
     const late = cycleDay > length;
 
     const nextPhaseDay = {
@@ -426,7 +431,7 @@ export function femaleConditionFactor(f) {
 }
 
 export function rollConception({ acts, ovulationAbsoluteDay, femaleAge, femaleContraception, femaleFactor = 1, male, maleAge, storyMode = 'realistic', rng = Math.random }) {
-    const window = acts.filter(a => a.day >= ovulationAbsoluteDay - 5 && a.day <= ovulationAbsoluteDay);
+    const window = acts.filter(a => a.day >= ovulationAbsoluteDay - 5 && a.day <= ovulationAbsoluteDay + FERTILE_AFTER);
     const forced = window.find(a => a.force === 'yes') ? 'yes' : (window.length && window.every(a => a.force === 'no') ? 'no' : null);
     let miss = 1;
     for (const act of window) miss *= 1 - actChance(act, ovulationAbsoluteDay, femaleContraception, male, maleAge);
